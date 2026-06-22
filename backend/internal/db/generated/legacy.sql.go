@@ -258,6 +258,7 @@ func (q *Queries) TouchLegacyAppUserUsedAt(ctx context.Context, arg TouchLegacyA
 
 const upsertLegacyAppUser = `-- name: UpsertLegacyAppUser :one
 
+
 INSERT INTO legacy_app_users (
     entity_id,
     application_id,
@@ -292,6 +293,7 @@ type UpsertLegacyAppUserParams struct {
 	IsActive             bool        `json:"is_active"`
 }
 
+// SPDX-License-Identifier: MIT
 // === Legacy username/password integration ===
 func (q *Queries) UpsertLegacyAppUser(ctx context.Context, arg UpsertLegacyAppUserParams) (LegacyAppUser, error) {
 	row := q.db.QueryRow(ctx, upsertLegacyAppUser,

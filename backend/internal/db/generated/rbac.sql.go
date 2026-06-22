@@ -240,6 +240,7 @@ func (q *Queries) CreateResourceScope(ctx context.Context, arg CreateResourceSco
 
 const createRole = `-- name: CreateRole :one
 
+
 INSERT INTO roles (entity_id, name, code, description)
 VALUES ($1, $2, $3, $4)
 RETURNING id, entity_id, name, code, description, created_at, updated_at
@@ -252,6 +253,7 @@ type CreateRoleParams struct {
 	Description pgtype.Text `json:"description"`
 }
 
+// SPDX-License-Identifier: MIT
 // === Roles ===
 func (q *Queries) CreateRole(ctx context.Context, arg CreateRoleParams) (Role, error) {
 	row := q.db.QueryRow(ctx, createRole,

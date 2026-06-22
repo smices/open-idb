@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	auditmodel "github.com/smices/open-idb/internal/audit/model"
 	"github.com/smices/open-idb/internal/auth"
+	"github.com/smices/open-idb/internal/ephemeral"
 	"github.com/smices/open-idb/internal/id"
 )
 
@@ -24,9 +26,10 @@ type AuditEventWriter interface {
 }
 
 type Handler struct {
-	service  *Service
-	audit    AuditEventWriter
-	loginURL string // URL to redirect unauthenticated users to (e.g., "/login")
+	service   *Service
+	audit     AuditEventWriter
+	loginURL  string // URL to redirect unauthenticated users to (e.g., "/login")
+	ephemeral ephemeral.Store
 }
 
 // NewHandler creates an SSO Handler. An optional AuditEventWriter may be
@@ -43,6 +46,10 @@ func NewHandler(service *Service, writers ...AuditEventWriter) Handler {
 // SetLoginURL configures the URL to redirect unauthenticated users to.
 func (h *Handler) SetLoginURL(loginURL string) {
 	h.loginURL = loginURL
+}
+
+func (h *Handler) SetEphemeralStore(store ephemeral.Store) {
+	h.ephemeral = store
 }
 
 func (h Handler) RegisterRoutes(r chi.Router) {
@@ -166,10 +173,21 @@ func (h Handler) token(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unsupported_grant_type", "grant_type must be authorization_code")
 		return
 	}
+	clientID := r.PostForm.Get("client_id")
+	limitKey := ephemeral.Key("rate:token_exchange", clientID, r.RemoteAddr)
+	limit, limitErr := ephemeral.CheckLimit(r.Context(), h.ephemeral, limitKey, 30, time.Minute)
+	if limitErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "rate_limit_unavailable", "token exchange rate limit is unavailable")
+		return
+	}
+	if !limit.Allowed {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many token exchange attempts")
+		return
+	}
 
 	response, err := h.service.ExchangeCode(r.Context(), TokenInput{
 		EntityID:     firstNonEmpty(r.Header.Get("X-IDB-Entity-ID"), r.PostForm.Get("entity_id")),
-		ClientID:     r.PostForm.Get("client_id"),
+		ClientID:     clientID,
 		Code:         r.PostForm.Get("code"),
 		RedirectURI:  r.PostForm.Get("redirect_uri"),
 		CodeVerifier: r.PostForm.Get("code_verifier"),
@@ -275,7 +293,7 @@ func (h Handler) writeAudit(r *http.Request, event auditmodel.Event) {
 // resolveSubject identifies the user from a valid idb_session cookie.
 func (h Handler) resolveSubject(r *http.Request) (TokenSubject, error) {
 	if cookie, err := r.Cookie("idb_session"); err == nil && cookie.Value != "" {
-		session, err := auth.DecodeSession(cookie.Value)
+		session, err := auth.ResolveSession(r.Context(), cookie.Value)
 		if err == nil {
 			return TokenSubject{
 				EntityID:          session.EntityID,

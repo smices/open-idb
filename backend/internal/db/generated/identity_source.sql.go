@@ -78,6 +78,7 @@ func (q *Queries) GetIdentitySourceByID(ctx context.Context, arg GetIdentitySour
 }
 
 const listIdentitySources = `-- name: ListIdentitySources :many
+
 SELECT id, entity_id, type, name, status, sync_enabled, created_at
 FROM identity_sources
 WHERE entity_id = $1
@@ -101,6 +102,7 @@ type ListIdentitySourcesRow struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+// SPDX-License-Identifier: MIT
 func (q *Queries) ListIdentitySources(ctx context.Context, arg ListIdentitySourcesParams) ([]ListIdentitySourcesRow, error) {
 	rows, err := q.db.Query(ctx, listIdentitySources, arg.EntityID, arg.Limit, arg.Offset)
 	if err != nil {

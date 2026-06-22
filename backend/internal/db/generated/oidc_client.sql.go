@@ -74,6 +74,7 @@ func (q *Queries) GetOIDCClientByID(ctx context.Context, arg GetOIDCClientByIDPa
 }
 
 const listOIDCClients = `-- name: ListOIDCClients :many
+
 SELECT id, entity_id, application_id, client_id, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, status, created_at, updated_at
 FROM oidc_clients
 WHERE entity_id = $1
@@ -102,6 +103,7 @@ type ListOIDCClientsRow struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
+// SPDX-License-Identifier: MIT
 func (q *Queries) ListOIDCClients(ctx context.Context, arg ListOIDCClientsParams) ([]ListOIDCClientsRow, error) {
 	rows, err := q.db.Query(ctx, listOIDCClients, arg.EntityID, arg.Limit, arg.Offset)
 	if err != nil {

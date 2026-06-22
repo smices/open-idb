@@ -14,6 +14,7 @@ import (
 )
 
 const createSyncJob = `-- name: CreateSyncJob :one
+
 INSERT INTO sync_jobs (entity_id, source_id, type, provider, status, trace_id)
 VALUES ($1, $2, $3, $4, 'running', $5)
 RETURNING id, entity_id, source_id, type, provider, status, trace_id, started_at, finished_at, error_message, stats
@@ -27,6 +28,7 @@ type CreateSyncJobParams struct {
 	TraceID  string `json:"trace_id"`
 }
 
+// SPDX-License-Identifier: MIT
 func (q *Queries) CreateSyncJob(ctx context.Context, arg CreateSyncJobParams) (SyncJob, error) {
 	row := q.db.QueryRow(ctx, createSyncJob,
 		arg.EntityID,

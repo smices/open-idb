@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/smices/open-idb/internal/ephemeral"
 	"github.com/smices/open-idb/internal/id"
 )
 
@@ -175,6 +176,29 @@ func TestUnsupportedEndpoints(t *testing.T) {
 				t.Fatalf("status = %d, want %d (body = %q)", rec.Code, tc.wantStatus, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestTokenEndpointRateLimitsByClientAndIP(t *testing.T) {
+	router := newHandlerTestRouterWithEphemeralStore(t, ephemeral.NewMemoryStore())
+	body := url.Values{
+		"grant_type":    {"authorization_code"},
+		"client_id":     {"client-1"},
+		"code":          {"code-1"},
+		"redirect_uri":  {"https://app.example.test/callback"},
+		"code_verifier": {"verifier-1"},
+	}
+
+	var rec *httptest.ResponseRecorder
+	for i := 0; i < 31; i++ {
+		rec = httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(body.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		router.ServeHTTP(rec, req)
+	}
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusTooManyRequests)
 	}
 }
 
@@ -393,7 +417,7 @@ func TestBuildUserInfoResponseScopes(t *testing.T) {
 	})
 }
 
-// mockSSOQuerier is a test double for the ssoQuerier interface.
+// mockSSOQuerier is a test double for the TokenLookupStore interface.
 type mockSSOQuerier struct {
 	token          SSOTokenLookup
 	tokenErr       error
@@ -440,7 +464,7 @@ func newHandlerTestRouter(t *testing.T) http.Handler {
 	})
 }
 
-func newHandlerTestRouterWithQuerier(t *testing.T, querier ssoQuerier) http.Handler {
+func newHandlerTestRouterWithEphemeralStore(t *testing.T, store ephemeral.Store) http.Handler {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -450,7 +474,30 @@ func newHandlerTestRouterWithQuerier(t *testing.T, querier ssoQuerier) http.Hand
 		Issuer:     "https://idb.example.test",
 		KeyID:      "dev-key-1",
 		PrivateKey: key,
-		Querier:    querier,
+	})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	handler := NewHandler(service)
+	handler.SetEphemeralStore(store)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux := chi.NewRouter()
+		handler.RegisterRoutes(mux)
+		mux.ServeHTTP(w, r)
+	})
+}
+
+func newHandlerTestRouterWithQuerier(t *testing.T, store TokenLookupStore) http.Handler {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	service, err := NewService(ServiceConfig{
+		Issuer:           "https://idb.example.test",
+		KeyID:            "dev-key-1",
+		PrivateKey:       key,
+		TokenLookupStore: store,
 	})
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)

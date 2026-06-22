@@ -49,12 +49,24 @@ SELECT id, entity_id, client_id, user_id, code_hash, redirect_uri, scopes, code_
 FROM oauth_authorization_codes
 WHERE entity_id = $1 AND code_hash = $2;
 
--- name: MarkAuthorizationCodeUsed :exec
+-- name: MarkAuthorizationCodeUsed :one
 UPDATE oauth_authorization_codes
 SET used_at = now()
-WHERE entity_id = $1 AND code_hash = $2 AND used_at IS NULL;
+WHERE entity_id = $1
+  AND code_hash = $2
+  AND used_at IS NULL
+  AND expires_at > now()
+RETURNING id, entity_id, client_id, user_id, code_hash, redirect_uri, scopes, code_challenge, code_challenge_method, nonce, used_at, expires_at, created_at;
 
 -- name: CreateOAuthToken :one
 INSERT INTO oauth_tokens (entity_id, user_id, client_id, token_type, token_hash, scopes, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id, entity_id, user_id, client_id, token_type, token_hash, scopes, revoked_at, expires_at, created_at;
+
+-- name: DeleteExpiredAuthorizationCodes :execrows
+DELETE FROM oauth_authorization_codes
+WHERE expires_at < now();
+
+-- name: DeleteExpiredOAuthTokens :execrows
+DELETE FROM oauth_tokens
+WHERE expires_at < now();

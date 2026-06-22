@@ -5,6 +5,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/smices/open-idb/internal/db/generated"
 )
@@ -76,6 +77,21 @@ func (s *Service) AuthenticateLocalWithEntity(ctx context.Context, entityID stri
 	}, nil
 }
 
+func (s *Service) CreateLoginSession(ctx context.Context, result LoginResult, meta SessionMetadata) (Session, error) {
+	session := Session{
+		UserID:             result.UserID,
+		EntityID:           result.EntityID,
+		Username:           result.Username,
+		DisplayName:        result.DisplayName,
+		MustChangePassword: result.MustChangePassword,
+		WeakPassword:       result.WeakPassword,
+	}
+	if meta.TTL <= 0 {
+		meta.TTL = 24 * time.Hour
+	}
+	return createSessionValue(ctx, s.queries, session, meta)
+}
+
 func (s *Service) GetLoginContextEntityBySlug(ctx context.Context, slug string) (LoginContextEntity, error) {
 	entity, err := s.queries.GetEntityBySlug(ctx, slug)
 	if err != nil {
@@ -102,9 +118,9 @@ func (s *Service) GetLoginContextApplicationByClientID(ctx context.Context, clie
 			ID:           ulidString(row.EntityID),
 			Slug:         row.EntitySlug,
 			Name:         row.EntityName,
-			BrandName:    textString(row.EntityBrandName),
-			LogoURL:      textString(row.EntityLogoUrl),
-			LoginMessage: textString(row.EntityLoginMessage),
+			BrandName:    row.EntityBrandName,
+			LogoURL:      row.EntityLogoUrl,
+			LoginMessage: row.EntityLoginMessage,
 		},
 		Application: &LoginContextApplication{
 			ID:   ulidString(row.ApplicationID),
@@ -127,9 +143,9 @@ func (s *Service) GetDefaultLoginContext(ctx context.Context) (LoginContext, err
 			ID:           ulidString(row.EntityID),
 			Slug:         row.EntitySlug,
 			Name:         row.EntityName,
-			BrandName:    textString(row.EntityBrandName),
-			LogoURL:      textString(row.EntityLogoUrl),
-			LoginMessage: textString(row.EntityLoginMessage),
+			BrandName:    row.EntityBrandName,
+			LogoURL:      row.EntityLogoUrl,
+			LoginMessage: row.EntityLoginMessage,
 		},
 		Methods:              []string{"password", "feishu"},
 		AllowEntitySelection: false,

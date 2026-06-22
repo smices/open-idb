@@ -4,15 +4,15 @@ package auth
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	auditmodel "github.com/smices/open-idb/internal/audit/model"
+	"github.com/smices/open-idb/internal/ephemeral"
 	"github.com/smices/open-idb/internal/id"
 )
 
@@ -25,31 +25,35 @@ type AuditEventWriter interface {
 type LoginService interface {
 	AuthenticateLocal(ctx context.Context, username string, password string) (LoginResult, error)
 	AuthenticateLocalWithEntity(ctx context.Context, entityID string, username string, password string) (LoginResult, error)
+	CreateLoginSession(ctx context.Context, result LoginResult, meta SessionMetadata) (Session, error)
 }
 
 type Handler struct {
-	service LoginService
-	audit   AuditEventWriter
-}
-
-type Session struct {
-	UserID             string
-	EntityID           string
-	Username           string
-	DisplayName        string
-	MustChangePassword bool
-	WeakPassword       bool
+	service    LoginService
+	audit      AuditEventWriter
+	sessionTTL time.Duration
+	ephemeral  ephemeral.Store
 }
 
 // NewHandler creates an auth Handler. An optional AuditEventWriter may be
 // provided to enable audit logging of login events. Existing callers that
 // do not pass a writer are unaffected (audit logging is silently disabled).
 func NewHandler(service LoginService, writers ...AuditEventWriter) Handler {
-	h := Handler{service: service}
+	h := Handler{service: service, sessionTTL: 24 * time.Hour}
 	if len(writers) > 0 {
 		h.audit = writers[0]
 	}
 	return h
+}
+
+func (h *Handler) SetSessionTTL(ttl time.Duration) {
+	if ttl > 0 {
+		h.sessionTTL = ttl
+	}
+}
+
+func (h *Handler) SetEphemeralStore(store ephemeral.Store) {
+	h.ephemeral = store
 }
 
 func (h Handler) RegisterRoutes(r chi.Router) {
@@ -66,6 +70,16 @@ func (h Handler) loginAccount(w http.ResponseWriter, r *http.Request) {
 	account := r.PostForm.Get("account")
 	password := r.PostForm.Get("password")
 	entityID := r.PostForm.Get("entity_id")
+	limitKey := ephemeral.Key("rate:login", entityID, account, r.RemoteAddr)
+	limit, limitErr := ephemeral.CheckLimit(r.Context(), h.ephemeral, limitKey, 10, 15*time.Minute)
+	if limitErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "rate_limit_unavailable", "login rate limit is unavailable")
+		return
+	}
+	if !limit.Allowed {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many login attempts")
+		return
+	}
 	var result LoginResult
 	var err error
 	if entityID != "" {
@@ -89,16 +103,14 @@ func (h Handler) loginAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid account or password")
 		return
 	}
-	sessionValue, err := EncodeSession(Session{
-		UserID:             result.UserID,
-		EntityID:           result.EntityID,
-		Username:           result.Username,
-		DisplayName:        result.DisplayName,
-		MustChangePassword: result.MustChangePassword,
-		WeakPassword:       result.WeakPassword,
+	session, err := h.service.CreateLoginSession(r.Context(), result, SessionMetadata{
+		LoginMethod: "password",
+		IP:          r.RemoteAddr,
+		UserAgent:   r.UserAgent(),
+		TTL:         h.sessionTTL,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "session_encode_failed", "could not create login session")
+		writeError(w, http.StatusInternalServerError, "session_create_failed", "could not create login session")
 		return
 	}
 	h.writeAudit(r, auditmodel.Event{
@@ -115,10 +127,12 @@ func (h Handler) loginAccount(w http.ResponseWriter, r *http.Request) {
 	})
 	http.SetCookie(w, &http.Cookie{
 		Name:     "idb_session",
-		Value:    sessionValue,
+		Value:    session.ID,
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Expires:  session.ExpiresAt,
+		MaxAge:   int(time.Until(session.ExpiresAt).Seconds()),
 	})
 	http.Redirect(w, r, safeReturnTo(r.PostForm.Get("return_to")), http.StatusFound)
 }
@@ -131,29 +145,6 @@ func (h Handler) writeAudit(r *http.Request, event auditmodel.Event) {
 		return
 	}
 	_ = h.audit.Write(r.Context(), event)
-}
-
-func EncodeSession(session Session) (string, error) {
-	payload, err := json.Marshal(session)
-	if err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(payload), nil
-}
-
-func DecodeSession(value string) (Session, error) {
-	payload, err := base64.RawURLEncoding.DecodeString(value)
-	if err != nil {
-		return Session{}, err
-	}
-	var session Session
-	if err := json.Unmarshal(payload, &session); err != nil {
-		return Session{}, err
-	}
-	if session.UserID == "" || session.EntityID == "" || session.Username == "" {
-		return Session{}, fmt.Errorf("session is missing required identity fields")
-	}
-	return session, nil
 }
 
 func writeError(w http.ResponseWriter, status int, code string, message string) {

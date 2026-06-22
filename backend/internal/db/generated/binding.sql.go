@@ -99,6 +99,7 @@ func (q *Queries) HasLocalCredential(ctx context.Context, arg HasLocalCredential
 
 const listAccountBindingsByUserID = `-- name: ListAccountBindingsByUserID :many
 
+
 SELECT ab.id, ab.entity_id, ab.user_id, ab.source_id, ab.directory_user_id,
        ab.provider_uid, ab.provider_union_id, ab.is_primary, ab.bound_at,
        s.type AS source_type, s.name AS source_name
@@ -127,6 +128,7 @@ type ListAccountBindingsByUserIDRow struct {
 	SourceName      string             `json:"source_name"`
 }
 
+// SPDX-License-Identifier: MIT
 // === Account Bindings (admin API queries) ===
 // DeleteAccountBindingByID, GetAccountBindingByID (without source JOIN),
 // and ListAccountBindingsByUser are in identity_store.sql.

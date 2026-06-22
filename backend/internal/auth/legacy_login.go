@@ -70,6 +70,12 @@ func (s *LegacyLoginService) SetFailurePolicy(maxFailures int32, window time.Dur
 	}
 }
 
+func (s *LegacyLoginService) SetSessionTTL(ttl time.Duration) {
+	if ttl > 0 {
+		s.sessionTTL = ttl
+	}
+}
+
 // LegacyLoginResult is the successful login payload.
 type LegacyLoginResult struct {
 	SessionValue  string
@@ -208,11 +214,16 @@ func (s *LegacyLoginService) AuthenticateLegacy(ctx context.Context, entityID st
 		ID:       verified.ID,
 	})
 
-	session, err := EncodeSession(Session{
+	session, err := createSessionValue(ctx, s.queries, Session{
 		UserID:      ulidString(verified.UserID),
 		EntityID:    entityID,
 		Username:    verified.Username,
 		DisplayName: managedUser.DisplayName,
+	}, SessionMetadata{
+		LoginMethod: "password",
+		IP:          clientIP,
+		UserAgent:   userAgent,
+		TTL:         s.sessionTTL,
 	})
 	if err != nil {
 		return empty, LegacyLoginError{Code: legacyAuthFailureCode, Status: http.StatusInternalServerError, Message: "could not create login session"}
@@ -221,7 +232,7 @@ func (s *LegacyLoginService) AuthenticateLegacy(ctx context.Context, entityID st
 	_ = s.recordLegacyPasswordEvent(ctx, entityULID, applicationULID, verified.UserID, username, "success", clientIP, userAgent, traceID, "login success")
 
 	return LegacyLoginResult{
-		SessionValue:  session,
+		SessionValue:  session.ID,
 		EntityID:      entityID,
 		UserID:        ulidString(verified.UserID),
 		Username:      verified.Username,

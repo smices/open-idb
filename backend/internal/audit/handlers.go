@@ -71,7 +71,7 @@ func readSession(w http.ResponseWriter, r *http.Request) (auth.Session, bool) {
 		writeError(w, http.StatusUnauthorized, "session_required", "idb_session cookie is required")
 		return auth.Session{}, false
 	}
-	session, err := auth.DecodeSession(cookie.Value)
+	session, err := auth.ResolveSession(r.Context(), cookie.Value)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid_session", "idb_session cookie is invalid")
 		return auth.Session{}, false

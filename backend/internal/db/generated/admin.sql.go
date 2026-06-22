@@ -337,6 +337,7 @@ func (q *Queries) ListDirectoryUsers(ctx context.Context, arg ListDirectoryUsers
 
 const listUsers = `-- name: ListUsers :many
 
+
 SELECT id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at
 FROM users
 WHERE entity_id = $1
@@ -352,6 +353,7 @@ type ListUsersParams struct {
 	LifecycleStatus pgtype.Text `json:"lifecycle_status"`
 }
 
+// SPDX-License-Identifier: MIT
 // === Users ===
 func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error) {
 	rows, err := q.db.Query(ctx, listUsers,

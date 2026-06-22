@@ -118,6 +118,7 @@ func TestLoadAcceptsOIDCSettings(t *testing.T) {
 		"IDB_ACCESS_TOKEN_TTL_SECONDS": "60",
 		"IDB_ID_TOKEN_TTL_SECONDS":     "120",
 		"IDB_AUTH_CODE_TTL_SECONDS":    "30",
+		"IDB_SESSION_TTL_SECONDS":      "3600",
 	})
 
 	cfg, err := Load()
@@ -139,6 +140,9 @@ func TestLoadAcceptsOIDCSettings(t *testing.T) {
 	}
 	if cfg.AuthCodeTTL != 30*time.Second {
 		t.Fatalf("AuthCodeTTL = %s, want %s", cfg.AuthCodeTTL, 30*time.Second)
+	}
+	if cfg.SessionTTL != time.Hour {
+		t.Fatalf("SessionTTL = %s, want %s", cfg.SessionTTL, time.Hour)
 	}
 }
 
@@ -171,6 +175,44 @@ func TestLoadAcceptsWebBaseURL(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsRedisURL(t *testing.T) {
+	setConfigEnv(t, map[string]string{
+		"IDB_REDIS_URL": "redis://localhost:6379/0",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if !cfg.RedisEnabled {
+		t.Fatal("RedisEnabled = false, want true")
+	}
+	if cfg.RedisURL != "redis://localhost:6379/0" {
+		t.Fatalf("RedisURL = %q", cfg.RedisURL)
+	}
+}
+
+func TestLoadRejectsRedisEnabledWithoutURL(t *testing.T) {
+	setConfigEnv(t, map[string]string{
+		"IDB_REDIS_ENABLED": "true",
+	})
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want error")
+	}
+}
+
+func TestLoadRejectsInvalidRedisEnabled(t *testing.T) {
+	setConfigEnv(t, map[string]string{
+		"IDB_REDIS_ENABLED": "sometimes",
+	})
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want error")
+	}
+}
+
 func TestLoadRejectsInvalidWebBaseURL(t *testing.T) {
 	for _, value := range []string{"localhost:5180", "/dashboard", "://bad"} {
 		t.Run(value, func(t *testing.T) {
@@ -190,6 +232,7 @@ func TestLoadRejectsInvalidOIDCTTL(t *testing.T) {
 		"IDB_ACCESS_TOKEN_TTL_SECONDS",
 		"IDB_ID_TOKEN_TTL_SECONDS",
 		"IDB_AUTH_CODE_TTL_SECONDS",
+		"IDB_SESSION_TTL_SECONDS",
 	} {
 		t.Run(key+"_malformed", func(t *testing.T) {
 			setConfigEnv(t, map[string]string{key: "soon"})
@@ -220,9 +263,12 @@ func setConfigEnv(t *testing.T, values map[string]string) {
 		"IDB_OIDC_ISSUER",
 		"IDB_OIDC_KEY_ID",
 		"IDB_WEB_BASE_URL",
+		"IDB_REDIS_ENABLED",
+		"IDB_REDIS_URL",
 		"IDB_ACCESS_TOKEN_TTL_SECONDS",
 		"IDB_ID_TOKEN_TTL_SECONDS",
 		"IDB_AUTH_CODE_TTL_SECONDS",
+		"IDB_SESSION_TTL_SECONDS",
 	} {
 		t.Setenv(key, "")
 	}

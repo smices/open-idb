@@ -172,6 +172,7 @@ func (q *Queries) CreateGroup(ctx context.Context, arg CreateGroupParams) (Group
 
 const createOrganization = `-- name: CreateOrganization :one
 
+
 INSERT INTO organizations (entity_id, name, parent_id)
 VALUES ($1, $2, $3)
 RETURNING id, entity_id, name, parent_id, created_at, updated_at
@@ -183,6 +184,7 @@ type CreateOrganizationParams struct {
 	ParentID pgtype.Text `json:"parent_id"`
 }
 
+// SPDX-License-Identifier: MIT
 // === Organizations ===
 func (q *Queries) CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error) {
 	row := q.db.QueryRow(ctx, createOrganization, arg.EntityID, arg.Name, arg.ParentID)

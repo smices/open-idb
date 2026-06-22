@@ -15,6 +15,7 @@ import (
 
 const createSession = `-- name: CreateSession :one
 
+
 INSERT INTO sessions (entity_id, user_id, device_id, ip, user_agent, login_method, status, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)
 RETURNING id, entity_id, user_id, device_id, ip, user_agent, login_method, status, created_at, expires_at
@@ -30,6 +31,7 @@ type CreateSessionParams struct {
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
 }
 
+// SPDX-License-Identifier: MIT
 // === Sessions ===
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
 	row := q.db.QueryRow(ctx, createSession,
@@ -52,6 +54,52 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.LoginMethod,
 		&i.Status,
 		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const getActiveSessionIdentity = `-- name: GetActiveSessionIdentity :one
+SELECT
+    s.id,
+    s.entity_id,
+    s.user_id,
+    u.username,
+    u.display_name,
+    COALESCE(lc.must_change_password, false)::boolean AS must_change_password,
+    COALESCE(lc.weak_password, false)::boolean AS weak_password,
+    s.expires_at
+FROM sessions s
+JOIN users u ON u.entity_id = s.entity_id AND u.id = s.user_id
+LEFT JOIN local_credentials lc ON lc.entity_id = s.entity_id AND lc.user_id = s.user_id
+WHERE s.id = $1
+  AND s.status = 'active'
+  AND s.expires_at > now()
+  AND u.lifecycle_status = 'active'
+`
+
+type GetActiveSessionIdentityRow struct {
+	ID                 string             `json:"id"`
+	EntityID           string             `json:"entity_id"`
+	UserID             string             `json:"user_id"`
+	Username           string             `json:"username"`
+	DisplayName        string             `json:"display_name"`
+	MustChangePassword bool               `json:"must_change_password"`
+	WeakPassword       bool               `json:"weak_password"`
+	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
+}
+
+func (q *Queries) GetActiveSessionIdentity(ctx context.Context, id string) (GetActiveSessionIdentityRow, error) {
+	row := q.db.QueryRow(ctx, getActiveSessionIdentity, id)
+	var i GetActiveSessionIdentityRow
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.UserID,
+		&i.Username,
+		&i.DisplayName,
+		&i.MustChangePassword,
+		&i.WeakPassword,
 		&i.ExpiresAt,
 	)
 	return i, err
@@ -129,6 +177,20 @@ func (q *Queries) ListSessionsByUser(ctx context.Context, arg ListSessionsByUser
 		return nil, err
 	}
 	return items, nil
+}
+
+const markExpiredSessions = `-- name: MarkExpiredSessions :execrows
+UPDATE sessions
+SET status = 'expired'
+WHERE status = 'active' AND expires_at < now()
+`
+
+func (q *Queries) MarkExpiredSessions(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, markExpiredSessions)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const revokeSession = `-- name: RevokeSession :exec

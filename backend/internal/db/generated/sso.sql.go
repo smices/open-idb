@@ -14,6 +14,7 @@ import (
 )
 
 const createApplication = `-- name: CreateApplication :one
+
 INSERT INTO applications (entity_id, name, type, status)
 VALUES ($1, $2, $3, 'active')
 RETURNING id, entity_id, name, type, status, created_at, updated_at
@@ -25,6 +26,7 @@ type CreateApplicationParams struct {
 	Type     string `json:"type"`
 }
 
+// SPDX-License-Identifier: MIT
 func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error) {
 	row := q.db.QueryRow(ctx, createApplication, arg.EntityID, arg.Name, arg.Type)
 	var i Application
@@ -204,6 +206,32 @@ func (q *Queries) CreateOIDCClient(ctx context.Context, arg CreateOIDCClientPara
 	return i, err
 }
 
+const deleteExpiredAuthorizationCodes = `-- name: DeleteExpiredAuthorizationCodes :execrows
+DELETE FROM oauth_authorization_codes
+WHERE expires_at < now()
+`
+
+func (q *Queries) DeleteExpiredAuthorizationCodes(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredAuthorizationCodes)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteExpiredOAuthTokens = `-- name: DeleteExpiredOAuthTokens :execrows
+DELETE FROM oauth_tokens
+WHERE expires_at < now()
+`
+
+func (q *Queries) DeleteExpiredOAuthTokens(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredOAuthTokens)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getAuthorizationCode = `-- name: GetAuthorizationCode :one
 SELECT id, entity_id, client_id, user_id, code_hash, redirect_uri, scopes, code_challenge, code_challenge_method, nonce, used_at, expires_at, created_at
 FROM oauth_authorization_codes
@@ -268,10 +296,14 @@ func (q *Queries) GetOIDCClientByClientID(ctx context.Context, arg GetOIDCClient
 	return i, err
 }
 
-const markAuthorizationCodeUsed = `-- name: MarkAuthorizationCodeUsed :exec
+const markAuthorizationCodeUsed = `-- name: MarkAuthorizationCodeUsed :one
 UPDATE oauth_authorization_codes
 SET used_at = now()
-WHERE entity_id = $1 AND code_hash = $2 AND used_at IS NULL
+WHERE entity_id = $1
+  AND code_hash = $2
+  AND used_at IS NULL
+  AND expires_at > now()
+RETURNING id, entity_id, client_id, user_id, code_hash, redirect_uri, scopes, code_challenge, code_challenge_method, nonce, used_at, expires_at, created_at
 `
 
 type MarkAuthorizationCodeUsedParams struct {
@@ -279,7 +311,23 @@ type MarkAuthorizationCodeUsedParams struct {
 	CodeHash string `json:"code_hash"`
 }
 
-func (q *Queries) MarkAuthorizationCodeUsed(ctx context.Context, arg MarkAuthorizationCodeUsedParams) error {
-	_, err := q.db.Exec(ctx, markAuthorizationCodeUsed, arg.EntityID, arg.CodeHash)
-	return err
+func (q *Queries) MarkAuthorizationCodeUsed(ctx context.Context, arg MarkAuthorizationCodeUsedParams) (OauthAuthorizationCode, error) {
+	row := q.db.QueryRow(ctx, markAuthorizationCodeUsed, arg.EntityID, arg.CodeHash)
+	var i OauthAuthorizationCode
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.ClientID,
+		&i.UserID,
+		&i.CodeHash,
+		&i.RedirectUri,
+		&i.Scopes,
+		&i.CodeChallenge,
+		&i.CodeChallengeMethod,
+		&i.Nonce,
+		&i.UsedAt,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }

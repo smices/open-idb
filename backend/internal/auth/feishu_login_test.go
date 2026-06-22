@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/smices/open-idb/internal/db/generated"
+	"github.com/smices/open-idb/internal/ephemeral"
 	"github.com/smices/open-idb/internal/id"
 )
 
@@ -24,6 +25,41 @@ import (
 type mockFeishuProvider struct {
 	userInfo FeishuUserInfo
 	err      error
+}
+
+func TestFeishuOAuthStateUsesEphemeralStore(t *testing.T) {
+	store := ephemeral.NewMemoryStore()
+	handler := FeishuLoginHandler{}
+	handler.SetEphemeralStore(store)
+	state := oauthState{
+		EntityID: testEntityULID,
+		SourceID: testSourceULID,
+		ReturnTo: "/dashboard",
+	}
+
+	encoded, err := handler.encodeOAuthState(context.Background(), state)
+	if err != nil {
+		t.Fatalf("encodeOAuthState: %v", err)
+	}
+	if legacyBytes, err := base64.RawURLEncoding.DecodeString(encoded); err == nil {
+		var legacy oauthState
+		if json.Unmarshal(legacyBytes, &legacy) == nil && legacy.EntityID != "" {
+			t.Fatalf("state %q should be opaque, not legacy base64 JSON", encoded)
+		}
+	}
+
+	decoded, err := handler.decodeOAuthState(context.Background(), encoded)
+	if err != nil {
+		t.Fatalf("decodeOAuthState: %v", err)
+	}
+	if decoded.EntityID != state.EntityID || decoded.SourceID != state.SourceID || decoded.ReturnTo != state.ReturnTo {
+		t.Fatalf("decoded state = %#v, want %#v", decoded, state)
+	}
+	if _, ok, err := store.Get(context.Background(), "oidc:state:"+encoded); err != nil {
+		t.Fatalf("state lookup after decode: %v", err)
+	} else if ok {
+		t.Fatal("state should be deleted after decode")
+	}
 }
 
 func (m *mockFeishuProvider) GetUserInfoByCode(context.Context, string) (FeishuUserInfo, error) {

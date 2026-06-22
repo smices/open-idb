@@ -4,6 +4,7 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	auditmodel "github.com/smices/open-idb/internal/audit/model"
 	"github.com/smices/open-idb/internal/db/generated"
+	"github.com/smices/open-idb/internal/ephemeral"
 	"github.com/smices/open-idb/internal/id"
 )
 
@@ -223,7 +225,7 @@ func (s *FeishuLoginService) completeLogin(ctx context.Context, entityID string,
 		if err != nil {
 			return FeishuLoginResult{}, fmt.Errorf("update managed user: %w", err)
 		}
-		return s.buildResult(updated)
+		return s.buildResult(ctx, updated)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return FeishuLoginResult{}, fmt.Errorf("lookup binding: %w", err)
@@ -266,27 +268,30 @@ func (s *FeishuLoginService) completeLogin(ctx context.Context, entityID string,
 		return FeishuLoginResult{}, fmt.Errorf("create binding: %w", err)
 	}
 
-	return s.buildResult(managedUser)
+	return s.buildResult(ctx, managedUser)
 }
 
 // buildResult checks lifecycle status and creates a session.
-func (s *FeishuLoginService) buildResult(user generated.User) (FeishuLoginResult, error) {
+func (s *FeishuLoginService) buildResult(ctx context.Context, user generated.User) (FeishuLoginResult, error) {
 	if user.LifecycleStatus == "disabled" || user.LifecycleStatus == "locked" {
 		return FeishuLoginResult{}, fmt.Errorf("user_disabled")
 	}
 
-	sessionValue, err := EncodeSession(Session{
+	session, err := createSessionValue(ctx, s.queries, Session{
 		UserID:      ulidString(user.ID),
 		EntityID:    ulidString(user.EntityID),
 		Username:    user.Username,
 		DisplayName: user.DisplayName,
+	}, SessionMetadata{
+		LoginMethod: "feishu",
+		TTL:         s.sessionTTL,
 	})
 	if err != nil {
-		return FeishuLoginResult{}, fmt.Errorf("encode session: %w", err)
+		return FeishuLoginResult{}, fmt.Errorf("create session: %w", err)
 	}
 
 	return FeishuLoginResult{
-		SessionValue: sessionValue,
+		SessionValue: session.ID,
 		EntityID:     ulidString(user.EntityID),
 		UserID:       ulidString(user.ID),
 		Username:     user.Username,
@@ -305,6 +310,7 @@ type FeishuLoginHandler struct {
 	redirectURI     string
 	webBaseURL      string
 	audit           AuditEventWriter
+	ephemeral       ephemeral.Store
 }
 
 // NewFeishuLoginHandler creates a FeishuLoginHandler. An optional
@@ -321,6 +327,10 @@ func NewFeishuLoginHandler(login *FeishuLoginService, providers *LoginProviderSe
 		h.audit = writers[0]
 	}
 	return h
+}
+
+func (h *FeishuLoginHandler) SetEphemeralStore(store ephemeral.Store) {
+	h.ephemeral = store
 }
 
 // SetWebBaseURL configures the browser redirect target after a successful
@@ -393,8 +403,11 @@ func (h FeishuLoginHandler) loginRedirect(w http.ResponseWriter, r *http.Request
 		SourceID: sourceID,
 		ReturnTo: r.URL.Query().Get("return_to"),
 	}
-	stateBytes, _ := json.Marshal(state)
-	stateEncoded := base64.RawURLEncoding.EncodeToString(stateBytes)
+	stateEncoded, err := h.encodeOAuthState(r.Context(), state)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "state_store_unavailable", "could not create oauth state")
+		return
+	}
 
 	params := url.Values{}
 	params.Set("app_id", feishuConfig.AppID)
@@ -424,7 +437,7 @@ func (h FeishuLoginHandler) loginCallback(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	stateBytes, err := base64.RawURLEncoding.DecodeString(stateParam)
+	state, err := h.decodeOAuthState(r.Context(), stateParam)
 	if err != nil {
 		h.writeAudit(r, auditmodel.Event{
 			Action:    auditmodel.ActionLoginFailed,
@@ -441,8 +454,7 @@ func (h FeishuLoginHandler) loginCallback(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid_state", "state parameter is malformed")
 		return
 	}
-	var state oauthState
-	if err := json.Unmarshal(stateBytes, &state); err != nil {
+	if state.EntityID == "" {
 		h.writeAudit(r, auditmodel.Event{
 			Action:    auditmodel.ActionLoginFailed,
 			ActorType: "user",
@@ -537,6 +549,56 @@ func (h FeishuLoginHandler) loginCallback(w http.ResponseWriter, r *http.Request
 		"session": result.SessionValue,
 		"user_id": result.UserID,
 	})
+}
+
+func (h FeishuLoginHandler) encodeOAuthState(ctx context.Context, state oauthState) (string, error) {
+	stateBytes, err := json.Marshal(state)
+	if err != nil {
+		return "", err
+	}
+	if h.ephemeral == nil {
+		return base64.RawURLEncoding.EncodeToString(stateBytes), nil
+	}
+	stateID, err := randomStateID()
+	if err != nil {
+		return "", err
+	}
+	if err := h.ephemeral.Set(ctx, "oidc:state:"+stateID, stateBytes, 5*time.Minute); err != nil {
+		return "", err
+	}
+	return stateID, nil
+}
+
+func (h FeishuLoginHandler) decodeOAuthState(ctx context.Context, value string) (oauthState, error) {
+	if h.ephemeral != nil {
+		if stateBytes, ok, err := h.ephemeral.Get(ctx, "oidc:state:"+value); err != nil {
+			return oauthState{}, err
+		} else if ok {
+			_ = h.ephemeral.Delete(ctx, "oidc:state:"+value)
+			var state oauthState
+			if err := json.Unmarshal(stateBytes, &state); err != nil {
+				return oauthState{}, err
+			}
+			return state, nil
+		}
+	}
+	stateBytes, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return oauthState{}, err
+	}
+	var state oauthState
+	if err := json.Unmarshal(stateBytes, &state); err != nil {
+		return oauthState{}, err
+	}
+	return state, nil
+}
+
+func randomStateID() (string, error) {
+	var buf [32]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf[:]), nil
 }
 
 func (h FeishuLoginHandler) browserReturnTo(returnTo string) string {
@@ -661,7 +723,7 @@ func (h FeishuLoginHandler) listProviders(w http.ResponseWriter, r *http.Request
 // entityFromRequest extracts entity ID from session cookie, X-IDB-Entity-ID header, or query param.
 func entityFromRequest(r *http.Request) string {
 	if cookie, err := r.Cookie("idb_session"); err == nil && cookie.Value != "" {
-		if session, err := DecodeSession(cookie.Value); err == nil && session.EntityID != "" {
+		if session, err := ResolveSession(r.Context(), cookie.Value); err == nil && session.EntityID != "" {
 			return session.EntityID
 		}
 	}

@@ -14,6 +14,7 @@ import (
 )
 
 const authenticateLocalUser = `-- name: AuthenticateLocalUser :one
+
 SELECT
     u.id,
     u.entity_id,
@@ -60,6 +61,7 @@ type AuthenticateLocalUserRow struct {
 	WeakPassword       bool               `json:"weak_password"`
 }
 
+// SPDX-License-Identifier: MIT
 func (q *Queries) AuthenticateLocalUser(ctx context.Context, arg AuthenticateLocalUserParams) (AuthenticateLocalUserRow, error) {
 	row := q.db.QueryRow(ctx, authenticateLocalUser, arg.Username, arg.Crypt)
 	var i AuthenticateLocalUserRow
@@ -155,6 +157,93 @@ func (q *Queries) AuthenticateLocalUserByEntity(ctx context.Context, arg Authent
 	return i, err
 }
 
+const getDefaultLoginContextEntity = `-- name: GetDefaultLoginContextEntity :one
+SELECT
+    be.id AS entity_id,
+    be.slug AS entity_slug,
+    be.name AS entity_name,
+    be.brand_name AS entity_brand_name,
+    be.logo_url AS entity_logo_url,
+    be.login_message AS entity_login_message
+FROM business_entities be
+JOIN identity_sources src ON src.entity_id = be.id
+WHERE be.status = 'active'
+  AND src.type = 'feishu'
+  AND src.status = 'active'
+ORDER BY be.created_at ASC
+LIMIT 1
+`
+
+type GetDefaultLoginContextEntityRow struct {
+	EntityID           string `json:"entity_id"`
+	EntitySlug         string `json:"entity_slug"`
+	EntityName         string `json:"entity_name"`
+	EntityBrandName    string `json:"entity_brand_name"`
+	EntityLogoUrl      string `json:"entity_logo_url"`
+	EntityLoginMessage string `json:"entity_login_message"`
+}
+
+func (q *Queries) GetDefaultLoginContextEntity(ctx context.Context) (GetDefaultLoginContextEntityRow, error) {
+	row := q.db.QueryRow(ctx, getDefaultLoginContextEntity)
+	var i GetDefaultLoginContextEntityRow
+	err := row.Scan(
+		&i.EntityID,
+		&i.EntitySlug,
+		&i.EntityName,
+		&i.EntityBrandName,
+		&i.EntityLogoUrl,
+		&i.EntityLoginMessage,
+	)
+	return i, err
+}
+
+const getLoginContextByOIDCClientID = `-- name: GetLoginContextByOIDCClientID :one
+SELECT
+    be.id AS entity_id,
+    be.slug AS entity_slug,
+    be.name AS entity_name,
+    be.brand_name AS entity_brand_name,
+    be.logo_url AS entity_logo_url,
+    be.login_message AS entity_login_message,
+    a.id AS application_id,
+    a.name AS application_name
+FROM oidc_clients oc
+JOIN applications a ON a.entity_id = oc.entity_id AND a.id = oc.application_id
+JOIN business_entities be ON be.id = oc.entity_id
+WHERE oc.client_id = $1
+  AND oc.status = 'active'
+  AND a.status = 'active'
+  AND be.status = 'active'
+LIMIT 1
+`
+
+type GetLoginContextByOIDCClientIDRow struct {
+	EntityID           string `json:"entity_id"`
+	EntitySlug         string `json:"entity_slug"`
+	EntityName         string `json:"entity_name"`
+	EntityBrandName    string `json:"entity_brand_name"`
+	EntityLogoUrl      string `json:"entity_logo_url"`
+	EntityLoginMessage string `json:"entity_login_message"`
+	ApplicationID      string `json:"application_id"`
+	ApplicationName    string `json:"application_name"`
+}
+
+func (q *Queries) GetLoginContextByOIDCClientID(ctx context.Context, clientID string) (GetLoginContextByOIDCClientIDRow, error) {
+	row := q.db.QueryRow(ctx, getLoginContextByOIDCClientID, clientID)
+	var i GetLoginContextByOIDCClientIDRow
+	err := row.Scan(
+		&i.EntityID,
+		&i.EntitySlug,
+		&i.EntityName,
+		&i.EntityBrandName,
+		&i.EntityLogoUrl,
+		&i.EntityLoginMessage,
+		&i.ApplicationID,
+		&i.ApplicationName,
+	)
+	return i, err
+}
+
 const updateLocalPassword = `-- name: UpdateLocalPassword :one
 UPDATE local_credentials
 SET password_hash = crypt($3, gen_salt('bf')),
@@ -191,93 +280,6 @@ func (q *Queries) UpdateLocalPassword(ctx context.Context, arg UpdateLocalPasswo
 		&i.PasswordUpdatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const getLoginContextByOIDCClientID = `-- name: GetLoginContextByOIDCClientID :one
-SELECT
-    be.id AS entity_id,
-    be.slug AS entity_slug,
-    be.name AS entity_name,
-    be.brand_name AS entity_brand_name,
-    be.logo_url AS entity_logo_url,
-    be.login_message AS entity_login_message,
-    a.id AS application_id,
-    a.name AS application_name
-FROM oidc_clients oc
-JOIN applications a ON a.entity_id = oc.entity_id AND a.id = oc.application_id
-JOIN business_entities be ON be.id = oc.entity_id
-WHERE oc.client_id = $1
-  AND oc.status = 'active'
-  AND a.status = 'active'
-  AND be.status = 'active'
-LIMIT 1
-`
-
-type GetLoginContextByOIDCClientIDRow struct {
-	EntityID           string      `json:"entity_id"`
-	EntitySlug         string      `json:"entity_slug"`
-	EntityName         string      `json:"entity_name"`
-	EntityBrandName    pgtype.Text `json:"entity_brand_name"`
-	EntityLogoUrl      pgtype.Text `json:"entity_logo_url"`
-	EntityLoginMessage pgtype.Text `json:"entity_login_message"`
-	ApplicationID      string      `json:"application_id"`
-	ApplicationName    string      `json:"application_name"`
-}
-
-func (q *Queries) GetLoginContextByOIDCClientID(ctx context.Context, clientID string) (GetLoginContextByOIDCClientIDRow, error) {
-	row := q.db.QueryRow(ctx, getLoginContextByOIDCClientID, clientID)
-	var i GetLoginContextByOIDCClientIDRow
-	err := row.Scan(
-		&i.EntityID,
-		&i.EntitySlug,
-		&i.EntityName,
-		&i.EntityBrandName,
-		&i.EntityLogoUrl,
-		&i.EntityLoginMessage,
-		&i.ApplicationID,
-		&i.ApplicationName,
-	)
-	return i, err
-}
-
-const getDefaultLoginContextEntity = `-- name: GetDefaultLoginContextEntity :one
-SELECT
-    be.id AS entity_id,
-    be.slug AS entity_slug,
-    be.name AS entity_name,
-    be.brand_name AS entity_brand_name,
-    be.logo_url AS entity_logo_url,
-    be.login_message AS entity_login_message
-FROM business_entities be
-JOIN identity_sources src ON src.entity_id = be.id
-WHERE be.status = 'active'
-  AND src.type = 'feishu'
-  AND src.status = 'active'
-ORDER BY be.created_at ASC
-LIMIT 1
-`
-
-type GetDefaultLoginContextEntityRow struct {
-	EntityID           string      `json:"entity_id"`
-	EntitySlug         string      `json:"entity_slug"`
-	EntityName         string      `json:"entity_name"`
-	EntityBrandName    pgtype.Text `json:"entity_brand_name"`
-	EntityLogoUrl      pgtype.Text `json:"entity_logo_url"`
-	EntityLoginMessage pgtype.Text `json:"entity_login_message"`
-}
-
-func (q *Queries) GetDefaultLoginContextEntity(ctx context.Context) (GetDefaultLoginContextEntityRow, error) {
-	row := q.db.QueryRow(ctx, getDefaultLoginContextEntity)
-	var i GetDefaultLoginContextEntityRow
-	err := row.Scan(
-		&i.EntityID,
-		&i.EntitySlug,
-		&i.EntityName,
-		&i.EntityBrandName,
-		&i.EntityLogoUrl,
-		&i.EntityLoginMessage,
 	)
 	return i, err
 }

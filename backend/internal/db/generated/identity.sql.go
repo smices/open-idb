@@ -75,6 +75,7 @@ func (q *Queries) CreateAccountBinding(ctx context.Context, arg CreateAccountBin
 }
 
 const createEntity = `-- name: CreateEntity :one
+
 INSERT INTO business_entities (name, slug, status, default_locale, brand_name, logo_url, login_message)
 VALUES ($1, $2, 'active', $3, $4, $5, $6)
 RETURNING id, name, slug, status, default_locale, brand_name, logo_url, login_message, created_at
@@ -89,6 +90,7 @@ type CreateEntityParams struct {
 	LoginMessage  string `json:"login_message"`
 }
 
+// SPDX-License-Identifier: MIT
 func (q *Queries) CreateEntity(ctx context.Context, arg CreateEntityParams) (BusinessEntity, error) {
 	row := q.db.QueryRow(ctx, createEntity,
 		arg.Name,

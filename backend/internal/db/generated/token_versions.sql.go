@@ -12,6 +12,7 @@ import (
 )
 
 const getPermissionsVersion = `-- name: GetPermissionsVersion :one
+
 SELECT COALESCE(
     (SELECT EXTRACT(EPOCH FROM MAX(sub.ts))::bigint
      FROM (
@@ -27,6 +28,7 @@ SELECT COALESCE(
 )::bigint AS version
 `
 
+// SPDX-License-Identifier: MIT
 func (q *Queries) GetPermissionsVersion(ctx context.Context, entityID string) (int64, error) {
 	row := q.db.QueryRow(ctx, getPermissionsVersion, entityID)
 	var version int64

@@ -85,7 +85,7 @@ func TestOIDCAuthorizationCodeFlow(t *testing.T) {
 		Issuer:         "https://idb.example.test",
 		KeyID:          "dev-key-1",
 		PrivateKey:     privateKey,
-		Queries:        queries,
+		Store:          queries,
 		AuthCodeTTL:    5 * time.Minute,
 		AccessTokenTTL: 15 * time.Minute,
 		IDTokenTTL:     15 * time.Minute,

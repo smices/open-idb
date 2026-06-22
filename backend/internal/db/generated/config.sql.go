@@ -95,12 +95,14 @@ func (q *Queries) GetFeishuSourceByEntity(ctx context.Context, entityID string) 
 }
 
 const listIMProviderConfigs = `-- name: ListIMProviderConfigs :many
+
 SELECT id, entity_id, provider, display_name, status, oauth_configured, bot_configured, sync_enabled, config, created_at, updated_at
 FROM im_provider_configs
 WHERE entity_id = $1
 ORDER BY provider
 `
 
+// SPDX-License-Identifier: MIT
 func (q *Queries) ListIMProviderConfigs(ctx context.Context, entityID string) ([]ImProviderConfig, error) {
 	rows, err := q.db.Query(ctx, listIMProviderConfigs, entityID)
 	if err != nil {

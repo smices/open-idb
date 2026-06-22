@@ -47,42 +47,32 @@ type UserInfoClaims struct {
 	Locale      string
 }
 
-// ssoQuerier abstracts the database queries needed by the SSO service
-// for token introspection, revocation, and user info retrieval.
-//
-// Once sqlc generates code for sso_extra.sql, *generated.Queries will
-// satisfy this interface automatically (with an adapter) or the methods
-// can be called directly via a wrapper implementation.
-type ssoQuerier interface {
-	LookupToken(ctx context.Context, entityID string, tokenHash string) (SSOTokenLookup, error)
-	MarkTokenRevoked(ctx context.Context, entityID string, tokenHash string) error
-	FetchUserInfo(ctx context.Context, entityID string, userID string) (UserInfoClaims, error)
-}
-
 type Service struct {
-	issuer         string
-	keyID          string
-	privateKey     *rsa.PrivateKey
-	queries        *generated.Queries
-	querier        ssoQuerier
-	fosite         FositeProvider
-	now            func() time.Time
-	authCodeTTL    time.Duration
-	accessTokenTTL time.Duration
-	idTokenTTL     time.Duration
+	issuer           string
+	keyID            string
+	privateKey       *rsa.PrivateKey
+	store            Store
+	tokenLookupStore TokenLookupStore
+	fosite           FositeProvider
+	now              func() time.Time
+	authCodeTTL      time.Duration
+	accessTokenTTL   time.Duration
+	idTokenTTL       time.Duration
 }
 
 type ServiceConfig struct {
-	Issuer         string
-	KeyID          string
-	PrivateKey     *rsa.PrivateKey
-	Queries        *generated.Queries
-	Querier        ssoQuerier
-	Fosite         FositeProvider
-	Now            func() time.Time
-	AuthCodeTTL    time.Duration
-	AccessTokenTTL time.Duration
-	IDTokenTTL     time.Duration
+	Issuer           string
+	KeyID            string
+	PrivateKey       *rsa.PrivateKey
+	Store            Store
+	TokenLookupStore TokenLookupStore
+	Queries          Store
+	Querier          TokenLookupStore
+	Fosite           FositeProvider
+	Now              func() time.Time
+	AuthCodeTTL      time.Duration
+	AccessTokenTTL   time.Duration
+	IDTokenTTL       time.Duration
 }
 
 type AuthorizeInput struct {
@@ -143,18 +133,24 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	if cfg.IDTokenTTL == 0 {
 		cfg.IDTokenTTL = 15 * time.Minute
 	}
+	if cfg.Store == nil {
+		cfg.Store = cfg.Queries
+	}
+	if cfg.TokenLookupStore == nil {
+		cfg.TokenLookupStore = cfg.Querier
+	}
 
 	return &Service{
-		issuer:         strings.TrimRight(cfg.Issuer, "/"),
-		keyID:          cfg.KeyID,
-		privateKey:     cfg.PrivateKey,
-		queries:        cfg.Queries,
-		querier:        cfg.Querier,
-		fosite:         cfg.Fosite,
-		now:            cfg.Now,
-		authCodeTTL:    cfg.AuthCodeTTL,
-		accessTokenTTL: cfg.AccessTokenTTL,
-		idTokenTTL:     cfg.IDTokenTTL,
+		issuer:           strings.TrimRight(cfg.Issuer, "/"),
+		keyID:            cfg.KeyID,
+		privateKey:       cfg.PrivateKey,
+		store:            cfg.Store,
+		tokenLookupStore: cfg.TokenLookupStore,
+		fosite:           cfg.Fosite,
+		now:              cfg.Now,
+		authCodeTTL:      cfg.AuthCodeTTL,
+		accessTokenTTL:   cfg.AccessTokenTTL,
+		idTokenTTL:       cfg.IDTokenTTL,
 	}, nil
 }
 
@@ -187,7 +183,7 @@ func (s *Service) ValidateAuthorizeRequest(ctx context.Context, input AuthorizeI
 	if input.CodeChallenge == "" {
 		return AuthorizeDecision{}, fmt.Errorf("code challenge is required")
 	}
-	if s.queries != nil {
+	if s.store != nil {
 		client, err := s.getActiveClient(ctx, input.EntityID, input.ClientID)
 		if err != nil {
 			return AuthorizeDecision{}, err
@@ -219,8 +215,8 @@ func (s *Service) ValidateAuthorizeRequest(ctx context.Context, input AuthorizeI
 }
 
 func (s *Service) IssueAuthorizationCode(ctx context.Context, input AuthorizeInput, subject TokenSubject) (string, error) {
-	if s.queries == nil {
-		return "", fmt.Errorf("queries are required")
+	if s.store == nil {
+		return "", fmt.Errorf("sso store is required")
 	}
 	if _, err := s.ValidateAuthorizeRequest(ctx, input); err != nil {
 		return "", err
@@ -239,7 +235,7 @@ func (s *Service) IssueAuthorizationCode(ctx context.Context, input AuthorizeInp
 	if err != nil {
 		return "", err
 	}
-	lifecycleStatus, err := s.queries.GetUserLifecycleStatus(ctx, generated.GetUserLifecycleStatusParams{
+	lifecycleStatus, err := s.store.GetUserLifecycleStatus(ctx, generated.GetUserLifecycleStatusParams{
 		EntityID: entityID,
 		ID:       userID,
 	})
@@ -250,7 +246,7 @@ func (s *Service) IssueAuthorizationCode(ctx context.Context, input AuthorizeInp
 		return "", fmt.Errorf("%w: status is %s", ErrUserInactive, lifecycleStatus)
 	}
 
-	claims, err := s.queries.GetUserClaimsForToken(ctx, generated.GetUserClaimsForTokenParams{
+	claims, err := s.store.GetUserClaimsForToken(ctx, generated.GetUserClaimsForTokenParams{
 		EntityID: entityID,
 		ID:       userID,
 	})
@@ -261,7 +257,7 @@ func (s *Service) IssueAuthorizationCode(ctx context.Context, input AuthorizeInp
 		return "", ErrUserNotEligibleForApplicationSSO
 	}
 
-	allowed, err := s.queries.HasApplicationAccess(ctx, generated.HasApplicationAccessParams{
+	allowed, err := s.store.HasApplicationAccess(ctx, generated.HasApplicationAccessParams{
 		EntityID:      client.EntityID,
 		ApplicationID: client.ApplicationID,
 		SubjectID:     userID,
@@ -278,7 +274,7 @@ func (s *Service) IssueAuthorizationCode(ctx context.Context, input AuthorizeInp
 		return "", err
 	}
 
-	_, err = s.queries.CreateAuthorizationCode(ctx, generated.CreateAuthorizationCodeParams{
+	_, err = s.store.CreateAuthorizationCode(ctx, generated.CreateAuthorizationCodeParams{
 		EntityID:      entityID,
 		ClientID:      input.ClientID,
 		UserID:        userID,
@@ -299,8 +295,8 @@ func (s *Service) IssueAuthorizationCode(ctx context.Context, input AuthorizeInp
 }
 
 func (s *Service) ExchangeCode(ctx context.Context, input TokenInput) (TokenResponse, error) {
-	if s.queries == nil {
-		return TokenResponse{}, fmt.Errorf("queries are required")
+	if s.store == nil {
+		return TokenResponse{}, fmt.Errorf("sso store is required")
 	}
 	if input.EntityID == "" || input.ClientID == "" || input.Code == "" || input.RedirectURI == "" || input.CodeVerifier == "" {
 		return TokenResponse{}, fmt.Errorf("entity id, client id, code, redirect uri, and code verifier are required")
@@ -310,7 +306,7 @@ func (s *Service) ExchangeCode(ctx context.Context, input TokenInput) (TokenResp
 	if err != nil {
 		return TokenResponse{}, err
 	}
-	codeRecord, err := s.queries.GetAuthorizationCode(ctx, generated.GetAuthorizationCodeParams{
+	codeRecord, err := s.store.GetAuthorizationCode(ctx, generated.GetAuthorizationCodeParams{
 		EntityID: entityID,
 		CodeHash: HashToken(input.Code),
 	})
@@ -336,11 +332,11 @@ func (s *Service) ExchangeCode(ctx context.Context, input TokenInput) (TokenResp
 		return TokenResponse{}, fmt.Errorf("code verifier does not match code challenge")
 	}
 
-	if err := s.queries.MarkAuthorizationCodeUsed(ctx, generated.MarkAuthorizationCodeUsedParams{
+	if _, err := s.store.MarkAuthorizationCodeUsed(ctx, generated.MarkAuthorizationCodeUsedParams{
 		EntityID: entityID,
 		CodeHash: HashToken(input.Code),
 	}); err != nil {
-		return TokenResponse{}, err
+		return TokenResponse{}, fmt.Errorf("authorization code has already been used or expired")
 	}
 
 	sessionID, err := RandomURLSafeToken(24)
@@ -355,7 +351,7 @@ func (s *Service) ExchangeCode(ctx context.Context, input TokenInput) (TokenResp
 	}
 
 	// Enrich subject with user claims and roles for token embedding
-	if claims, err := s.queries.GetUserClaimsForToken(ctx, generated.GetUserClaimsForTokenParams{
+	if claims, err := s.store.GetUserClaimsForToken(ctx, generated.GetUserClaimsForTokenParams{
 		EntityID: entityID,
 		ID:       codeRecord.UserID,
 	}); err == nil {
@@ -375,7 +371,7 @@ func (s *Service) ExchangeCode(ctx context.Context, input TokenInput) (TokenResp
 		}
 		subject.IdentitySources = parseIdentitySources(claims.IdentitySources)
 	}
-	if roles, err := s.queries.GetUserRolesForToken(ctx, generated.GetUserRolesForTokenParams{
+	if roles, err := s.store.GetUserRolesForToken(ctx, generated.GetUserRolesForTokenParams{
 		EntityID: entityID,
 		UserID:   codeRecord.UserID,
 	}); err == nil {
@@ -383,10 +379,10 @@ func (s *Service) ExchangeCode(ctx context.Context, input TokenInput) (TokenResp
 	}
 
 	// Query real version numbers for cache invalidation by downstream apps
-	if permVersion, err := s.queries.GetPermissionsVersion(ctx, entityID); err == nil {
+	if permVersion, err := s.store.GetPermissionsVersion(ctx, entityID); err == nil {
 		subject.PermissionsVersion = permVersion
 	}
-	if rsVersion, err := s.queries.GetResourceScopesVersion(ctx, entityID); err == nil {
+	if rsVersion, err := s.store.GetResourceScopesVersion(ctx, entityID); err == nil {
 		subject.ResourceScopesVersion = rsVersion
 	}
 
@@ -411,7 +407,7 @@ func (s *Service) ExchangeCode(ctx context.Context, input TokenInput) (TokenResp
 		{tokenType: "access", value: accessToken, ttl: s.accessTokenTTL},
 		{tokenType: "id", value: idToken, ttl: s.idTokenTTL},
 	} {
-		if _, err := s.queries.CreateOAuthToken(ctx, generated.CreateOAuthTokenParams{
+		if _, err := s.store.CreateOAuthToken(ctx, generated.CreateOAuthTokenParams{
 			EntityID:  entityID,
 			UserID:    codeRecord.UserID,
 			ClientID:  input.ClientID,
@@ -439,14 +435,14 @@ func (s *Service) ExchangeCode(ctx context.Context, input TokenInput) (TokenResp
 // IntrospectToken looks up an OAuth token by its hash and validates it.
 // Returns the token record if found, not revoked, and not expired.
 func (s *Service) IntrospectToken(ctx context.Context, entityID, tokenHash string) (SSOTokenLookup, error) {
-	if s.querier == nil {
+	if s.tokenLookupStore == nil {
 		return SSOTokenLookup{}, fmt.Errorf("token introspection is not configured")
 	}
 	entityULID, err := ulidValue(entityID)
 	if err != nil {
 		return SSOTokenLookup{}, fmt.Errorf("invalid entity id: %w", err)
 	}
-	token, err := s.querier.LookupToken(ctx, entityULID, tokenHash)
+	token, err := s.tokenLookupStore.LookupToken(ctx, entityULID, tokenHash)
 	if err != nil {
 		return SSOTokenLookup{}, err
 	}
@@ -463,7 +459,7 @@ func (s *Service) IntrospectToken(ctx context.Context, entityID, tokenHash strin
 // return an error if the token is not found — the caller should always
 // respond with 200 OK to the client.
 func (s *Service) RevokeToken(ctx context.Context, entityID, tokenHash string) error {
-	if s.querier == nil {
+	if s.tokenLookupStore == nil {
 		return nil
 	}
 	entityULID, err := ulidValue(entityID)
@@ -471,13 +467,13 @@ func (s *Service) RevokeToken(ctx context.Context, entityID, tokenHash string) e
 		return nil
 	}
 	// Ignore errors — RFC 7009 requires 200 OK even for invalid tokens.
-	_ = s.querier.MarkTokenRevoked(ctx, entityULID, tokenHash)
+	_ = s.tokenLookupStore.MarkTokenRevoked(ctx, entityULID, tokenHash)
 	return nil
 }
 
 // GetUserInfo retrieves user fields for OIDC userinfo claims.
 func (s *Service) GetUserInfo(ctx context.Context, entityID, userID string) (UserInfoClaims, error) {
-	if s.querier == nil {
+	if s.tokenLookupStore == nil {
 		return UserInfoClaims{}, fmt.Errorf("user info is not configured")
 	}
 	entityULID, err := ulidValue(entityID)
@@ -488,7 +484,7 @@ func (s *Service) GetUserInfo(ctx context.Context, entityID, userID string) (Use
 	if err != nil {
 		return UserInfoClaims{}, fmt.Errorf("invalid user id: %w", err)
 	}
-	return s.querier.FetchUserInfo(ctx, entityULID, userULID)
+	return s.tokenLookupStore.FetchUserInfo(ctx, entityULID, userULID)
 }
 
 func authorizeHTTPRequest(input AuthorizeInput) *http.Request {
@@ -511,7 +507,7 @@ func (s *Service) getActiveClient(ctx context.Context, entityIDValue string, cli
 	if err != nil {
 		return generated.OidcClient{}, err
 	}
-	client, err := s.queries.GetOIDCClientByClientID(ctx, generated.GetOIDCClientByClientIDParams{
+	client, err := s.store.GetOIDCClientByClientID(ctx, generated.GetOIDCClientByClientIDParams{
 		EntityID: entityID,
 		ClientID: clientID,
 	})

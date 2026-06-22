@@ -42,6 +42,7 @@ func (q *Queries) CountAuditLogs(ctx context.Context, arg CountAuditLogsParams) 
 }
 
 const createAuditLog = `-- name: CreateAuditLog :one
+
 INSERT INTO audit_logs (
     entity_id,
     actor_user_id,
@@ -74,6 +75,7 @@ type CreateAuditLogParams struct {
 	TraceID      string      `json:"trace_id"`
 }
 
+// SPDX-License-Identifier: MIT
 func (q *Queries) CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) (AuditLog, error) {
 	row := q.db.QueryRow(ctx, createAuditLog,
 		arg.EntityID,

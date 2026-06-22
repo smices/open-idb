@@ -46,7 +46,7 @@ func RequireAuthenticatedRequest(next http.Handler) http.Handler {
 			writeJSONError(w, http.StatusUnauthorized, "session_required", "idb_session cookie is required")
 			return
 		}
-		if _, err := auth.DecodeSession(cookie.Value); err != nil {
+		if _, err := auth.ResolveSession(r.Context(), cookie.Value); err != nil {
 			writeJSONError(w, http.StatusUnauthorized, "invalid_session", "idb_session cookie is invalid")
 			return
 		}

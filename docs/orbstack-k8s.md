@@ -23,6 +23,7 @@ curl -k https://idbridge.local.test/login
 - The local frontend image tag is `open-idb-frontend:dev`, built from `web/`.
 - The Kubernetes manifests use `imagePullPolicy: Never` so OrbStack uses the locally built image.
 - PostgreSQL uses `emptyDir` storage for local development. Data is not durable.
+- Redis is optional. `deploy/k8s/orbstack/redis.yaml` is not part of the default kustomization; apply it only when testing Redis-backed ephemeral state and set `IDB_REDIS_URL` on the app deployment.
 - The migration job runs `goose` from the application image against `/app/migrations`.
 - The Ingress host is `idbridge.local.test` and uses the `traefik` IngressClass.
 - The Ingress points `/` to the `web/` frontend service. The frontend Caddy container only sends `/api*` to the backend.

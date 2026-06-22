@@ -20,6 +20,9 @@ type Config struct {
 	AccessTokenTTL    time.Duration
 	IDTokenTTL        time.Duration
 	AuthCodeTTL       time.Duration
+	SessionTTL        time.Duration
+	RedisEnabled      bool
+	RedisURL          string
 	WebBaseURL        string
 	FeishuAppID       string
 	FeishuAppSecret   string
@@ -44,6 +47,14 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	sessionTTL, err := getDurationSeconds("IDB_SESSION_TTL_SECONDS", 24*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	redisEnabled, err := getBool("IDB_REDIS_ENABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg := Config{
 		HTTPAddr:          getEnv("IDB_HTTP_ADDR", ":8080"),
@@ -55,6 +66,9 @@ func Load() (Config, error) {
 		AccessTokenTTL:    accessTokenTTL,
 		IDTokenTTL:        idTokenTTL,
 		AuthCodeTTL:       authCodeTTL,
+		SessionTTL:        sessionTTL,
+		RedisEnabled:      redisEnabled,
+		RedisURL:          os.Getenv("IDB_REDIS_URL"),
 		WebBaseURL:        os.Getenv("IDB_WEB_BASE_URL"),
 		FeishuAppID:       os.Getenv("IDB_FEISHU_APP_ID"),
 		FeishuAppSecret:   os.Getenv("IDB_FEISHU_APP_SECRET"),
@@ -72,6 +86,12 @@ func Load() (Config, error) {
 		if err := validateAbsoluteURL("IDB_WEB_BASE_URL", cfg.WebBaseURL); err != nil {
 			return Config{}, err
 		}
+	}
+	if cfg.RedisURL != "" {
+		cfg.RedisEnabled = true
+	}
+	if cfg.RedisEnabled && cfg.RedisURL == "" {
+		return Config{}, fmt.Errorf("IDB_REDIS_URL is required when IDB_REDIS_ENABLED is true")
 	}
 
 	return cfg, nil
@@ -98,6 +118,18 @@ func getDurationSeconds(key string, fallback time.Duration) (time.Duration, erro
 		return 0, fmt.Errorf("%s must be greater than zero", key)
 	}
 	return time.Duration(seconds) * time.Second, nil
+}
+
+func getBool(key string, fallback bool) (bool, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean", key)
+	}
+	return parsed, nil
 }
 
 func validateAbsoluteURL(key string, value string) error {

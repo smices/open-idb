@@ -10,8 +10,10 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/smices/open-idb/internal/ephemeral"
 )
 
 func TestLoginAccountSetsSessionAndRedirects(t *testing.T) {
@@ -73,6 +75,25 @@ func TestLoginAccountRedirectsBrowserFormErrorsToLogin(t *testing.T) {
 	}
 	if location := rec.Header().Get("Location"); location != "/?login_error=invalid_credentials" {
 		t.Fatalf("Location = %q", location)
+	}
+}
+
+func TestLoginAccountRateLimitsRepeatedAttempts(t *testing.T) {
+	router := chi.NewRouter()
+	handler := NewHandler(fakeLoginService{err: errInvalidLogin{}})
+	handler.SetEphemeralStore(ephemeral.NewMemoryStore())
+	handler.RegisterRoutes(router)
+
+	var rec *httptest.ResponseRecorder
+	for i := 0; i < 11; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/login/account", strings.NewReader("entity_id=entity-1&account=admin&password=bad"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec = httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+	}
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusTooManyRequests)
 	}
 }
 
@@ -199,6 +220,19 @@ func (f fakeLoginService) AuthenticateLocal(context.Context, string, string) (Lo
 
 func (f fakeLoginService) AuthenticateLocalWithEntity(context.Context, string, string, string) (LoginResult, error) {
 	return f.result, f.err
+}
+
+func (f fakeLoginService) CreateLoginSession(_ context.Context, result LoginResult, _ SessionMetadata) (Session, error) {
+	return Session{
+		ID:                 "test-session-id",
+		UserID:             result.UserID,
+		EntityID:           result.EntityID,
+		Username:           result.Username,
+		DisplayName:        result.DisplayName,
+		MustChangePassword: result.MustChangePassword,
+		WeakPassword:       result.WeakPassword,
+		ExpiresAt:          time.Now().Add(time.Hour),
+	}, nil
 }
 
 func (f fakeLoginService) GetLoginContextEntityBySlug(_ context.Context, slug string) (LoginContextEntity, error) {

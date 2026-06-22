@@ -15,6 +15,7 @@ import (
 
 const getOAuthTokenByHash = `-- name: GetOAuthTokenByHash :one
 
+
 SELECT id, entity_id, user_id, client_id, token_type, token_hash, scopes, revoked_at, expires_at
 FROM oauth_tokens
 WHERE entity_id = $1 AND token_hash = $2
@@ -37,6 +38,7 @@ type GetOAuthTokenByHashRow struct {
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 }
 
+// SPDX-License-Identifier: MIT
 // === Token Introspection ===
 func (q *Queries) GetOAuthTokenByHash(ctx context.Context, arg GetOAuthTokenByHashParams) (GetOAuthTokenByHashRow, error) {
 	row := q.db.QueryRow(ctx, getOAuthTokenByHash, arg.EntityID, arg.TokenHash)

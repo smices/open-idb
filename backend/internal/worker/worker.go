@@ -55,6 +55,7 @@ type Worker struct {
 	logger    *zap.Logger
 	scheduler *Scheduler
 	audit     *AuditProcessor
+	cleanup   *CleanupRunner
 
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
@@ -63,17 +64,22 @@ type Worker struct {
 // New creates a Worker.  The scheduler and audit processor are wired
 // internally; callers supply the SyncRunner and AuditWriter that connect
 // to the database.
-func New(cfg Config, logger *zap.Logger, runner *SyncRunner, auditSvc AuditWriter) *Worker {
+func New(cfg Config, logger *zap.Logger, runner *SyncRunner, auditSvc AuditWriter, cleanupRunners ...*CleanupRunner) *Worker {
 	cfg.applyDefaults()
 
 	audit := NewAuditProcessor(auditSvc, cfg.AuditBufferSize, logger)
 	scheduler := NewScheduler(runner, audit, cfg.MaxConcurrentSyncs, cfg.MaxConcurrentPerEntity, logger)
+	var cleanup *CleanupRunner
+	if len(cleanupRunners) > 0 {
+		cleanup = cleanupRunners[0]
+	}
 
 	return &Worker{
 		cfg:       cfg,
 		logger:    logger,
 		scheduler: scheduler,
 		audit:     audit,
+		cleanup:   cleanup,
 	}
 }
 
@@ -109,6 +115,14 @@ func (w *Worker) Start(ctx context.Context) {
 		defer w.wg.Done()
 		w.scheduler.Run(ctx)
 	}()
+
+	if w.cleanup != nil {
+		w.wg.Add(1)
+		go func() {
+			defer w.wg.Done()
+			w.cleanup.Run(ctx)
+		}()
+	}
 }
 
 // Stop cancels the worker context and blocks until all goroutines exit.

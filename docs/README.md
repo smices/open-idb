@@ -5,6 +5,7 @@
 - [业务实体边界重规划](superpowers/plans/2026-06-02-business-entity-boundary-replan.md)
 - [开发与本地联调文档](development.md)
 - [接入与集成指南](integration-guide.md)
+- [存储架构：PostgreSQL 与 Redis 边界](architecture/storage.md)
 - [Web 前端评审清单](web-review-checklist.md)
 - [Web 前端最终交付清单](web-final-delivery-checklist.md)
 - [Web 前端统一硬约束（Tailwind+Skeleton + 非 SPA + SvelteKit）](web-svelte-tailwind-contract.md)（v1.3）

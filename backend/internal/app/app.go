@@ -15,6 +15,7 @@ import (
 	"github.com/smices/open-idb/internal/auth"
 	"github.com/smices/open-idb/internal/config"
 	"github.com/smices/open-idb/internal/db/generated"
+	"github.com/smices/open-idb/internal/ephemeral"
 	"github.com/smices/open-idb/internal/httpserver"
 	"github.com/smices/open-idb/internal/idp"
 	"github.com/smices/open-idb/internal/idp/feishu"
@@ -37,13 +38,31 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 	routerOptions := []httpserver.Option{}
 	closeFn := func() {}
 	var bgWorker *worker.Worker
-	if cfg.DatabaseURL != "" {
-		pool, err := postgres.NewPool(ctx, cfg.DatabaseURL)
+	ephemeralStore := ephemeral.Store(ephemeral.NewMemoryStore())
+	if cfg.RedisEnabled {
+		redisStore, err := ephemeral.NewRedisStore(ctx, cfg.RedisURL)
 		if err != nil {
 			return nil, err
 		}
-		closeFn = pool.Close
+		ephemeralStore = redisStore
+		closeFn = func() {
+			_ = ephemeralStore.Close()
+		}
+	}
+	if cfg.DatabaseURL != "" {
+		pool, err := postgres.NewPool(ctx, cfg.DatabaseURL)
+		if err != nil {
+			_ = ephemeralStore.Close()
+			return nil, err
+		}
+		previousCloseFn := closeFn
+		closeFn = func() {
+			auth.SetSessionResolver(nil)
+			previousCloseFn()
+			pool.Close()
+		}
 		queries := generated.New(pool)
+		auth.SetSessionResolver(auth.NewDatabaseSessionResolver(queries))
 
 		// Audit service is created early so it can be injected into all
 		// handlers that need to write audit events.
@@ -51,38 +70,41 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 
 		privateKey, err := sso.GenerateRSAKey()
 		if err != nil {
-			pool.Close()
+			closeFn()
 			return nil, err
 		}
 		service, err := sso.NewService(sso.ServiceConfig{
-			Issuer:         cfg.OIDCIssuer,
-			KeyID:          cfg.OIDCKeyID,
-			PrivateKey:     privateKey,
-			Queries:        queries,
-			Querier:        sso.NewDatabaseQuerier(queries),
-			AuthCodeTTL:    cfg.AuthCodeTTL,
-			AccessTokenTTL: cfg.AccessTokenTTL,
-			IDTokenTTL:     cfg.IDTokenTTL,
+			Issuer:           cfg.OIDCIssuer,
+			KeyID:            cfg.OIDCKeyID,
+			PrivateKey:       privateKey,
+			Store:            queries,
+			TokenLookupStore: sso.NewDatabaseQuerier(queries),
+			AuthCodeTTL:      cfg.AuthCodeTTL,
+			AccessTokenTTL:   cfg.AccessTokenTTL,
+			IDTokenTTL:       cfg.IDTokenTTL,
 		})
 		if err != nil {
-			pool.Close()
+			closeFn()
 			return nil, err
 		}
 		handler := sso.NewHandler(service, auditService)
+		handler.SetEphemeralStore(ephemeralStore)
 		routerOptions = append(routerOptions, handler.RegisterRoutes)
 
 		authService, err := auth.NewService(queries)
 		if err != nil {
-			pool.Close()
+			closeFn()
 			return nil, err
 		}
 		authHandler := auth.NewHandler(authService, auditService)
+		authHandler.SetSessionTTL(cfg.SessionTTL)
+		authHandler.SetEphemeralStore(ephemeralStore)
 		routerOptions = append(routerOptions, authHandler.RegisterRoutes)
 
 		// Console service (dashboard, current user, password)
 		consoleService, err := adminapi.NewService(queries)
 		if err != nil {
-			pool.Close()
+			closeFn()
 			return nil, err
 		}
 		adminHandler := adminapi.NewHandler(nil, consoleService)
@@ -91,7 +113,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		// Config service (IM providers, MCP connectors)
 		configService, err := adminapi.NewConfigService(queries)
 		if err != nil {
-			pool.Close()
+			closeFn()
 			return nil, err
 		}
 		configHandler := adminapi.NewConfigHandler(configService)
@@ -104,7 +126,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		// Admin CRUD APIs (with audit logging)
 		adminCRUDService, err := adminapi.NewAdminService(queries, auditService)
 		if err != nil {
-			pool.Close()
+			closeFn()
 			return nil, err
 		}
 		entityHandler := adminapi.NewEntityHandler(adminCRUDService)
@@ -153,7 +175,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		// Internal v1 APIs (service-to-service authorization)
 		internalService, err := adminapi.NewInternalService(queries)
 		if err != nil {
-			pool.Close()
+			closeFn()
 			return nil, err
 		}
 		internalHandler := adminapi.NewInternalHandler(internalService)
@@ -162,12 +184,12 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		// RBAC with Casbin
 		enforcer, err := rbac.NewEnforcer()
 		if err != nil {
-			pool.Close()
+			closeFn()
 			return nil, err
 		}
 		rbacService, err := rbac.NewService(queries, enforcer)
 		if err != nil {
-			pool.Close()
+			closeFn()
 			return nil, err
 		}
 		rbacHandler := rbac.NewHandler(rbacService)
@@ -175,7 +197,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 
 		// Login providers discovery endpoint + Feishu login and sync.
 		providerService := auth.NewLoginProviderService(queries, cfg.FeishuAppID, cfg.FeishuAppSecret, cfg.FeishuRedirectURI)
-		feishuLoginService := auth.NewFeishuLoginService(queries, nil, 24*time.Hour)
+		feishuLoginService := auth.NewFeishuLoginService(queries, nil, cfg.SessionTTL)
 		feishuLoginService.SetClientResolver(feishuClientResolver{
 			buildClient: func(ctx context.Context, entityID string) (*feishu.Client, error) {
 				resolvedCfg, err := providerService.ResolveFeishuConfig(ctx, entityID)
@@ -191,6 +213,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		})
 
 		legacyLoginService := auth.NewLegacyLoginService(queries)
+		legacyLoginService.SetSessionTTL(cfg.SessionTTL)
 		legacyLoginHandler := auth.NewLegacyLoginHandler(legacyLoginService, auditService)
 		routerOptions = append(routerOptions, legacyLoginHandler.RegisterRoutes)
 
@@ -217,7 +240,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 			Audit: auditService,
 		})
 		if err != nil {
-			pool.Close()
+			closeFn()
 			return nil, err
 		}
 		syncHandler := adminapi.NewHandler(syncService, nil)
@@ -225,10 +248,12 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 
 		// Create background worker for sync job processing
 		syncRunner := worker.NewSyncRunner(syncService, logger)
-		bgWorker = worker.New(worker.Config{}, logger, syncRunner, auditService)
+		cleanupRunner := worker.NewCleanupRunner(queries, time.Hour, logger)
+		bgWorker = worker.New(worker.Config{}, logger, syncRunner, auditService, cleanupRunner)
 
 		feishuLoginHandler := auth.NewFeishuLoginHandler(feishuLoginService, providerService, cfg.FeishuAppID, cfg.FeishuRedirectURI, auditService)
 		feishuLoginHandler.SetWebBaseURL(cfg.WebBaseURL)
+		feishuLoginHandler.SetEphemeralStore(ephemeralStore)
 		routerOptions = append(routerOptions, feishuLoginHandler.RegisterRoutes)
 	}
 

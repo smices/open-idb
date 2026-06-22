@@ -15,6 +15,7 @@ import (
 
 const getSSOTokenByHash = `-- name: GetSSOTokenByHash :one
 
+
 SELECT id, entity_id, user_id, client_id, token_type, token_hash, scopes, revoked_at, expires_at, created_at
 FROM oauth_tokens
 WHERE entity_id = $1 AND token_hash = $2
@@ -25,6 +26,7 @@ type GetSSOTokenByHashParams struct {
 	TokenHash string `json:"token_hash"`
 }
 
+// SPDX-License-Identifier: MIT
 // === SSO Token Introspection & Revocation ===
 // These queries support the /oauth2/userinfo and /oauth2/revoke endpoints.
 // Named with SSO prefix to avoid collisions with internal.sql queries.

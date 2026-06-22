@@ -14,6 +14,7 @@ import (
 )
 
 const getUserClaimsForToken = `-- name: GetUserClaimsForToken :one
+
 SELECT u.id, u.entity_id, u.username, u.display_name, u.email, u.phone, u.avatar_url, u.locale,
        COALESCE(
            (SELECT json_agg(DISTINCT isrc.type)
@@ -43,6 +44,7 @@ type GetUserClaimsForTokenRow struct {
 	IdentitySources interface{} `json:"identity_sources"`
 }
 
+// SPDX-License-Identifier: MIT
 func (q *Queries) GetUserClaimsForToken(ctx context.Context, arg GetUserClaimsForTokenParams) (GetUserClaimsForTokenRow, error) {
 	row := q.db.QueryRow(ctx, getUserClaimsForToken, arg.EntityID, arg.ID)
 	var i GetUserClaimsForTokenRow

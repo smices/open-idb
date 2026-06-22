@@ -69,6 +69,7 @@ func (q *Queries) GetCurrentUserByID(ctx context.Context, arg GetCurrentUserByID
 }
 
 const getDashboardSummary = `-- name: GetDashboardSummary :one
+
 SELECT
     count(*)::bigint AS users,
     count(*) FILTER (WHERE lifecycle_status = 'active')::bigint AS active_users,
@@ -103,6 +104,7 @@ type GetDashboardSummaryRow struct {
 	SyncHealth           string `json:"sync_health"`
 }
 
+// SPDX-License-Identifier: MIT
 func (q *Queries) GetDashboardSummary(ctx context.Context, entityID string) (GetDashboardSummaryRow, error) {
 	row := q.db.QueryRow(ctx, getDashboardSummary, entityID)
 	var i GetDashboardSummaryRow

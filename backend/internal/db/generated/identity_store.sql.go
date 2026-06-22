@@ -90,6 +90,7 @@ func (q *Queries) GetUserByEntityAndID(ctx context.Context, arg GetUserByEntityA
 
 const listAccountBindingsByUser = `-- name: ListAccountBindingsByUser :many
 
+
 SELECT id, entity_id, user_id, source_id, directory_user_id, provider_uid, provider_union_id, is_primary, bound_at
 FROM account_bindings
 WHERE entity_id = $1 AND user_id = $2
@@ -101,6 +102,7 @@ type ListAccountBindingsByUserParams struct {
 	UserID   string `json:"user_id"`
 }
 
+// SPDX-License-Identifier: MIT
 // === Account Bindings ===
 func (q *Queries) ListAccountBindingsByUser(ctx context.Context, arg ListAccountBindingsByUserParams) ([]AccountBinding, error) {
 	rows, err := q.db.Query(ctx, listAccountBindingsByUser, arg.EntityID, arg.UserID)
