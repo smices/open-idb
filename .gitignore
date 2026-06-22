@@ -1,0 +1,74 @@
+# Go
+*.exe
+*.exe~
+*.test
+*.out
+go.work.sum
+vendor/
+bin/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.codex/
+.claude/
+.qwen/
+tools/virtual-modbus-slave/venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+build/
+.svelte-kit/
+.next/
+.turbo/
+
+# C / Gateway
+*.o
+*.a
+*.so
+*.dylib
+*.elf
+*.bin
+*.hex
+gateway/firmware/build/
+gateway/firmware/cmake-build*/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local secrets / config
+.env
+.env.*
+!.env.example
+.local/
+
+# Build artifacts
+coverage/
+reports/
+tmp/
+temp/
+
+# Docker volumes
+volumes/
+
+# Logs
+*.log
+logs/
+
+# Test output
+junit.xml
+coverage.xml
+
+# macOS
+.DS_Store

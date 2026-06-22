@@ -1,0 +1,7 @@
+.git
+.codex
+docs/superpowers
+tmp
+*.log
+*.pid
+.DS_Store

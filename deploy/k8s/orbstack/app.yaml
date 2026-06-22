@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: MIT
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: idbridge
+  namespace: open-idb
+  labels:
+    app.kubernetes.io/name: idbridge
+    app.kubernetes.io/part-of: idbridge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: idbridge
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: idbridge
+        app.kubernetes.io/part-of: idbridge
+    spec:
+      containers:
+        - name: idbridge
+          image: open-idb:dev
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: IDB_HTTP_ADDR
+              value: ":8080"
+            - name: IDB_OIDC_ISSUER
+              value: "https://idbridge.local.test"
+            - name: IDB_WEB_BASE_URL
+              value: "https://idbridge.local.test"
+            - name: IDB_OIDC_KEY_ID
+              value: "dev-key-1"
+            - name: IDB_FEISHU_REDIRECT_URI
+              value: "https://idbridge.local.test/api/auth/feishu/callback"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: idbridge-postgres
+                  key: DATABASE_URL
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: idbridge
+  namespace: open-idb
+  labels:
+    app.kubernetes.io/name: idbridge
+    app.kubernetes.io/part-of: idbridge
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: idbridge
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

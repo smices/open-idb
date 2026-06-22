@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: open-idb
+  labels:
+    app.kubernetes.io/name: open-idb
+    app.kubernetes.io/part-of: idbridge

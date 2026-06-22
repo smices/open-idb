@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: MIT
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: idbridge
+  namespace: open-idb
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  labels:
+    app.kubernetes.io/name: idbridge
+    app.kubernetes.io/part-of: idbridge
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - idbridge.local.test
+      secretName: idbridge-tls
+  rules:
+    - host: idbridge.local.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: idbridge-frontend
+                port:
+                  number: 80

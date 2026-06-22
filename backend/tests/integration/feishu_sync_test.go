@@ -1,0 +1,250 @@
+// SPDX-License-Identifier: MIT
+
+package integration
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/smices/open-idb/internal/db/generated"
+	"github.com/smices/open-idb/internal/idp"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
+)
+
+func TestFeishuFullSyncCreatesAndUpdatesIdentityRecords(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	container, err := postgres.Run(ctx,
+		"postgres:16-alpine",
+		postgres.WithDatabase("idbridge"),
+		postgres.WithUsername("postgres"),
+		postgres.WithPassword("postgres"),
+		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
+	)
+	if err != nil {
+		t.Fatalf("start postgres container: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if err := container.Terminate(cleanupCtx); err != nil {
+			t.Errorf("terminate postgres container: %v", err)
+		}
+	})
+
+	conn, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("connection string: %v", err)
+	}
+	applyMigrations(ctx, t, conn)
+
+	pool, err := pgxpool.New(ctx, conn)
+	if err != nil {
+		t.Fatalf("open pgx pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	queries := generated.New(pool)
+
+	entity, err := queries.CreateEntity(ctx, generated.CreateEntityParams{
+		Name:          "Feishu Entity",
+		Slug:          "feishu",
+		DefaultLocale: "en-US",
+	})
+	if err != nil {
+		t.Fatalf("create entity: %v", err)
+	}
+	source, err := queries.CreateIdentitySource(ctx, generated.CreateIdentitySourceParams{
+		EntityID:    entity.ID,
+		Type:        "feishu",
+		Name:        "飞书",
+		SyncEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+
+	provider := &fakeDirectoryProvider{data: idp.FullSyncData{
+		Departments: []idp.DirectoryDepartment{
+			{
+				ExternalDepartmentID:       "od-1",
+				ParentExternalDepartmentID: "0",
+				Name:                       "研发中心",
+				RawProfile:                 []byte(`{"name":"研发中心"}`),
+			},
+		},
+		Users: []idp.DirectoryUser{
+			{
+				ExternalUserID:  "ou_1",
+				ExternalUnionID: "on_1",
+				ExternalOpenID:  "open_1",
+				Name:            "张三",
+				Email:           "zhangsan@example.test",
+				Phone:           "13800000000",
+				Status:          "active",
+				RawProfile:      []byte(`{"name":"张三","title":"运营"}`),
+			},
+		},
+	}}
+	service, err := idp.NewSyncService(idp.SyncServiceConfig{
+		Queries:  queries,
+		Provider: provider,
+		TraceID:  func() string { return "trace-feishu-sync" },
+	})
+	if err != nil {
+		t.Fatalf("new sync service: %v", err)
+	}
+
+	result, err := service.RunFullSync(ctx, idp.FullSyncInput{
+		EntityID: pgULIDString(entity.ID),
+		SourceID: pgULIDString(source.ID),
+		Provider: "feishu",
+	})
+	if err != nil {
+		t.Fatalf("run sync: %v", err)
+	}
+	if result.DepartmentsUpserted != 1 || result.UsersUpserted != 1 || result.ManagedUsersCreated != 1 || result.BindingsCreated != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+
+	assertSingleString(t, ctx, pool, "select name from directory_departments where entity_id=$1 and source_id=$2", "研发中心", entity.ID, source.ID)
+	assertSingleString(t, ctx, pool, "select name from directory_users where entity_id=$1 and source_id=$2", "张三", entity.ID, source.ID)
+	assertSingleString(t, ctx, pool, "select display_name from users where entity_id=$1", "张三", entity.ID)
+	assertSingleString(t, ctx, pool, "select status from sync_jobs where entity_id=$1 and source_id=$2 order by started_at desc limit 1", "succeeded", entity.ID, source.ID)
+	assertSingleInt(t, ctx, pool, "select count(*) from account_bindings where entity_id=$1 and source_id=$2", 1, entity.ID, source.ID)
+
+	provider.data.Users[0].Name = "张三-更新"
+	provider.data.Users[0].Status = "disabled"
+	if _, err := service.SubmitWebhookEvent(ctx, pgULIDString(entity.ID), pgULIDString(source.ID), idp.DirectorySyncEvent{
+		EventType:  "user.updated",
+		ObjectType: "user",
+		ObjectID:   provider.data.Users[0].ExternalUserID,
+	}); err != nil {
+		t.Fatalf("submit webhook event: %v", err)
+	}
+	second, err := service.RunIncrementalSync(ctx, idp.FullSyncInput{
+		EntityID: pgULIDString(entity.ID),
+		SourceID: pgULIDString(source.ID),
+		Provider: "feishu",
+	})
+	if err != nil {
+		t.Fatalf("run second incremental sync: %v", err)
+	}
+	if second.ManagedUsersCreated != 0 || second.ManagedUsersUpdated != 1 || second.BindingsCreated != 0 {
+		t.Fatalf("second result = %#v", second)
+	}
+	assertSingleString(t, ctx, pool, "select display_name from users where entity_id=$1", "张三-更新", entity.ID)
+	assertSingleString(t, ctx, pool, "select lifecycle_status from users where entity_id=$1", "disabled", entity.ID)
+}
+
+func TestFeishuFullSyncMarksJobFailedOnProviderError(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	container, err := postgres.Run(ctx,
+		"postgres:16-alpine",
+		postgres.WithDatabase("idbridge"),
+		postgres.WithUsername("postgres"),
+		postgres.WithPassword("postgres"),
+		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
+	)
+	if err != nil {
+		t.Fatalf("start postgres container: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if err := container.Terminate(cleanupCtx); err != nil {
+			t.Errorf("terminate postgres container: %v", err)
+		}
+	})
+	conn, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("connection string: %v", err)
+	}
+	applyMigrations(ctx, t, conn)
+	pool, err := pgxpool.New(ctx, conn)
+	if err != nil {
+		t.Fatalf("open pgx pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	queries := generated.New(pool)
+	entity, err := queries.CreateEntity(ctx, generated.CreateEntityParams{Name: "Fail Entity", Slug: "fail", DefaultLocale: "en-US"})
+	if err != nil {
+		t.Fatalf("create entity: %v", err)
+	}
+	source, err := queries.CreateIdentitySource(ctx, generated.CreateIdentitySourceParams{EntityID: entity.ID, Type: "feishu", Name: "飞书", SyncEnabled: true})
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	service, err := idp.NewSyncService(idp.SyncServiceConfig{
+		Queries:  queries,
+		Provider: fakeDirectoryProvider{err: errProviderDown{}},
+		TraceID:  func() string { return "trace-failed" },
+	})
+	if err != nil {
+		t.Fatalf("new sync service: %v", err)
+	}
+
+	_, err = service.RunFullSync(ctx, idp.FullSyncInput{EntityID: pgULIDString(entity.ID), SourceID: pgULIDString(source.ID), Provider: "feishu"})
+	if err == nil {
+		t.Fatal("RunFullSync() error = nil, want provider error")
+	}
+	assertSingleString(t, ctx, pool, "select status from sync_jobs where entity_id=$1 and source_id=$2 order by started_at desc limit 1", "failed", entity.ID, source.ID)
+	var message string
+	if err := pool.QueryRow(ctx, "select error_message from sync_jobs where entity_id=$1 and source_id=$2 order by started_at desc limit 1", entity.ID, source.ID).Scan(&message); err != nil {
+		t.Fatalf("query error message: %v", err)
+	}
+	if !strings.Contains(message, "provider down") {
+		t.Fatalf("error message = %q", message)
+	}
+}
+
+type fakeDirectoryProvider struct {
+	data idp.FullSyncData
+	err  error
+}
+
+func (f fakeDirectoryProvider) FullSync(context.Context) (idp.FullSyncData, error) {
+	return f.data, f.err
+}
+
+func (f fakeDirectoryProvider) IncrementalSync(context.Context, []idp.DirectorySyncEvent) (idp.FullSyncData, error) {
+	return f.data, f.err
+}
+
+type errProviderDown struct{}
+
+func (errProviderDown) Error() string {
+	return "provider down"
+}
+
+func assertSingleString(t *testing.T, ctx context.Context, pool *pgxpool.Pool, query string, want string, args ...interface{}) {
+	t.Helper()
+	var got string
+	if err := pool.QueryRow(ctx, query, args...).Scan(&got); err != nil {
+		t.Fatalf("query %q: %v", query, err)
+	}
+	if got != want {
+		t.Fatalf("query %q = %q, want %q", query, got, want)
+	}
+}
+
+func assertSingleInt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, query string, want int, args ...interface{}) {
+	t.Helper()
+	var got int
+	if err := pool.QueryRow(ctx, query, args...).Scan(&got); err != nil {
+		t.Fatalf("query %q: %v", query, err)
+	}
+	if got != want {
+		t.Fatalf("query %q = %d, want %d", query, got, want)
+	}
+}

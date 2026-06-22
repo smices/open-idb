@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT
+
+:80 {
+	encode zstd gzip
+
+	@backend path /api*
+	handle @backend {
+		reverse_proxy http://idbridge:8080
+	}
+
+	handle {
+		root * /usr/share/caddy
+		try_files {path} {path}/ /index.html
+		file_server
+	}
+}
