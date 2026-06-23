@@ -60,7 +60,7 @@
       items: [
         { id: 'organization', path: '/admin/organization', label: '组织架构', title: '组织架构', description: '基于已接入身份源生成公司、部门和用户分组；未配置身份源前不应维护组织架构。', icon: Network },
         { id: 'users', path: '/admin/users', label: '账号管理', title: '账号管理', description: '维护系统内可登录、可授权、可分配角色和应用权限的账号。', icon: UsersRound },
-        { id: 'applications', path: '/admin/applications', label: '应用', title: '应用管理', description: '管理接入 IdBridge 的业务应用、OIDC 客户端和旧系统账号映射。', icon: AppWindow },
+        { id: 'applications', path: '/admin/applications', label: '应用', title: '应用管理', description: '管理接入 IdBridge 的业务应用，维护 OIDC 接入配置和客户端凭据。', icon: AppWindow },
         { id: 'roles', path: '/admin/roles', label: '角色权限', title: '角色权限', description: '定义角色、权限和资源范围，并分配给账号或组织对象。', icon: ShieldCheck },
       ],
     },
@@ -128,7 +128,9 @@
           authUser.set(user as UserSummary);
         }
       } catch {
-        redirectToPath(isAdminPath(page.url.pathname) ? '/admin/login' : '/login');
+        const returnTo = `${page.url.pathname}${page.url.search}`;
+        const loginPath = isAdminPath(page.url.pathname) ? '/admin/login' : '/login';
+        redirectToPath(`${loginPath}?return_to=${encodeURIComponent(returnTo)}`);
       } finally {
         authLoading.set(false);
       }

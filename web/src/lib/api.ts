@@ -430,26 +430,6 @@ export interface OIDCClientCreateResponse {
   client_secret: string;
 }
 
-export interface LegacyAppUser {
-  id: string;
-  entity_id: string;
-  application_id: string;
-  user_id: string;
-  username: string;
-  legacy_user_identifier: string;
-  auth_scheme: string;
-  is_active: boolean;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface LegacyUsersListResponse {
-  items: LegacyAppUser[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
 export interface IMProviderConfig {
   id?: string;
   provider: string;
@@ -466,7 +446,7 @@ export interface LoginProvider {
   oauth_url?: string;
 }
 
-export type LoginMode = 'app' | 'user' | 'entity_admin';
+export type LoginMode = 'app' | 'user' | 'admin' | 'entity_admin';
 
 export interface LoginContext {
   mode: LoginMode;
@@ -478,16 +458,6 @@ export interface LoginContext {
   return_to: string;
   preferred_provider?: string;
   auto_redirect_url?: string;
-}
-
-export interface LegacyLoginResponse {
-  code: string;
-  user_id: string;
-  entity_id: string;
-  application_id: string;
-  username: string;
-  display_name: string;
-  session: string;
 }
 
 export interface UserApplicationAccess {
@@ -542,11 +512,6 @@ export const api = {
     const suffix = queryString({ path: params?.path, return_to: params?.return_to });
     return apiRequest<LoginContext>(`/sapi/auth/context${suffix}`);
   },
-  legacyLogin: (payload: { entity_id: string; application_id: string; username: string; password: string }) =>
-    apiRequest<LegacyLoginResponse>('/api/login/legacy', {
-      method: 'POST',
-      body: payload,
-    }),
   dashboardSummary: (): Promise<DashboardSummary> =>
     apiRequest<DashboardSummary>('/sapi/dashboard/summary'),
   listAuditLogs: (params?: {
@@ -579,31 +544,6 @@ export const api = {
   },
   getDirectoryUser: (id: string) =>
     apiRequest<DirectoryUser>(`/sapi/directory-users/${encodeURIComponent(id)}`),
-  listOrganizations: (params?: { limit?: number; offset?: number }) => {
-    const suffix = queryString({ limit: params?.limit, offset: params?.offset });
-    return apiRequest<PagedResponse<Organization>>(`/sapi/organizations${suffix}`);
-  },
-  getOrganization: (id: string) =>
-    apiRequest<Organization>(`/sapi/organizations/${encodeURIComponent(id)}`),
-  createOrganization: (payload: { name: string; parent_id?: string }) =>
-    apiRequest<Organization>('/sapi/organizations', { method: 'POST', body: payload }),
-  updateOrganization: (id: string, payload: { name?: string; parent_id?: string }) =>
-    apiRequest<Organization>(`/sapi/organizations/${encodeURIComponent(id)}`, {
-      method: 'PUT',
-      body: payload,
-    }),
-  deleteOrganization: (id: string) =>
-    apiRequest<void>(`/sapi/organizations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  listDepartments: (params?: { organization_id?: string; limit?: number; offset?: number }) => {
-    const suffix = queryString({
-      organization_id: params?.organization_id,
-      limit: params?.limit,
-      offset: params?.offset,
-    });
-    return apiRequest<PagedResponse<Department>>(`/sapi/departments${suffix}`);
-  },
-  getDepartment: (id: string) =>
-    apiRequest<Department>(`/sapi/departments/${encodeURIComponent(id)}`),
   getOrganizationTreeRoot: (params?: { limit?: number; offset?: number }) => {
     const suffix = queryString({ limit: params?.limit, offset: params?.offset });
     return apiRequest<OrganizationTreeRootResponse>(`/sapi/organization-tree/root${suffix}`);
@@ -630,48 +570,6 @@ export const api = {
     });
     return apiRequest<OrganizationTreeSearchResponse>(`/sapi/organization-tree/search${suffix}`);
   },
-  createDepartment: (payload: {
-    organization_id: string;
-    name: string;
-    parent_id?: string;
-    source_id?: string;
-    external_department_id?: string;
-  }) => apiRequest<Department>('/sapi/departments', { method: 'POST', body: payload }),
-  updateDepartment: (id: string, payload: { name?: string; parent_id?: string }) =>
-    apiRequest<Department>(`/sapi/departments/${encodeURIComponent(id)}`, {
-      method: 'PUT',
-      body: payload,
-    }),
-  deleteDepartment: (id: string) =>
-    apiRequest<void>(`/sapi/departments/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  listGroups: (params?: { type?: string; limit?: number; offset?: number }) => {
-    const suffix = queryString({ type: params?.type, limit: params?.limit, offset: params?.offset });
-    return apiRequest<PagedResponse<Group>>(`/sapi/groups${suffix}`);
-  },
-  getGroup: (id: string) => apiRequest<Group>(`/sapi/groups/${encodeURIComponent(id)}`),
-  createGroup: (payload: { name: string; type?: string }) =>
-    apiRequest<Group>('/sapi/groups', { method: 'POST', body: payload }),
-  updateGroup: (id: string, payload: { name?: string }) =>
-    apiRequest<Group>(`/sapi/groups/${encodeURIComponent(id)}`, {
-      method: 'PUT',
-      body: payload,
-    }),
-  deleteGroup: (id: string) =>
-    apiRequest<void>(`/sapi/groups/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  listGroupMembers: (groupId: string, params?: { limit?: number; offset?: number }) => {
-    const suffix = queryString({ limit: params?.limit, offset: params?.offset });
-    return apiRequest<PagedResponse<GroupMember>>(`/sapi/groups/${encodeURIComponent(groupId)}/members${suffix}`);
-  },
-  addGroupMember: (groupId: string, userId: string) =>
-    apiRequest<void>(`/sapi/groups/${encodeURIComponent(groupId)}/members`, {
-      method: 'POST',
-      body: { user_id: userId },
-    }),
-  removeGroupMember: (groupId: string, userId: string) =>
-    apiRequest<void>(
-      `/sapi/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}`,
-      { method: 'DELETE' },
-    ),
   updatePassword: (payload: { current_password: string; new_password: string }) =>
     apiRequest<void>('/api/me/password', { method: 'POST', body: payload }),
   updateAdminPassword: (payload: { current_password: string; new_password: string }) =>
@@ -755,7 +653,7 @@ export const api = {
   getOIDCClient: (id: string) => apiRequest<OIDCClient>(`/sapi/oidc-clients/${encodeURIComponent(id)}`),
   createOIDCClient: (payload: {
     application_id: string;
-    client_id: string;
+    client_id?: string;
     redirect_uris: string[];
     allowed_scopes?: string[];
     grant_types?: string[];
@@ -789,57 +687,6 @@ export const api = {
     apiRequest<OIDCClientCreateResponse>(`/sapi/oidc-clients/${encodeURIComponent(id)}/rotate-secret`, {
       method: 'POST',
     }),
-
-  listLegacyUsers: (applicationId: string, params?: { limit?: number; offset?: number }) => {
-    const suffix = queryString({ limit: params?.limit, offset: params?.offset });
-    return apiRequest<LegacyUsersListResponse>(
-      `/sapi/applications/${encodeURIComponent(applicationId)}/legacy-users${suffix}`,
-    );
-  },
-  getLegacyUser: (applicationId: string, username: string) =>
-    apiRequest<LegacyAppUser>(
-      `/sapi/applications/${encodeURIComponent(applicationId)}/legacy-users/${encodeURIComponent(username)}`,
-    ),
-  createLegacyUser: (
-    applicationId: string,
-    payload: {
-      username: string;
-      user_id: string;
-      password: string;
-      legacy_user_identifier?: string;
-      is_active?: boolean;
-    },
-  ) =>
-    apiRequest<LegacyAppUser>(
-      `/sapi/applications/${encodeURIComponent(applicationId)}/legacy-users`,
-      { method: 'POST', body: payload },
-    ),
-  updateLegacyUser: (
-    applicationId: string,
-    username: string,
-    payload: {
-      user_id?: string;
-      password?: string;
-      legacy_user_identifier?: string;
-      is_active?: boolean;
-    },
-  ) =>
-    apiRequest<LegacyAppUser>(
-      `/sapi/applications/${encodeURIComponent(applicationId)}/legacy-users/${encodeURIComponent(username)}`,
-      { method: 'PUT', body: payload },
-    ),
-  setLegacyUserStatus: (applicationId: string, username: string, isActive: boolean) => {
-    const action = isActive ? 'enable' : 'disable';
-    return apiRequest<LegacyAppUser>(
-      `/sapi/applications/${encodeURIComponent(applicationId)}/legacy-users/${encodeURIComponent(username)}/${action}`,
-      { method: 'POST' },
-    );
-  },
-  deleteLegacyUser: (applicationId: string, username: string) =>
-    apiRequest<void>(
-      `/sapi/applications/${encodeURIComponent(applicationId)}/legacy-users/${encodeURIComponent(username)}`,
-      { method: 'DELETE' },
-    ),
 
   listIdentitySources: (params?: { limit?: number; offset?: number }) => {
     const suffix = queryString({ limit: params?.limit, offset: params?.offset });

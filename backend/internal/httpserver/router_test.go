@@ -183,7 +183,6 @@ func TestPublicAuthAndProtocolRoutesRemainReachable(t *testing.T) {
 		{http.MethodGet, "/api/auth/feishu/login"},
 		{http.MethodGet, "/api/auth/feishu/callback"},
 		{http.MethodPost, "/api/auth/feishu/exchange"},
-		{http.MethodPost, "/api/login/legacy"},
 		{http.MethodGet, "/.well-known/openid-configuration"},
 		{http.MethodGet, "/.well-known/jwks.json"},
 		{http.MethodGet, "/oauth2/authorize"},

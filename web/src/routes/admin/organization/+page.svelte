@@ -2,8 +2,7 @@
 
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { TreeView, createTreeViewCollection, useTreeView, type TreeViewRootProps } from '@skeletonlabs/skeleton-svelte';
-  import { Building2, ChevronsDownUp, ChevronsUpDown, Copy, LoaderCircle, Network, RotateCcw, Search, UserRound, X } from 'lucide-svelte';
+  import { Building2, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, LoaderCircle, Network, RotateCcw, Search, UserRound, X } from 'lucide-svelte';
   import { api, type DirectoryUser, type OrganizationTreeNode, type OrganizationTreeNodeKind } from '$lib/api';
   import { t } from '$lib/i18n';
   import Toast from '$lib/components/ui/Toast.svelte';
@@ -14,33 +13,17 @@
     search_text: string;
   };
 
-  const createOrganizationCollection = (children: TreeNode[] = []) =>
-    createTreeViewCollection<TreeNode>({
-      nodeToValue: (node) => node.id,
-      nodeToString: (node) => node.name,
-      nodeToChildren: (node) => node.children || [],
-      nodeToChildrenCount: (node) => node.childrenCount,
-      rootNode: {
-        id: 'root',
-        kind: 'company',
-        name: '',
-        has_children: children.length > 0,
-        search_text: '',
-        children,
-      },
-    });
-
   let loading = true;
   let toastMessage = '';
   let toastVariant: 'success' | 'error' = 'success';
   let searchText = '';
-  let collection = createOrganizationCollection();
-  let searchCollection = createOrganizationCollection();
-  let visibleCollection = collection;
+  let rootNodes: TreeNode[] = [];
+  let searchNodes: TreeNode[] = [];
+  let visibleNodes: TreeNode[] = [];
   let expandedValue: string[] = [];
-  let treeExpandedValue: string[] = [];
   let searchLoading = false;
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let loadingNodeIds: string[] = [];
   let selectedUser: DirectoryUser | null = null;
   let detailOpen = false;
   let detailLoading = false;
@@ -48,8 +31,14 @@
 
   const pageLimit = 100;
   const formatDateTime = (value?: string): string => (value ? new Date(value).toLocaleString() : '-');
+  const userInlineLabel = (node: TreeNode): string => {
+    const name = node.name || '-';
+    const englishName = node.english_name || '';
+    const email = node.email || '';
+    return `${name}${englishName ? `（${englishName}）` : ''}${email ? ` ${email}` : ''}`;
+  };
   const nodeSearchText = (node: OrganizationTreeNode): string =>
-    [node.name, node.id, node.email, node.phone, node.status, node.external_department_id].filter(Boolean).join(' ');
+    [node.name, node.english_name, node.id, node.email, node.phone, node.status, node.external_department_id].filter(Boolean).join(' ');
   const showToast = (message: string, variant: 'success' | 'error' = 'success') => {
     toastMessage = message;
     toastVariant = variant;
@@ -65,14 +54,58 @@
     childrenCount: children?.length || (node.has_children ? 1 : undefined),
   });
 
+  const isExpanded = (node: TreeNode): boolean => expandedValue.includes(node.id);
+  const isLoadingNode = (node: TreeNode): boolean => loadingNodeIds.includes(node.id);
+  const isBranch = (node: TreeNode): boolean => Boolean(node.has_children || node.children?.length || node.childrenCount);
+  const collectExpandableIds = (nodes: TreeNode[]): string[] =>
+    nodes.flatMap((node) => (isBranch(node) ? [node.id, ...collectExpandableIds(node.children || [])] : []));
+  const updateNode = (nodes: TreeNode[], id: string, updater: (node: TreeNode) => TreeNode): TreeNode[] =>
+    nodes.map((node) => {
+      if (node.id === id) return updater(node);
+      if (node.children?.length) return { ...node, children: updateNode(node.children, id, updater) };
+      return node;
+    });
+
+  const loadNodeChildren = async (node: TreeNode) => {
+    if (node.kind === 'user' || !node.has_children || node.children?.length || isLoadingNode(node)) return;
+    loadingNodeIds = [...loadingNodeIds, node.id];
+    try {
+      const data = await api.listOrganizationTreeChildren({
+        kind: node.kind as OrganizationTreeNodeKind,
+        id: node.id,
+        limit: pageLimit,
+        offset: 0,
+      });
+      const children = ((data.items || []) as OrganizationTreeNode[]).map((child) => toTreeNode(child));
+      rootNodes = updateNode(rootNodes, node.id, (item) => ({ ...item, children, childrenCount: children.length || item.childrenCount }));
+    } catch {
+      showToast(t('organization.fetchFailed'), 'error');
+    } finally {
+      loadingNodeIds = loadingNodeIds.filter((id) => id !== node.id);
+    }
+  };
+
+  const toggleNode = async (node: TreeNode) => {
+    if (!isBranch(node)) {
+      if (node.kind === 'user') void openUserDetails(node);
+      return;
+    }
+    if (isExpanded(node)) {
+      expandedValue = expandedValue.filter((id) => id !== node.id);
+      return;
+    }
+    expandedValue = [...expandedValue, node.id];
+    await loadNodeChildren(node);
+  };
+
   const loadTree = async () => {
     loading = true;
     try {
       const data = await api.getOrganizationTreeRoot({ limit: pageLimit, offset: 0 });
       const children = (data.children || []).map((item) => toTreeNode(item));
       const root = toTreeNode(data.root, children);
-      collection = createOrganizationCollection([root]);
-      searchCollection = createOrganizationCollection();
+      rootNodes = [root];
+      searchNodes = [];
       expandedValue = [root.id];
     } catch {
       showToast(t('organization.fetchFailed'), 'error');
@@ -83,53 +116,22 @@
 
   const resetFilters = () => {
     searchText = '';
-    searchCollection = createOrganizationCollection();
+    searchNodes = [];
     searchLoading = false;
     if (searchTimer) clearTimeout(searchTimer);
-  };
-
-  const loadChildren: TreeViewRootProps<TreeNode>['loadChildren'] = async (details) => {
-    const item = details.node;
-    if (item.kind === 'user' || !item.has_children) return [];
-    try {
-      const data = await api.listOrganizationTreeChildren({
-        kind: item.kind as OrganizationTreeNodeKind,
-        id: item.id,
-        limit: pageLimit,
-        offset: 0,
-      });
-      if (details.signal.aborted) return [];
-      return ((data.items || []) as OrganizationTreeNode[]).map((child) => toTreeNode(child));
-    } catch {
-      showToast(t('organization.fetchFailed'), 'error');
-      return [];
-    }
-  };
-
-  const onLoadChildrenComplete: TreeViewRootProps<TreeNode>['onLoadChildrenComplete'] = (details) => {
-    collection = details.collection;
-  };
-
-  const onExpandedChange: TreeViewRootProps<TreeNode>['onExpandedChange'] = (details) => {
-    if (!searchText.trim()) expandedValue = details.expandedValue;
-  };
-
-  const onSelectionChange: TreeViewRootProps<TreeNode>['onSelectionChange'] = (details) => {
-    const item = details.selectedNodes[0];
-    if (item?.kind === 'user') void openUserDetails(item);
   };
 
   const searchOrganizationTree = async (query: string) => {
     const normalized = query.trim();
     if (!normalized) {
-      searchCollection = createOrganizationCollection();
+      searchNodes = [];
       searchLoading = false;
       return;
     }
     searchLoading = true;
     try {
       const data = await api.searchOrganizationTree({ q: normalized, limit: pageLimit, offset: 0 });
-      searchCollection = createOrganizationCollection((data.items || []).map((item) => toTreeNode(item)));
+      searchNodes = (data.items || []).map((item) => toTreeNode(item));
     } catch {
       showToast(t('organization.fetchFailed'), 'error');
     } finally {
@@ -145,17 +147,7 @@
     }, 250);
   };
 
-  $: visibleCollection = searchText.trim() ? searchCollection : collection;
-  $: treeExpandedValue = searchText.trim() ? visibleCollection.getBranchValues() : expandedValue;
-  const treeView = useTreeView(() => ({
-    id: 'organization-tree',
-    collection: visibleCollection,
-    loadChildren: searchText.trim() ? undefined : loadChildren,
-    onLoadChildrenComplete,
-    expandedValue: treeExpandedValue,
-    onExpandedChange,
-    onSelectionChange,
-  }));
+  $: visibleNodes = searchText.trim() ? searchNodes : rootNodes;
 
   const openUserDetails = async (item: TreeNode) => {
     detailOpen = true;
@@ -231,10 +223,10 @@
     </label>
 
     <div class="flex items-center gap-2">
-      <button class="btn btn-xs preset-outlined-surface-500 inline-grid size-8 min-h-0 min-w-0 place-items-center p-0" type="button" on:click={() => treeView().expand()} aria-label={t('common.expand')} title={t('common.expand')}>
+      <button class="btn btn-xs preset-outlined-surface-500 inline-grid size-8 min-h-0 min-w-0 place-items-center p-0" type="button" on:click={() => (expandedValue = collectExpandableIds(visibleNodes))} aria-label={t('common.expand')} title={t('common.expand')}>
         <ChevronsUpDown class="size-4" aria-hidden="true" />
       </button>
-      <button class="btn btn-xs preset-outlined-surface-500 inline-grid size-8 min-h-0 min-w-0 place-items-center p-0" type="button" on:click={() => treeView().collapse()} aria-label={t('common.collapse')} title={t('common.collapse')}>
+      <button class="btn btn-xs preset-outlined-surface-500 inline-grid size-8 min-h-0 min-w-0 place-items-center p-0" type="button" on:click={() => (expandedValue = [])} aria-label={t('common.collapse')} title={t('common.collapse')}>
         <ChevronsDownUp class="size-4" aria-hidden="true" />
       </button>
       <button class="btn btn-xs preset-outlined-surface-500 inline-grid size-8 min-h-0 min-w-0 place-items-center p-0" type="button" on:click={() => void loadTree()} aria-label={t('common.retry')} title={t('common.retry')}>
@@ -249,62 +241,67 @@
   <section class="card bg-surface-50-950 border border-surface-200-800 overflow-hidden">
     {#if loading || searchLoading}
       <div class="p-6 text-center text-sm text-surface-500">{t('common.loading')}</div>
-    {:else if (collection.rootNode.children || []).length === 0}
+    {:else if rootNodes.length === 0}
       <div class="m-3 rounded-container border border-surface-200-800 p-6 text-center text-sm text-surface-500">{t('organization.noDepartments')}</div>
-    {:else if searchText.trim() && (visibleCollection.rootNode.children || []).length === 0}
+    {:else if searchText.trim() && visibleNodes.length === 0}
       <div class="m-3 rounded-container border border-surface-200-800 p-6 text-center text-sm text-surface-500">{t('organization.noSearchResults')}</div>
     {:else}
-      <div class="organization-tree p-3">
-        <TreeView.Provider value={treeView}>
-          <TreeView.Tree class="space-y-0.5 text-sm">
-            {#each visibleCollection.rootNode.children || [] as node, index (node.id)}
-              {@render treeNode(node, [index])}
-            {/each}
-          </TreeView.Tree>
-        </TreeView.Provider>
+      <div class="organization-tree space-y-0.5 p-3 text-sm" role="tree" aria-label={t('organization.title')}>
+        {#each visibleNodes as node (node.id)}
+          {@render treeNode(node, 0)}
+        {/each}
       </div>
     {/if}
   </section>
 </section>
 
-{#snippet treeNode(node: TreeNode, indexPath: number[])}
-  <TreeView.NodeProvider value={{ node, indexPath }}>
-    {#if node.children || node.childrenCount}
-      <TreeView.Branch>
-        <TreeView.BranchControl class="flex min-h-7 min-w-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-left hover:bg-surface-100-900 data-selected:bg-surface-100-900">
-          <TreeView.BranchIndicator class="shrink-0 text-surface-500 data-loading:hidden" />
-          <TreeView.BranchIndicator class="hidden shrink-0 animate-spin text-surface-500 data-loading:inline">
+{#snippet treeNode(node: TreeNode, depth: number)}
+  {#if isBranch(node)}
+    <div>
+      <button
+        class="organization-tree-row flex min-h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-left"
+        style={`padding-left: ${depth * 16 + 6}px`}
+        type="button"
+        role="treeitem"
+        aria-selected="false"
+        aria-expanded={isExpanded(node)}
+        on:click={() => void toggleNode(node)}
+      >
+        {#if isLoadingNode(node)}
+          <span class="organization-tree-muted shrink-0 animate-spin">
             <LoaderCircle class="size-4" aria-hidden="true" />
-          </TreeView.BranchIndicator>
-          <TreeView.BranchText class="flex min-w-0 flex-1 items-center gap-2">
-            {#if node.kind === 'company' || node.kind === 'organization'}
-              <Building2 class="size-4 shrink-0 text-primary-600-400" aria-hidden="true" />
-            {:else}
-              <Network class="size-4 shrink-0 text-primary-600-400" aria-hidden="true" />
-            {/if}
-            <span class="truncate text-sm font-medium">{node.name || '-'}</span>
-          </TreeView.BranchText>
-          {#if node.kind === 'department' && node.external_department_id}
-            <span class="hidden max-w-40 truncate text-xs text-surface-500 md:inline">{node.external_department_id}</span>
-          {/if}
-        </TreeView.BranchControl>
-        <TreeView.BranchContent class="ml-3 pl-2.5">
-          <TreeView.BranchIndentGuide class="border-l border-surface-300/40 pl-2.5 dark:border-surface-700/45" />
-          {#each node.children || [] as childNode, childIndex (childNode.id)}
-            {@render treeNode(childNode, [...indexPath, childIndex])}
+          </span>
+        {:else}
+          <ChevronRight class="organization-tree-muted size-4 shrink-0 transition-transform {isExpanded(node) ? 'rotate-90' : ''}" aria-hidden="true" />
+        {/if}
+        {#if node.kind === 'company' || node.kind === 'organization'}
+          <Building2 class="size-4 shrink-0 text-primary-600-400" aria-hidden="true" />
+        {:else}
+          <Network class="size-4 shrink-0 text-primary-600-400" aria-hidden="true" />
+        {/if}
+        <span class="truncate text-sm font-medium">{node.name || '-'}</span>
+      </button>
+      {#if isExpanded(node) && node.children?.length}
+        <div class="organization-tree-line border-l">
+          {#each node.children as childNode (childNode.id)}
+            {@render treeNode(childNode, depth + 1)}
           {/each}
-        </TreeView.BranchContent>
-      </TreeView.Branch>
-    {:else}
-      <TreeView.Item class="flex min-h-7 min-w-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-left hover:bg-surface-100-900 data-selected:bg-surface-100-900">
-        <UserRound class="size-4 shrink-0 text-surface-500" aria-hidden="true" />
-        <div class="min-w-0 flex-1">
-          <div class="truncate text-sm font-medium">{node.name || '-'}</div>
-          <div class="truncate text-xs text-surface-500">{node.email || node.phone || node.status || node.id}</div>
         </div>
-      </TreeView.Item>
-    {/if}
-  </TreeView.NodeProvider>
+      {/if}
+    </div>
+  {:else}
+    <button
+      class="organization-tree-row flex min-h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-left"
+      style={`padding-left: ${depth * 16 + 22}px`}
+      type="button"
+      role="treeitem"
+      aria-selected="false"
+      on:click={() => void openUserDetails(node)}
+    >
+      <UserRound class="organization-tree-muted size-4 shrink-0" aria-hidden="true" />
+      <span class="min-w-0 flex-1 truncate text-sm font-medium">{userInlineLabel(node)}</span>
+    </button>
+  {/if}
 {/snippet}
 
 {#if detailOpen && selectedUser}
@@ -404,3 +401,48 @@
     </div>
   </div>
 {/if}
+
+<style>
+  .organization-tree {
+    --org-tree-row-text: var(--color-surface-800);
+    --org-tree-row-muted: var(--color-surface-500);
+    --org-tree-row-hover-bg: color-mix(in srgb, var(--idb-accent) 7%, var(--idb-panel-bg));
+    --org-tree-row-active-bg: color-mix(in srgb, var(--idb-accent) 11%, var(--idb-panel-bg));
+    --org-tree-row-active-text: var(--color-surface-950);
+    --org-tree-line: color-mix(in srgb, var(--idb-border) 78%, transparent);
+  }
+
+  :global(:root[data-mode='dark']) .organization-tree {
+    --org-tree-row-text: var(--color-surface-200);
+    --org-tree-row-muted: var(--color-surface-400);
+    --org-tree-row-hover-bg: color-mix(in srgb, var(--idb-accent) 12%, var(--idb-panel-bg));
+    --org-tree-row-active-bg: color-mix(in srgb, var(--idb-accent) 18%, var(--idb-panel-bg));
+    --org-tree-row-active-text: var(--color-surface-50);
+    --org-tree-line: color-mix(in srgb, var(--idb-border) 82%, transparent);
+  }
+
+  .organization-tree :global(.organization-tree-row) {
+    color: var(--org-tree-row-text);
+  }
+
+  .organization-tree :global(.organization-tree-muted) {
+    color: var(--org-tree-row-muted);
+  }
+
+  .organization-tree :global(.organization-tree-line) {
+    border-color: var(--org-tree-line);
+  }
+
+  .organization-tree :global(.organization-tree-row:hover),
+  .organization-tree :global(.organization-tree-row[aria-expanded='true']),
+  .organization-tree :global(.organization-tree-row[data-selected]),
+  .organization-tree :global(.organization-tree-row[data-state='open']),
+  .organization-tree :global(.organization-tree-row[data-state='selected']) {
+    background: var(--org-tree-row-active-bg);
+    color: var(--org-tree-row-active-text);
+  }
+
+  .organization-tree :global(.organization-tree-row:hover) {
+    background: var(--org-tree-row-hover-bg);
+  }
+</style>

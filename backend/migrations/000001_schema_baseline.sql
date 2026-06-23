@@ -143,6 +143,7 @@ CREATE TABLE oidc_clients (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (entity_id, id),
+    UNIQUE (entity_id, application_id),
     UNIQUE (entity_id, client_id),
     FOREIGN KEY (entity_id, application_id) REFERENCES applications(entity_id, id) ON DELETE CASCADE
 );

@@ -19,6 +19,7 @@ type OIDCClientResponse struct {
 	EntityID      string   `json:"entity_id"`
 	ApplicationID string   `json:"application_id"`
 	ClientID      string   `json:"client_id"`
+	ClientSecret  string   `json:"client_secret,omitempty"`
 	RedirectURIs  []string `json:"redirect_uris"`
 	AllowedScopes []string `json:"allowed_scopes"`
 	GrantTypes    []string `json:"grant_types"`
@@ -134,8 +135,8 @@ func (h OIDCClientHandler) createOIDCClient(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json body")
 		return
 	}
-	if body.ApplicationID == "" || body.ClientID == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "application_id and client_id are required")
+	if body.ApplicationID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "application_id is required")
 		return
 	}
 	appID, err := ulidValue(body.ApplicationID)
@@ -143,6 +144,24 @@ func (h OIDCClientHandler) createOIDCClient(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid_application_id", err.Error())
 		return
 	}
+	if body.ClientID == "" {
+		clientID, err := generateOIDCClientID()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "client_id_generate_failed", err.Error())
+			return
+		}
+		body.ClientID = clientID
+	}
+	if len(body.AllowedScopes) == 0 {
+		body.AllowedScopes = []string{"openid", "profile", "email"}
+	}
+	if len(body.GrantTypes) == 0 {
+		body.GrantTypes = []string{"authorization_code"}
+	}
+	if len(body.ResponseTypes) == 0 {
+		body.ResponseTypes = []string{"code"}
+	}
+	body.PKCERequired = true
 
 	client, secret, err := h.service.CreateOIDCClient(r.Context(), generated.CreateOIDCClientParams{
 		EntityID:      entityID,
@@ -159,7 +178,6 @@ func (h OIDCClientHandler) createOIDCClient(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Return the secret only once during creation
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"client":        client,
 		"client_secret": secret,

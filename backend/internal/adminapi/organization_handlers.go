@@ -102,27 +102,6 @@ func (h OrganizationHandler) RegisterRoutes(r chi.Router) {
 	r.Get("/sapi/organization-tree/root", h.getOrganizationTreeRoot)
 	r.Get("/sapi/organization-tree/children", h.listOrganizationTreeChildren)
 	r.Get("/sapi/organization-tree/search", h.searchOrganizationTree)
-	// Organizations
-	r.Get("/sapi/organizations", h.listOrganizations)
-	r.Get("/sapi/organizations/{id}", h.getOrganization)
-	r.Post("/sapi/organizations", h.createOrganization)
-	r.Put("/sapi/organizations/{id}", h.updateOrganization)
-	r.Delete("/sapi/organizations/{id}", h.deleteOrganization)
-	// Departments
-	r.Get("/sapi/departments", h.listDepartments)
-	r.Get("/sapi/departments/{id}", h.getDepartment)
-	r.Post("/sapi/departments", h.createDepartment)
-	r.Put("/sapi/departments/{id}", h.updateDepartment)
-	r.Delete("/sapi/departments/{id}", h.deleteDepartment)
-	// Groups
-	r.Get("/sapi/groups", h.listGroups)
-	r.Get("/sapi/groups/{id}", h.getGroup)
-	r.Post("/sapi/groups", h.createGroup)
-	r.Put("/sapi/groups/{id}", h.updateGroup)
-	r.Delete("/sapi/groups/{id}", h.deleteGroup)
-	r.Post("/sapi/groups/{id}/members", h.addGroupMember)
-	r.Get("/sapi/groups/{id}/members", h.listGroupMembers)
-	r.Delete("/sapi/groups/{id}/members/{user_id}", h.removeGroupMember)
 }
 
 // --- Organization Tree ---

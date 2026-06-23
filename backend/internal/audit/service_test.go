@@ -154,7 +154,7 @@ func TestWriteWithSystemActorOmitsActorUserID(t *testing.T) {
 	}
 }
 
-func TestWriteWithNilStatesStoresNullBytes(t *testing.T) {
+func TestWriteWithNilStatesStoresEmptyObjects(t *testing.T) {
 	fq := &fakeQueries{}
 	svc := &Service{queries: fq}
 
@@ -172,11 +172,11 @@ func TestWriteWithNilStatesStoresNullBytes(t *testing.T) {
 		t.Fatalf("Write returned error: %v", err)
 	}
 
-	if fq.createParams.BeforeState != nil {
-		t.Errorf("BeforeState = %v, want nil", fq.createParams.BeforeState)
+	if string(fq.createParams.BeforeState) != "{}" {
+		t.Errorf("BeforeState = %s, want {}", fq.createParams.BeforeState)
 	}
-	if fq.createParams.AfterState != nil {
-		t.Errorf("AfterState = %v, want nil", fq.createParams.AfterState)
+	if string(fq.createParams.AfterState) != "{}" {
+		t.Errorf("AfterState = %s, want {}", fq.createParams.AfterState)
 	}
 }
 

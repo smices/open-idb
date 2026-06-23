@@ -24,6 +24,7 @@
   $: loginAction = isAdminLogin ? '/sapi/login/account' : '/api/login/account';
   $: loginErrorKey = query.get('login_error');
   $: mode = context?.mode || modeFromPath($page.url.pathname);
+  $: isAdminMode = mode === 'admin';
   $: pathEntitySlug = entitySlugFromPath($page.url.pathname);
   $: entityRef = context?.entity?.id || context?.entity?.slug || pathEntitySlug;
   $: entityBrand = context?.entity?.brand_name || context?.entity?.name || brandFromSlug(pathEntitySlug);
@@ -52,8 +53,13 @@
           ? tf('login.enterprise.subtitle', { entity: entityLabel || t('login.enterprise.defaultEntity') })
           : t(`login.${mode}.subtitle`);
   $: primaryActionLabel = mode === 'app' ? tf('login.enterprise.feishuForApp', { app: applicationName }) : t('login.enterprise.feishuPrimary');
+  $: scopeValue = mode === 'app' ? applicationName : t(`login.${mode}.scope`);
+  $: contextValue = entityLabel || t(`login.${mode}.entityContext`);
+  $: afterLoginValue = t(`login.${mode}.afterLogin`);
   $: contextStatus =
-    mode === 'app' && context?.application
+    isAdminMode
+      ? t('login.admin.contextReady')
+      : mode === 'app' && context?.application
       ? t('login.enterprise.contextReady')
       : isEnterpriseEntrance
         ? t('login.enterprise.identityReady')
@@ -61,7 +67,8 @@
 
   function modeFromPath(pathname: string): LoginMode {
     if (pathname === '/auth/continue') return 'app';
-    if (pathname === '/admin/login' || /^\/t\/[^/]+\/admin\/login$/.test(pathname)) return 'entity_admin';
+    if (pathname === '/admin/login') return 'admin';
+    if (/^\/t\/[^/]+\/admin\/login$/.test(pathname)) return 'entity_admin';
     return 'user';
   }
 
@@ -174,16 +181,16 @@
 
       <dl class="mt-8 grid gap-3 sm:grid-cols-3">
         <div class="border-l border-white/18 pl-4">
-          <dt class="text-xs text-surface-600-400">{t('login.enterprise.scopeLabel')}</dt>
-          <dd class="mt-2 text-sm font-semibold">{mode === 'app' ? applicationName : t('login.enterprise.scopeValue')}</dd>
+          <dt class="text-xs text-surface-600-400">{t('login.scopeLabel')}</dt>
+          <dd class="mt-2 text-sm font-semibold">{scopeValue}</dd>
         </div>
         <div class="border-l border-white/18 pl-4">
-          <dt class="text-xs text-surface-600-400">{t('login.enterprise.entityLabel')}</dt>
-          <dd class="mt-2 break-words text-sm font-semibold">{entityLabel || t('login.enterprise.defaultEntity')}</dd>
+          <dt class="text-xs text-surface-600-400">{t('login.entityContextLabel')}</dt>
+          <dd class="mt-2 break-words text-sm font-semibold">{contextValue}</dd>
         </div>
         <div class="border-l border-white/18 pl-4">
-          <dt class="text-xs text-surface-600-400">{t('login.enterprise.methodLabel')}</dt>
-          <dd class="mt-2 text-sm font-semibold">{t('login.enterprise.methodValue')}</dd>
+          <dt class="text-xs text-surface-600-400">{t('login.afterLoginLabel')}</dt>
+          <dd class="mt-2 text-sm font-semibold">{afterLoginValue}</dd>
         </div>
       </dl>
     </div>

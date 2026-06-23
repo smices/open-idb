@@ -2,123 +2,121 @@
 
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { Check, KeyRound, Plus, Settings, Trash2, X } from 'lucide-svelte';
   import { t } from '$lib/i18n';
-  import { api, type Role, type Permission } from '$lib/api';
+  import { api, type Permission, type Role } from '$lib/api';
   import Toast from '$lib/components/ui/Toast.svelte';
 
   let roles: Role[] = [];
   let permissions: Permission[] = [];
-  let roleSearch = '';
-  let permissionSearch = '';
-
-  let roleLoading = false;
-  let permLoading = false;
-
-  let roleOpen = false;
-  let permOpen = false;
+  let rolePermissions: string[] = [];
+  let loading = false;
+  let permissionLoading = false;
+  let drawerOpen = false;
   let editingRole: Role | null = null;
-  let editingPermission: Permission | null = null;
-
   let roleName = '';
   let roleCode = '';
   let roleDescription = '';
-  let permissionCode = '';
-  let permissionName = '';
-  let permissionType = 'api';
-
-  let selectedRole: Role | null = null;
-  let rolePerms: string[] = [];
-  let rolePermLoading = false;
-  let savingRole = false;
-  let savingPermission = false;
-  let checkingPermission = false;
-  let checkUserId = '';
-  let checkPermissionCode = '';
-  let checkResult: boolean | null = null;
+  let saving = false;
   let pendingDeleteKey = '';
   let error = '';
   let message = '';
 
-  const matchesRoleSearch = (role: Role, query: string): boolean => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return true;
-    return [role.name, role.code, role.description, role.id]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(normalized));
-  };
-
-  const matchesPermissionSearch = (permission: Permission, query: string): boolean => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return true;
-    return [permission.name, permission.code, permission.type, permission.id]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(normalized));
-  };
-
-  const fetchAll = async () => {
-    roleLoading = true;
-    permLoading = true;
+  const loadRoles = async () => {
+    loading = true;
     error = '';
-
     try {
-      const [roleData, permData] = await Promise.all([
-        api.listRoles({ limit: 200 }),
-        api.listPermissions({ limit: 200 }),
-      ]);
-      roles = roleData.items || [];
-      permissions = permData.items || [];
+      const data = await api.listRoles({ limit: 200 });
+      roles = data.items || [];
     } catch {
       error = t('roles.fetchFailed');
     } finally {
-      roleLoading = false;
-      permLoading = false;
+      loading = false;
     }
   };
 
-  const openRoleForm = () => {
+  const loadPermissions = async () => {
+    try {
+      const data = await api.listPermissions({ limit: 500 });
+      permissions = data.items || [];
+    } catch {
+      error = t('roles.fetchPermissionFailed');
+    }
+  };
+
+  const openCreateRole = () => {
     pendingDeleteKey = '';
     editingRole = null;
     roleName = '';
     roleCode = '';
     roleDescription = '';
-    roleOpen = true;
+    rolePermissions = [];
+    error = '';
+    message = '';
+    drawerOpen = true;
   };
 
-  const openRoleEdit = (role: Role) => {
+  const openRoleDrawer = async (role: Role) => {
     pendingDeleteKey = '';
     editingRole = role;
     roleName = role.name;
     roleCode = role.code;
     roleDescription = role.description || '';
-    roleOpen = true;
+    rolePermissions = [];
+    error = '';
+    message = '';
+    drawerOpen = true;
+    permissionLoading = true;
+    try {
+      const assigned = await api.listRolePermissions(role.id);
+      rolePermissions = (assigned || []).map((permission) => permission.id);
+    } catch {
+      error = t('roles.permissionFetchFailed');
+    } finally {
+      permissionLoading = false;
+    }
+  };
+
+  const closeDrawer = () => {
+    drawerOpen = false;
+    editingRole = null;
+  };
+
+  const handleDialogKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && drawerOpen) {
+      closeDrawer();
+    }
   };
 
   const saveRole = async () => {
-    savingRole = true;
+    const name = roleName.trim();
+    const code = roleCode.trim();
+    if (!name || !code) return;
+
+    saving = true;
     error = '';
     message = '';
     try {
       if (editingRole) {
         await api.updateRole(editingRole.id, {
-          name: roleName,
-          description: roleDescription,
+          name,
+          description: roleDescription.trim(),
         });
-        message = t('roles.updateSuccess');
       } else {
         await api.createRole({
-          name: roleName,
-          code: roleCode,
-          description: roleDescription,
+          name,
+          code,
+          description: roleDescription.trim(),
         });
-        message = t('roles.createSuccess');
       }
+      message = t('roles.saveSuccess');
+      drawerOpen = false;
       editingRole = null;
-      roleOpen = false;
-      await fetchAll();
+      await loadRoles();
     } catch {
       error = t(editingRole ? 'roles.updateFailed' : 'roles.createFailed');
     } finally {
-      savingRole = false;
+      saving = false;
     }
   };
 
@@ -129,143 +127,34 @@
       await api.deleteRole(role.id);
       pendingDeleteKey = '';
       message = t('roles.deleteSuccess');
-      await fetchAll();
+      await loadRoles();
     } catch {
       error = t('roles.deleteFailed');
     }
   };
 
-  const openPermForm = () => {
-    pendingDeleteKey = '';
-    editingPermission = null;
-    permissionCode = '';
-    permissionName = '';
-    permissionType = 'ui';
-    permOpen = true;
-  };
-
-  const openPermissionEdit = (permission: Permission) => {
-    pendingDeleteKey = '';
-    editingPermission = permission;
-    permissionCode = permission.code;
-    permissionName = permission.name;
-    permissionType = permission.type;
-    permOpen = true;
-  };
-
-  const savePermission = async () => {
-    savingPermission = true;
-    error = '';
-    message = '';
-    try {
-      if (editingPermission) {
-        await api.updatePermission(editingPermission.id, { name: permissionName });
-        message = t('roles.updateSuccess');
-      } else {
-        await api.createPermission({
-          code: permissionCode,
-          name: permissionName,
-          type: permissionType,
-        });
-        message = t('roles.createSuccess');
-      }
-      editingPermission = null;
-      permOpen = false;
-      await fetchAll();
-    } catch {
-      error = t(editingPermission ? 'roles.updateFailed' : 'roles.createFailed');
-    } finally {
-      savingPermission = false;
-    }
-  };
-
-  const deletePermission = async (permissionId: string) => {
-    error = '';
-    message = '';
-    try {
-      await api.deletePermission(permissionId);
-      pendingDeleteKey = '';
-      message = t('roles.deleteSuccess');
-      await fetchAll();
-    } catch {
-      error = t('roles.deleteFailed');
-    }
-  };
-
-  const openRolePermission = async (role: Role) => {
-    selectedRole = role;
-    rolePermLoading = true;
-
-    try {
-      const perms = await api.listRolePermissions(role.id);
-      rolePerms = (perms || []).map((item) => item.id);
-    } catch {
-      error = t('roles.permissionFetchFailed');
-    } finally {
-      rolePermLoading = false;
-    }
-  };
-
-  const closeRolePermission = () => {
-    selectedRole = null;
-    rolePerms = [];
-  };
-
-  const handleDialogKeydown = (event: KeyboardEvent) => {
-    if (event.key !== 'Escape') return;
-    if (roleOpen) {
-      roleOpen = false;
-      editingRole = null;
-    } else if (permOpen) {
-      permOpen = false;
-      editingPermission = null;
-    } else if (selectedRole) {
-      closeRolePermission();
-    }
-  };
-
-  const onRolePermissionToggle = async (permId: string, checked: boolean) => {
-    if (!selectedRole) return;
+  const toggleRolePermission = async (permission: Permission, checked: boolean) => {
+    if (!editingRole) return;
     error = '';
     message = '';
     try {
       if (checked) {
-        await api.assignPermissionToRole(selectedRole.id, permId);
-        rolePerms = [...rolePerms, permId];
+        await api.assignPermissionToRole(editingRole.id, permission.id);
+        rolePermissions = [...rolePermissions, permission.id];
       } else {
-        await api.removePermissionFromRole(selectedRole.id, permId);
-        rolePerms = rolePerms.filter((id) => id !== permId);
+        await api.removePermissionFromRole(editingRole.id, permission.id);
+        rolePermissions = rolePermissions.filter((id) => id !== permission.id);
       }
-      message = t(checked ? 'roles.assignSuccess' : 'roles.removeSuccess');
+      message = t('roles.permissionSaveSuccess');
     } catch {
       error = t('roles.assignFailed');
     }
   };
 
-  const runPermissionCheck = async () => {
-    checkingPermission = true;
-    checkResult = null;
-    error = '';
-    message = '';
-    try {
-      const result = await api.checkPermission({
-        user_id: checkUserId,
-        permission: checkPermissionCode,
-      });
-      checkResult = result.allowed;
-    } catch {
-      error = t('roles.checkFailed');
-    } finally {
-      checkingPermission = false;
-    }
-  };
-
-  onMount(fetchAll);
-
-  $: filteredRoles = roles.filter((role) => matchesRoleSearch(role, roleSearch));
-  $: filteredPermissions = permissions.filter((permission) => matchesPermissionSearch(permission, permissionSearch));
-  $: permissionTypeCount = new Set(permissions.map((permission) => permission.type).filter(Boolean)).size;
-  $: selectedRolePermissionCount = rolePerms.length;
+  onMount(() => {
+    void loadRoles();
+    void loadPermissions();
+  });
 </script>
 
 <svelte:head>
@@ -275,217 +164,177 @@
 <svelte:window on:keydown={handleDialogKeydown} />
 
 <section class="space-y-4">
-  <header class="flex items-center justify-end">
-    <div class="flex gap-2">
-      <button class="btn btn-sm preset-filled-primary-500" type="button" on:click={openPermForm}>{t('roles.addPermission')}</button>
-      <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={openRoleForm}>{t('roles.addRole')}</button>
-    </div>
-  </header>
+  <div class="flex items-center justify-end">
+    <button class="btn btn-sm preset-filled-primary-500 gap-1.5" type="button" on:click={openCreateRole}>
+      <Plus class="size-4" aria-hidden="true" />
+      {t('roles.addRole')}
+    </button>
+  </div>
 
   <Toast {message} />
   {#if error}
     <aside class="alert preset-tonal-error" role="alert"><p>{error}</p></aside>
   {/if}
 
-  <section class="card bg-surface-50-950 border border-surface-200-800 p-4">
-    <form class="flex flex-wrap items-center gap-2" on:submit|preventDefault={runPermissionCheck}>
-      <label class="block">
-        <span class="sr-only">{t('roles.userId')}</span>
-        <input class="input h-8 w-56 text-sm" type="text" bind:value={checkUserId} required placeholder={t('roles.userId')} />
-      </label>
-      <label class="block">
-        <span class="sr-only">{t('roles.permission')}</span>
-        <input class="input h-8 w-56 text-sm" type="text" bind:value={checkPermissionCode} required placeholder={t('roles.permission')} />
-      </label>
-      <div class="flex items-center gap-2">
-        <button class="btn btn-sm preset-filled-primary-500" type="submit" disabled={checkingPermission || checkUserId.trim() === '' || checkPermissionCode.trim() === ''}>
-          {checkingPermission ? t('common.loading') : t('roles.check')}
-        </button>
-        {#if checkResult !== null}
-          <span class={`badge ${checkResult ? 'preset-tonal-success' : 'preset-tonal-error'}`}>{checkResult ? t('roles.allowed') : t('roles.denied')}</span>
-        {/if}
-      </div>
-    </form>
-  </section>
-
-  <div class="grid gap-4 xl:grid-cols-2">
-    <section class="card bg-surface-50-950 border border-surface-200-800 p-4">
-      <div class="mb-3 space-y-3">
-        <h2 class="font-semibold">{t('roles.title')}</h2>
-        <label class="block">
-          <span class="text-sm text-surface-500">{t('roles.searchRoles')}</span>
-          <input class="input h-8 w-full text-sm" type="search" bind:value={roleSearch} placeholder={t('roles.searchRoles')} />
-        </label>
-        <div class="grid gap-3 text-sm sm:grid-cols-2">
-          <article class="card bg-surface-50-950 border border-surface-200-800 p-4"><p class="text-xs text-surface-500">{t('roles.visibleRows')}</p><p class="mt-2 text-2xl font-semibold tabular-nums">{filteredRoles.length}</p></article>
-          <article class="card bg-surface-50-950 border border-surface-200-800 p-4"><p class="text-xs text-surface-500">{t('dashboard.total')}</p><p class="mt-2 text-2xl font-semibold tabular-nums">{roles.length}</p></article>
-        </div>
-      </div>
-      {#if roleLoading}
-        <div class="card bg-surface-50-950 border border-surface-200-800 p-6 text-center text-sm text-surface-500">{t('common.loading')}</div>
-      {:else}
-        {#if roles.length === 0}
-          <div class="card bg-surface-50-950 border border-surface-200-800 p-6 text-center text-sm text-surface-500">{t('common.noData')}</div>
-        {:else if filteredRoles.length === 0}
-          <div class="card bg-surface-50-950 border border-surface-200-800 p-6 text-center text-sm text-surface-500">{t('roles.noRoleSearchResults')}</div>
-        {:else}
-          <div class="divide-y divide-surface-200-800">
-            {#each filteredRoles as role (role.id)}
-              <article class="py-3">
-                <header class="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <h3 class="font-medium">{role.name}</h3>
-                    <p class="text-xs text-surface-500">{role.code} · {role.description || '-'}</p>
-                  </div>
-                  <div class="flex flex-wrap gap-2">
-                    <button class="btn preset-outlined-surface-500 btn-xs" type="button" on:click={() => openRoleEdit(role)}>{t('common.edit')}</button>
-                    <button class="btn preset-outlined-surface-500 btn-xs" type="button" on:click={() => void openRolePermission(role)}>{t('roles.managePermissions')}</button>
+  <section class="card bg-surface-50-950 border border-surface-200-800 overflow-hidden">
+    {#if loading}
+      <div class="p-6 text-center text-sm text-surface-500">{t('common.loading')}</div>
+    {:else if roles.length === 0}
+      <div class="p-6 text-sm text-surface-500">{t('common.noData')}</div>
+    {:else}
+      <div class="overflow-x-auto">
+        <table class="table min-w-full">
+          <thead>
+            <tr>
+              <th scope="col">{t('roles.name')}</th>
+              <th scope="col">{t('roles.code')}</th>
+              <th scope="col">{t('roles.description')}</th>
+              <th scope="col" class="w-28 !text-right">{t('common.actions')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each roles as role (role.id)}
+              <tr>
+                <td>
+                  <p class="font-medium">{role.name}</p>
+                  <p class="max-w-64 truncate text-xs text-surface-500">{role.id}</p>
+                </td>
+                <td class="whitespace-nowrap font-mono text-xs text-surface-700-300">{role.code}</td>
+                <td class="max-w-md truncate text-sm text-surface-600-400">{role.description || '-'}</td>
+                <td class="!text-right">
+                  <div class="relative inline-flex items-center gap-1">
                     <button
-                      class="btn preset-tonal-error btn-xs"
+                      class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
                       type="button"
-                      on:click={() => (pendingDeleteKey === `role:${role.id}` ? void deleteRole(role) : (pendingDeleteKey = `role:${role.id}`))}
+                      on:click={() => void openRoleDrawer(role)}
+                      aria-label={t('roles.manageRole')}
+                      title={t('roles.manageRole')}
                     >
-                      {pendingDeleteKey === `role:${role.id}` ? t('common.confirmDelete') : t('common.delete')}
+                      <Settings class="size-4" aria-hidden="true" />
                     </button>
+                    <button
+                      class="btn btn-xs preset-outlined-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
+                      type="button"
+                      on:click={() => (pendingDeleteKey = `role:${role.id}`)}
+                      aria-label={t('common.delete')}
+                      title={t('common.delete')}
+                    >
+                      <Trash2 class="size-4" aria-hidden="true" />
+                    </button>
+                    {#if pendingDeleteKey === `role:${role.id}`}
+                      <div class="absolute right-full top-1/2 z-10 mr-1 flex -translate-y-1/2 items-center gap-1 rounded-container border border-surface-200-800 bg-surface-50-950 p-1 shadow-lg">
+                        <button
+                          class="btn btn-xs preset-filled-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
+                          type="button"
+                          on:click={() => void deleteRole(role)}
+                          aria-label={t('common.confirmDelete')}
+                          title={t('common.confirmDelete')}
+                        >
+                          <Check class="size-4" aria-hidden="true" />
+                        </button>
+                        <button
+                          class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
+                          type="button"
+                          on:click={() => (pendingDeleteKey = '')}
+                          aria-label={t('common.cancel')}
+                          title={t('common.cancel')}
+                        >
+                          <X class="size-4" aria-hidden="true" />
+                        </button>
+                      </div>
+                    {/if}
                   </div>
-                </header>
-              </article>
+                </td>
+              </tr>
             {/each}
-          </div>
-        {/if}
-      {/if}
-    </section>
-
-    <section class="card bg-surface-50-950 border border-surface-200-800 p-4">
-      <div class="mb-3 space-y-3">
-        <h2 class="font-semibold">{t('roles.permissions')}</h2>
-        <label class="block">
-          <span class="text-sm text-surface-500">{t('roles.searchPermissions')}</span>
-          <input class="input h-8 w-full text-sm" type="search" bind:value={permissionSearch} placeholder={t('roles.searchPermissions')} />
-        </label>
-        <div class="grid gap-3 text-sm sm:grid-cols-3">
-          <article class="card bg-surface-50-950 border border-surface-200-800 p-4"><p class="text-xs text-surface-500">{t('roles.visibleRows')}</p><p class="mt-2 text-2xl font-semibold tabular-nums">{filteredPermissions.length}</p></article>
-          <article class="card bg-surface-50-950 border border-surface-200-800 p-4"><p class="text-xs text-surface-500">{t('dashboard.total')}</p><p class="mt-2 text-2xl font-semibold tabular-nums">{permissions.length}</p></article>
-          <article class="card bg-surface-50-950 border border-surface-200-800 p-4"><p class="text-xs text-surface-500">{t('roles.permissionTypes')}</p><p class="mt-2 text-2xl font-semibold tabular-nums">{permissionTypeCount}</p></article>
-        </div>
+          </tbody>
+        </table>
       </div>
-      {#if permLoading}
-        <div class="card bg-surface-50-950 border border-surface-200-800 p-6 text-center text-sm text-surface-500">{t('common.loading')}</div>
-      {:else if permissions.length === 0}
-        <div class="card bg-surface-50-950 border border-surface-200-800 p-6 text-center text-sm text-surface-500">{t('common.noData')}</div>
-      {:else if filteredPermissions.length === 0}
-        <div class="card bg-surface-50-950 border border-surface-200-800 p-6 text-center text-sm text-surface-500">{t('roles.noPermissionSearchResults')}</div>
-      {:else}
-        <div class="divide-y divide-surface-200-800">
-          {#each filteredPermissions as permission (permission.id)}
-            <article class="py-3">
-              <header class="flex flex-wrap items-start justify-between gap-2">
-                <div>
-                  <h3 class="font-medium">{permission.name}</h3>
-                  <p class="text-xs text-surface-500">{permission.code}</p>
-                </div>
-                <div class="flex flex-wrap gap-2">
-                  <button class="btn preset-outlined-surface-500 btn-xs" type="button" on:click={() => openPermissionEdit(permission)}>{t('common.edit')}</button>
-                  <button
-                    class="btn preset-tonal-error btn-xs"
-                    type="button"
-                    on:click={() => (pendingDeleteKey === `permission:${permission.id}` ? void deletePermission(permission.id) : (pendingDeleteKey = `permission:${permission.id}`))}
-                  >
-                    {pendingDeleteKey === `permission:${permission.id}` ? t('common.confirmDelete') : t('common.delete')}
-                  </button>
-                </div>
-              </header>
-            </article>
-          {/each}
-        </div>
-      {/if}
-    </section>
-  </div>
+    {/if}
+  </section>
+</section>
 
-  {#if selectedRole}
-    <section class="card bg-surface-50-950 border border-surface-200-800 p-4 space-y-3">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <h2 class="font-semibold">{t('roles.managePermissions')}: {selectedRole.name}</h2>
-        <span class="badge preset-outlined-surface-500">
-          {t('roles.assignedPermissions')}: {selectedRolePermissionCount}
-        </span>
-      </div>
-
-      {#if rolePermLoading}
-        <div class="card bg-surface-50-950 border border-surface-200-800 p-6 text-center text-sm text-surface-500">{t('common.loading')}</div>
-      {:else}
-        <div class="grid gap-2 md:grid-cols-2">
-          {#each permissions as permission (permission.id)}
-            <article class="card bg-surface-50-950 border border-surface-200-800 px-3 py-2">
-              <label class="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={rolePerms.includes(permission.id)}
-                  on:change={(event) => void onRolePermissionToggle(permission.id, (event.currentTarget as HTMLInputElement).checked)}
-                />
-                <span class="text-sm">{permission.name}</span>
-              </label>
-            </article>
-          {/each}
-          {#if permissions.length === 0}
-            <div class="card bg-surface-50-950 border border-surface-200-800 p-6 text-center text-sm text-surface-500">{t('roles.fetchPermissionFailed')}</div>
+{#if drawerOpen}
+  <div class="fixed inset-0 z-40 bg-surface-950/55 backdrop-blur-sm" aria-hidden="true" on:click={closeDrawer}></div>
+  <div class="fixed inset-y-0 right-0 z-50 flex w-full justify-end" role="dialog" aria-modal="true" aria-labelledby="role-drawer-title" tabindex="-1">
+    <form
+      class="flex h-full w-full max-w-lg flex-col border-l border-surface-200-800 bg-surface-50-950 text-surface-950-50 shadow-2xl"
+      on:submit|preventDefault={saveRole}
+    >
+      <header class="flex items-center justify-between gap-3 border-b border-surface-200-800 px-5 py-4">
+        <div>
+          <h2 id="role-drawer-title" class="text-base font-semibold">{editingRole ? t('roles.editRole') : t('roles.createRole')}</h2>
+          {#if editingRole}
+            <p class="mt-1 max-w-72 truncate text-xs text-surface-500">{editingRole.id}</p>
           {/if}
         </div>
-      {/if}
+        <button
+          class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
+          type="button"
+          on:click={closeDrawer}
+          aria-label={t('common.close')}
+          title={t('common.close')}
+        >
+          <X class="size-4" aria-hidden="true" />
+        </button>
+      </header>
 
-      <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={closeRolePermission}>{t('common.close')}</button>
-    </section>
-  {/if}
-
-  {#if roleOpen}
-    <div class="fixed inset-0 z-20 flex items-start justify-center overflow-y-auto bg-surface-900/70 p-4 py-6 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="role-dialog-title" tabindex="-1">
-      <form class="card bg-surface-50-950 border border-surface-200-800 max-h-[calc(100vh-3rem)] w-full max-w-md overflow-y-auto p-4 space-y-3" on:submit|preventDefault={saveRole}>
-        <h2 id="role-dialog-title" class="font-semibold">{editingRole ? t('roles.editRole') : t('roles.createRole')}</h2>
+      <div class="flex-1 space-y-5 overflow-y-auto px-5 py-5">
         <label class="block">
           <span class="text-sm text-surface-500">{t('roles.name')}</span>
-          <input class="input w-full" type="text" bind:value={roleName} required />
+          <input class="input h-9 w-full bg-surface-50-950 text-sm" type="text" bind:value={roleName} required />
         </label>
+
         <label class="block">
           <span class="text-sm text-surface-500">{t('roles.code')}</span>
-          <input class="input w-full" type="text" bind:value={roleCode} required disabled={!!editingRole} />
+          <input class="input h-9 w-full bg-surface-50-950 font-mono text-sm" type="text" bind:value={roleCode} required disabled={!!editingRole} />
         </label>
+
         <label class="block">
           <span class="text-sm text-surface-500">{t('roles.description')}</span>
-          <input class="input w-full" type="text" bind:value={roleDescription} />
+          <textarea class="textarea w-full bg-surface-50-950 text-sm" rows="3" bind:value={roleDescription}></textarea>
         </label>
-        <div class="flex justify-end gap-2">
-          <button class="btn preset-outlined-surface-500" type="button" on:click={() => { roleOpen = false; editingRole = null; }}>{t('common.cancel')}</button>
-          <button class="btn preset-filled-primary-500" type="submit" disabled={savingRole || roleName.trim() === '' || roleCode.trim() === ''}>
-            {savingRole ? t('common.loading') : t('common.save')}
-          </button>
-        </div>
-      </form>
-    </div>
-  {/if}
 
-  {#if permOpen}
-    <div class="fixed inset-0 z-20 flex items-start justify-center overflow-y-auto bg-surface-900/70 p-4 py-6 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="permission-dialog-title" tabindex="-1">
-      <form class="card bg-surface-50-950 border border-surface-200-800 max-h-[calc(100vh-3rem)] w-full max-w-md overflow-y-auto p-4 space-y-3" on:submit|preventDefault={savePermission}>
-        <h2 id="permission-dialog-title" class="font-semibold">{editingPermission ? t('roles.editPermission') : t('roles.createPermission')}</h2>
-        <label class="block">
-          <span class="text-sm text-surface-500">{t('roles.permCode')}</span>
-          <input class="input w-full" type="text" bind:value={permissionCode} required disabled={!!editingPermission} />
-        </label>
-        <label class="block">
-          <span class="text-sm text-surface-500">{t('roles.permName')}</span>
-          <input class="input w-full" type="text" bind:value={permissionName} required />
-        </label>
-        <label class="block">
-          <span class="text-sm text-surface-500">{t('roles.permType')}</span>
-          <input class="input w-full" type="text" bind:value={permissionType} disabled={!!editingPermission} />
-        </label>
-        <div class="flex justify-end gap-2">
-          <button class="btn preset-outlined-surface-500" type="button" on:click={() => { permOpen = false; editingPermission = null; }}>{t('common.cancel')}</button>
-          <button class="btn preset-filled-primary-500" type="submit" disabled={savingPermission || permissionCode.trim() === '' || permissionName.trim() === ''}>
-            {savingPermission ? t('common.loading') : t('common.save')}
-          </button>
-        </div>
-      </form>
-    </div>
-  {/if}
-</section>
+        {#if editingRole}
+          <section class="space-y-3 border-t border-surface-200-800 pt-4">
+            <div class="flex items-center gap-2">
+              <KeyRound class="size-4 text-surface-500" aria-hidden="true" />
+              <h3 class="text-sm font-semibold">{t('roles.permissions')}</h3>
+            </div>
+
+            {#if permissionLoading}
+              <div class="p-4 text-sm text-surface-500">{t('common.loading')}</div>
+            {:else if permissions.length === 0}
+              <div class="p-4 text-sm text-surface-500">{t('common.noData')}</div>
+            {:else}
+              <div class="divide-y divide-surface-200-800 rounded-container border border-surface-200-800">
+                {#each permissions as permission (permission.id)}
+                  <label class="flex items-center gap-3 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      class="checkbox"
+                      checked={rolePermissions.includes(permission.id)}
+                      on:change={(event) => void toggleRolePermission(permission, (event.currentTarget as HTMLInputElement).checked)}
+                    />
+                    <span class="min-w-0 flex-1">
+                      <span class="block truncate text-sm">{permission.name}</span>
+                      <span class="block truncate font-mono text-xs text-surface-500">{permission.code}</span>
+                    </span>
+                    <span class="text-xs text-surface-500">{permission.type}</span>
+                  </label>
+                {/each}
+              </div>
+            {/if}
+          </section>
+        {/if}
+      </div>
+
+      <footer class="flex justify-end gap-2 border-t border-surface-200-800 bg-surface-100-900 px-5 py-4">
+        <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={closeDrawer}>{t('common.cancel')}</button>
+        <button class="btn btn-sm preset-filled-primary-500" type="submit" disabled={saving || roleName.trim() === '' || roleCode.trim() === ''}>
+          {saving ? t('common.loading') : t('common.save')}
+        </button>
+      </footer>
+    </form>
+  </div>
+{/if}

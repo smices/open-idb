@@ -6,7 +6,6 @@
   import { getLocale, setTheme, themeMode } from '$lib/stores';
   import { setCurrentLocale, t, type ThemeMode } from '$lib/i18n';
   import { redirectToCurrentPath } from '$lib/session';
-  import { Avatar, Popover } from '@skeletonlabs/skeleton-svelte';
   import { AutoAvatar } from 'open-avatar';
   import { KeyRound, LogOut, Moon, Sun, UserRound } from 'lucide-svelte';
 
@@ -24,6 +23,7 @@
   const profileHref = $derived(isAdmin ? '/admin/profile' : '/portal/profile');
   const securityHref = $derived(isAdmin ? '/admin/profile#password' : '/portal/profile#password');
   let currentLocale = $state(getLocale());
+  let menuOpen = $state(false);
 
   const modeOptions = [
     { value: 'light' as ThemeMode, labelKey: 'layout.lightTheme', icon: Sun },
@@ -47,17 +47,46 @@
     setCurrentLocale(locale);
     redirectToCurrentPath($page.url.pathname, $page.url.search);
   };
+
+  const closeMenu = () => {
+    menuOpen = false;
+  };
+
+  const handleWindowClick = () => {
+    if (menuOpen) closeMenu();
+  };
 </script>
 
-<Popover positioning={{ placement: 'bottom-end' }} closeOnInteractOutside={true} closeOnEscape={true}>
-  <Popover.Trigger class="avatar-menu-trigger" type="button" aria-label={t('layout.profile')} title={displayName}>
-    <Avatar class="user-avatar">
-      <Avatar.Image src={avatarSrc} alt={avatarAlt} />
-      <Avatar.Fallback>{displayName.slice(0, 1).toUpperCase()}</Avatar.Fallback>
-    </Avatar>
-  </Popover.Trigger>
-  <Popover.Positioner class="theme-picker-positioner">
-    <Popover.Content class="card w-72 bg-surface-50-950 border border-surface-200-800 p-2 shadow-xl z-50" role="menu" aria-label={t('layout.profile')}>
+<svelte:window on:click={handleWindowClick} on:keydown={(event) => event.key === 'Escape' && closeMenu()} />
+
+<div class="relative">
+  <button
+    class="avatar-menu-trigger"
+    type="button"
+    aria-label={t('layout.profile')}
+    aria-haspopup="menu"
+    aria-expanded={menuOpen}
+    title={displayName}
+    onclick={(event) => {
+      event.stopPropagation();
+      menuOpen = !menuOpen;
+    }}
+  >
+    <span class="user-avatar">
+      <img src={avatarSrc} alt={avatarAlt} />
+      <span>{displayName.slice(0, 1).toUpperCase()}</span>
+    </span>
+  </button>
+
+  {#if menuOpen}
+    <div
+      class="card absolute right-0 top-full z-50 mt-2 w-72 bg-surface-50-950 border border-surface-200-800 p-2 shadow-xl"
+      role="menu"
+      tabindex="-1"
+      aria-label={t('layout.profile')}
+      onclick={(event) => event.stopPropagation()}
+      onkeydown={(event) => event.stopPropagation()}
+    >
       <div class="border-b border-surface-200-800 pb-3">
         <strong class="block truncate text-sm">{displayName}</strong>
         {#if user}
@@ -113,6 +142,6 @@
         <LogOut size={16} aria-hidden="true" />
         <span>{t('layout.logout')}</span>
       </button>
-    </Popover.Content>
-  </Popover.Positioner>
-</Popover>
+    </div>
+  {/if}
+</div>

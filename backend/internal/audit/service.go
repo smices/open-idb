@@ -219,7 +219,7 @@ func optionalText(value string) pgtype.Text {
 
 func marshalJSON(v interface{}) ([]byte, error) {
 	if v == nil {
-		return nil, nil
+		return []byte("{}"), nil
 	}
 	return json.Marshal(v)
 }

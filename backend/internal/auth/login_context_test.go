@@ -11,7 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func TestLoginContextEntityAdminRoute(t *testing.T) {
+func TestLoginContextAdminRoute(t *testing.T) {
 	router := chi.NewRouter()
 	NewHandler(fakeLoginService{
 		entity: LoginContextEntity{
@@ -37,11 +37,17 @@ func TestLoginContextEntityAdminRoute(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&ctx); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if ctx.Mode != LoginModeEntityAdmin {
-		t.Fatalf("mode = %q, want %q", ctx.Mode, LoginModeEntityAdmin)
+	if ctx.Mode != LoginModeAdmin {
+		t.Fatalf("mode = %q, want %q", ctx.Mode, LoginModeAdmin)
+	}
+	if ctx.Entity != nil {
+		t.Fatalf("entity = %#v, want nil", ctx.Entity)
 	}
 	if ctx.AllowEntitySelection {
-		t.Fatal("entity admin route must not allow entity selection")
+		t.Fatal("admin route must not allow entity selection")
+	}
+	if ctx.ReturnTo != "/admin" {
+		t.Fatalf("return_to = %q, want /admin", ctx.ReturnTo)
 	}
 }
 

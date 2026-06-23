@@ -87,7 +87,7 @@ func isPublicRoute(method string, path string) bool {
 		return method == http.MethodGet
 	case "/api/auth/context", "/api/auth/providers", "/sapi/auth/context":
 		return method == http.MethodGet
-	case "/api/login/account", "/sapi/login/account", "/auth/feishu/exchange", "/api/auth/feishu/exchange", "/api/login/legacy":
+	case "/api/login/account", "/sapi/login/account", "/auth/feishu/exchange", "/api/auth/feishu/exchange":
 		return method == http.MethodPost
 	case "/auth/feishu/login", "/auth/feishu/callback", "/api/auth/feishu/login", "/api/auth/feishu/callback":
 		return method == http.MethodGet

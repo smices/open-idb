@@ -104,8 +104,6 @@
   $: logJobs = jobs.filter((job) => !runningJobs.includes(job));
   $: filteredLogJobs = logJobs.filter((job) => matchesSearch(job, searchTerm));
   $: pagedLogJobs = filteredLogJobs.slice(offset, offset + pageSize);
-  $: pageStart = filteredLogJobs.length === 0 ? 0 : offset + 1;
-  $: pageEnd = Math.min(offset + pageSize, filteredLogJobs.length);
   $: selectedStats = parseStats(selectedJob?.stats);
   $: selectedStatEntries = Object.entries(selectedStats).filter(([key]) => key !== 'job_id');
   $: if (offset >= filteredLogJobs.length && offset !== 0) offset = Math.max(0, Math.floor((filteredLogJobs.length - 1) / pageSize) * pageSize);
@@ -205,7 +203,6 @@
   <section class="card bg-surface-50-950 border border-surface-200-800 overflow-hidden">
     <div class="flex flex-wrap items-center justify-between gap-3 border-b border-surface-200-800 p-3">
       <h2 class="text-base font-semibold">{t('syncJobs.logs')}</h2>
-      <span class="text-xs text-surface-500">{t('syncJobs.pageRange')}: {pageStart}-{pageEnd}</span>
     </div>
 
     {#if loading}

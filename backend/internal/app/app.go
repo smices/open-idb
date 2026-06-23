@@ -165,17 +165,13 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		bindingHandler := adminapi.NewBindingHandler(adminCRUDService)
 		routerOptions = append(routerOptions, bindingHandler.RegisterRoutes)
 
-		// Organizations, Departments, Groups CRUD
+		// Organization tree read model
 		organizationHandler := adminapi.NewOrganizationHandler(adminCRUDService)
 		routerOptions = append(routerOptions, organizationHandler.RegisterRoutes)
 
 		// OIDC Clients CRUD
 		oidcClientHandler := adminapi.NewOIDCClientHandler(adminCRUDService)
 		routerOptions = append(routerOptions, oidcClientHandler.RegisterRoutes)
-
-		// Legacy username/password mappings for legacy app login
-		legacyAppUserHandler := adminapi.NewLegacyAppUserHandler(adminCRUDService)
-		routerOptions = append(routerOptions, legacyAppUserHandler.RegisterRoutes)
 
 		// Internal v1 APIs (service-to-service authorization)
 		internalService, err := adminapi.NewInternalService(queries)
@@ -216,11 +212,6 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 				}, nil)
 			},
 		})
-
-		legacyLoginService := auth.NewLegacyLoginService(queries)
-		legacyLoginService.SetSessionTTL(cfg.SessionTTL)
-		legacyLoginHandler := auth.NewLegacyLoginHandler(legacyLoginService, auditService)
-		routerOptions = append(routerOptions, legacyLoginHandler.RegisterRoutes)
 
 		syncService, err := idp.NewSyncService(idp.SyncServiceConfig{
 			Queries: queries,

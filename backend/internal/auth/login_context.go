@@ -15,6 +15,7 @@ type LoginMode string
 const (
 	LoginModeApp         LoginMode = "app"
 	LoginModeUser        LoginMode = "user"
+	LoginModeAdmin       LoginMode = "admin"
 	LoginModeEntityAdmin LoginMode = "entity_admin"
 )
 
@@ -67,7 +68,7 @@ func resolveLoginContext(path string, returnTo string) LoginContext {
 
 	if normalizedPath == "/admin/login" {
 		return LoginContext{
-			Mode:                 LoginModeEntityAdmin,
+			Mode:                 LoginModeAdmin,
 			Methods:              []string{"password"},
 			AllowEntitySelection: false,
 			Reason:               "admin",
