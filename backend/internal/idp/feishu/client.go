@@ -345,7 +345,7 @@ func (c *Client) usersByDepartment(ctx context.Context, token string, department
 				Phone:           item.Mobile,
 				AvatarURL:       item.AvatarURL,
 				Status:          mapUserStatus(item.Status.IsActivated, item.Status.IsFrozen, item.Status.IsResigned),
-				RawProfile:      rawProfileWithDepartment(raw, departmentID),
+				RawProfile:      cloneBytes(raw),
 			})
 		}
 
@@ -379,56 +379,6 @@ func (c *Client) usersByDepartmentPage(ctx context.Context, token string, depart
 		return feishuPaginatedResponse{}, fmt.Errorf("feishu users failed: code=%d msg=%s", response.Code, response.Msg)
 	}
 	return response, nil
-}
-
-func rawProfileWithDepartment(raw []byte, departmentID string) []byte {
-	departmentID = strings.TrimSpace(departmentID)
-	if departmentID == "" {
-		return cloneBytes(raw)
-	}
-	var profile map[string]interface{}
-	if err := json.Unmarshal(raw, &profile); err != nil {
-		return cloneBytes(raw)
-	}
-	profile["department_ids"] = appendStringValue(profile["department_ids"], departmentID)
-	profile["department_id"] = departmentID
-	normalized, err := json.Marshal(profile)
-	if err != nil {
-		return cloneBytes(raw)
-	}
-	return normalized
-}
-
-func appendStringValue(value interface{}, next string) []string {
-	values := make([]string, 0, 1)
-	appendValue := func(candidate string) {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			return
-		}
-		for _, existing := range values {
-			if existing == candidate {
-				return
-			}
-		}
-		values = append(values, candidate)
-	}
-	switch typed := value.(type) {
-	case []interface{}:
-		for _, item := range typed {
-			if text, ok := item.(string); ok {
-				appendValue(text)
-			}
-		}
-	case []string:
-		for _, item := range typed {
-			appendValue(item)
-		}
-	case string:
-		appendValue(typed)
-	}
-	appendValue(next)
-	return values
 }
 
 func departmentIDType(departmentID string) string {

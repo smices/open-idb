@@ -69,6 +69,9 @@ func TestFullSyncFetchesTokenDepartmentsAndUsers(t *testing.T) {
 							"email":      "zhangsan@example.test",
 							"mobile":     "13800000000",
 							"avatar_url": "https://example.test/a.png",
+							"department_ids": []string{
+								"0",
+							},
 							"status": map[string]interface{}{
 								"is_activated": true,
 								"is_frozen":    false,
@@ -114,7 +117,10 @@ func TestFullSyncFetchesTokenDepartmentsAndUsers(t *testing.T) {
 	}
 	departmentIDs, ok := rawUser["department_ids"].([]interface{})
 	if !ok || len(departmentIDs) != 1 || departmentIDs[0] != "0" {
-		t.Fatalf("user department_ids = %#v, want [0]", rawUser["department_ids"])
+		t.Fatalf("user department_ids = %#v, want provider value [0]", rawUser["department_ids"])
+	}
+	if _, ok := rawUser["department_id"]; ok {
+		t.Fatalf("user raw profile should not include synthetic department_id: %#v", rawUser["department_id"])
 	}
 }
 
