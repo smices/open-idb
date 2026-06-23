@@ -4,7 +4,6 @@ package audit
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/smices/open-idb/internal/auth"
 )
 
 // fakeAuditService implements AuditService for handler tests.
@@ -36,16 +36,22 @@ func newTestRouter(svc AuditService) http.Handler {
 }
 
 func testSessionCookie() *http.Cookie {
-	payload := `{"UserID":"user-1","EntityID":"01HZZZZZZZ0000000000000100","Username":"admin","DisplayName":"Admin"}`
+	payload, _ := auth.EncodeAdminSession(auth.AdminSession{
+		AdminID:     "admin-1",
+		EntityID:    "01HZZZZZZZ0000000000000100",
+		Username:    "admin",
+		DisplayName: "Admin",
+		Role:        "enterprise_admin",
+	})
 	return &http.Cookie{
-		Name:  "idb_session",
-		Value: base64.RawURLEncoding.EncodeToString([]byte(payload)),
+		Name:  "idb_admin_session",
+		Value: payload,
 	}
 }
 
 func TestListAuditLogsRequiresSession(t *testing.T) {
 	router := newTestRouter(&fakeAuditService{})
-	req := httptest.NewRequest(http.MethodGet, "/admin/v1/audit-logs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/sapi/audit-logs", nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -57,15 +63,15 @@ func TestListAuditLogsRequiresSession(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body["error"] != "session_required" {
-		t.Errorf("error = %q, want %q", body["error"], "session_required")
+	if body["error"] != "admin_session_required" {
+		t.Errorf("error = %q, want %q", body["error"], "admin_session_required")
 	}
 }
 
 func TestListAuditLogsInvalidSessionReturns401(t *testing.T) {
 	router := newTestRouter(&fakeAuditService{})
-	req := httptest.NewRequest(http.MethodGet, "/admin/v1/audit-logs", nil)
-	req.AddCookie(&http.Cookie{Name: "idb_session", Value: "garbage-not-base64-json"})
+	req := httptest.NewRequest(http.MethodGet, "/sapi/audit-logs", nil)
+	req.AddCookie(&http.Cookie{Name: "idb_admin_session", Value: "garbage-not-base64-json"})
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -77,8 +83,8 @@ func TestListAuditLogsInvalidSessionReturns401(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body["error"] != "invalid_session" {
-		t.Errorf("error = %q, want %q", body["error"], "invalid_session")
+	if body["error"] != "invalid_admin_session" {
+		t.Errorf("error = %q, want %q", body["error"], "invalid_admin_session")
 	}
 }
 
@@ -116,7 +122,7 @@ func TestListAuditLogsReturnsProperJSON(t *testing.T) {
 		},
 	}
 	router := newTestRouter(svc)
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/v1/audit-logs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/sapi/audit-logs", nil)
 	req.AddCookie(testSessionCookie())
 	rec := httptest.NewRecorder()
 
@@ -167,7 +173,7 @@ func TestListAuditLogsParsesQueryParams(t *testing.T) {
 	router := newTestRouter(svc)
 
 	req := httptest.NewRequest(http.MethodGet,
-		"/admin/v1/audit-logs?action=auth.login.success&resource_type=session&actor_type=user&limit=25&offset=10",
+		"/sapi/audit-logs?action=auth.login.success&resource_type=session&actor_type=user&limit=25&offset=10",
 		nil)
 	req.AddCookie(testSessionCookie())
 	rec := httptest.NewRecorder()
@@ -200,7 +206,7 @@ func TestListAuditLogsDefaultPagination(t *testing.T) {
 	svc := &fakeAuditService{result: ListResult{Items: []AuditLogEntry{}, Total: 0}}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/v1/audit-logs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/sapi/audit-logs", nil)
 	req.AddCookie(testSessionCookie())
 	rec := httptest.NewRecorder()
 
@@ -222,7 +228,7 @@ func TestListAuditLogsInvalidPaginationFallsBackToDefaults(t *testing.T) {
 	svc := &fakeAuditService{result: ListResult{Items: []AuditLogEntry{}, Total: 0}}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/v1/audit-logs?limit=abc&offset=-5", nil)
+	req := httptest.NewRequest(http.MethodGet, "/sapi/audit-logs?limit=abc&offset=-5", nil)
 	req.AddCookie(testSessionCookie())
 	rec := httptest.NewRecorder()
 
@@ -244,7 +250,7 @@ func TestListAuditLogsAPIPathAlsoWorks(t *testing.T) {
 	svc := &fakeAuditService{result: ListResult{Items: []AuditLogEntry{}, Total: 5}}
 	router := newTestRouter(svc)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/v1/audit-logs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/sapi/audit-logs", nil)
 	req.AddCookie(testSessionCookie())
 	rec := httptest.NewRecorder()
 

@@ -41,14 +41,10 @@ func NewEntityHandler(service entityService) EntityHandler {
 }
 
 func (h EntityHandler) RegisterRoutes(r chi.Router) {
-	r.Get("/admin/v1/entities", h.listEntities)
-	r.Get("/api/admin/v1/entities", h.listEntities)
-	r.Get("/admin/v1/entities/{id}", h.getEntity)
-	r.Get("/api/admin/v1/entities/{id}", h.getEntity)
-	r.Post("/admin/v1/entities", h.createEntity)
-	r.Post("/api/admin/v1/entities", h.createEntity)
-	r.Put("/admin/v1/entities/{id}", h.updateEntity)
-	r.Put("/api/admin/v1/entities/{id}", h.updateEntity)
+	r.Get("/sapi/entities", h.listEntities)
+	r.Get("/sapi/entities/{id}", h.getEntity)
+	r.Post("/sapi/entities", h.createEntity)
+	r.Put("/sapi/entities/{id}", h.updateEntity)
 }
 
 func (h EntityHandler) listEntities(w http.ResponseWriter, r *http.Request) {

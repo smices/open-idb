@@ -28,6 +28,9 @@ type UserResponse struct {
 	EntityID        string    `json:"entity_id"`
 	Username        string    `json:"username"`
 	DisplayName     string    `json:"display_name"`
+	EnglishName     string    `json:"english_name,omitempty"`
+	EmployeeNo      string    `json:"employee_no,omitempty"`
+	JobTitle        string    `json:"job_title,omitempty"`
 	Email           string    `json:"email,omitempty"`
 	Phone           string    `json:"phone,omitempty"`
 	AvatarURL       string    `json:"avatar_url,omitempty"`
@@ -48,6 +51,9 @@ type DirectoryUserResponse struct {
 	ExternalUnionID string    `json:"external_union_id,omitempty"`
 	ExternalOpenID  string    `json:"external_open_id,omitempty"`
 	Name            string    `json:"name"`
+	EnglishName     string    `json:"english_name,omitempty"`
+	EmployeeNo      string    `json:"employee_no,omitempty"`
+	JobTitle        string    `json:"job_title,omitempty"`
 	Email           string    `json:"email,omitempty"`
 	Phone           string    `json:"phone,omitempty"`
 	AvatarURL       string    `json:"avatar_url,omitempty"`
@@ -71,17 +77,17 @@ type ApplicationResponse struct {
 
 // SyncJobResponse represents a sync job in API responses.
 type SyncJobResponse struct {
-	ID           string    `json:"id"`
-	EntityID     string    `json:"entity_id"`
-	SourceID     string    `json:"source_id"`
-	Type         string    `json:"type"`
-	Provider     string    `json:"provider"`
-	Status       string    `json:"status"`
-	TraceID      string    `json:"trace_id"`
-	StartedAt    time.Time `json:"started_at"`
-	FinishedAt   time.Time `json:"finished_at"`
-	ErrorMessage string    `json:"error_message,omitempty"`
-	Stats        []byte    `json:"stats,omitempty"`
+	ID           string          `json:"id"`
+	EntityID     string          `json:"entity_id"`
+	SourceID     string          `json:"source_id"`
+	Type         string          `json:"type"`
+	Provider     string          `json:"provider"`
+	Status       string          `json:"status"`
+	TraceID      string          `json:"trace_id"`
+	StartedAt    time.Time       `json:"started_at"`
+	FinishedAt   time.Time       `json:"finished_at"`
+	ErrorMessage string          `json:"error_message,omitempty"`
+	Stats        json.RawMessage `json:"stats,omitempty"`
 }
 
 // RoleResponse represents a role in API responses.
@@ -143,16 +149,11 @@ func NewUserHandler(service userService) UserHandler {
 }
 
 func (h UserHandler) RegisterRoutes(r chi.Router) {
-	r.Get("/admin/v1/users", h.listUsers)
-	r.Get("/api/admin/v1/users", h.listUsers)
-	r.Get("/admin/v1/users/{id}", h.getUser)
-	r.Get("/api/admin/v1/users/{id}", h.getUser)
-	r.Put("/admin/v1/users/{id}", h.updateUser)
-	r.Put("/api/admin/v1/users/{id}", h.updateUser)
-	r.Post("/admin/v1/users/{id}/disable", h.disableUser)
-	r.Post("/api/admin/v1/users/{id}/disable", h.disableUser)
-	r.Post("/admin/v1/users/{id}/enable", h.enableUser)
-	r.Post("/api/admin/v1/users/{id}/enable", h.enableUser)
+	r.Get("/sapi/users", h.listUsers)
+	r.Get("/sapi/users/{id}", h.getUser)
+	r.Put("/sapi/users/{id}", h.updateUser)
+	r.Post("/sapi/users/{id}/disable", h.disableUser)
+	r.Post("/sapi/users/{id}/enable", h.enableUser)
 }
 
 // parsePagination extracts limit and offset from query params with sensible defaults.
@@ -314,6 +315,9 @@ func userFromRow(row generated.User) UserResponse {
 		EntityID:        ulidString(row.EntityID),
 		Username:        row.Username,
 		DisplayName:     row.DisplayName,
+		EnglishName:     row.EnglishName,
+		EmployeeNo:      row.EmployeeNo,
+		JobTitle:        row.JobTitle,
 		Email:           textString(row.Email),
 		Phone:           textString(row.Phone),
 		AvatarURL:       textString(row.AvatarUrl),
@@ -335,6 +339,9 @@ func directoryUserFromRow(row generated.DirectoryUser) DirectoryUserResponse {
 		ExternalUnionID: textString(row.ExternalUnionID),
 		ExternalOpenID:  textString(row.ExternalOpenID),
 		Name:            row.Name,
+		EnglishName:     row.EnglishName,
+		EmployeeNo:      row.EmployeeNo,
+		JobTitle:        row.JobTitle,
 		Email:           textString(row.Email),
 		Phone:           textString(row.Phone),
 		AvatarURL:       textString(row.AvatarUrl),
@@ -394,6 +401,6 @@ func syncJobFromRow(row generated.SyncJob) SyncJobResponse {
 		StartedAt:    row.StartedAt.Time,
 		FinishedAt:   row.FinishedAt.Time,
 		ErrorMessage: textString(row.ErrorMessage),
-		Stats:        row.Stats,
+		Stats:        json.RawMessage(row.Stats),
 	}
 }

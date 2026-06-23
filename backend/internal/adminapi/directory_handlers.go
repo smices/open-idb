@@ -18,10 +18,8 @@ func NewDirectoryHandler(service userService) DirectoryHandler {
 }
 
 func (h DirectoryHandler) RegisterRoutes(r chi.Router) {
-	r.Get("/admin/v1/directory-users", h.listDirectoryUsers)
-	r.Get("/api/admin/v1/directory-users", h.listDirectoryUsers)
-	r.Get("/admin/v1/directory-users/{id}", h.getDirectoryUser)
-	r.Get("/api/admin/v1/directory-users/{id}", h.getDirectoryUser)
+	r.Get("/sapi/directory-users", h.listDirectoryUsers)
+	r.Get("/sapi/directory-users/{id}", h.getDirectoryUser)
 }
 
 func (h DirectoryHandler) listDirectoryUsers(w http.ResponseWriter, r *http.Request) {

@@ -58,11 +58,13 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		previousCloseFn := closeFn
 		closeFn = func() {
 			auth.SetSessionResolver(nil)
+			auth.SetAdminSessionResolver(nil)
 			previousCloseFn()
 			pool.Close()
 		}
 		queries := generated.New(pool)
 		auth.SetSessionResolver(auth.NewDatabaseSessionResolver(queries))
+		auth.SetAdminSessionResolver(auth.NewDatabaseAdminSessionResolver(pool))
 
 		// Audit service is created early so it can be injected into all
 		// handlers that need to write audit events.
@@ -101,6 +103,11 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		authHandler.SetEphemeralStore(ephemeralStore)
 		routerOptions = append(routerOptions, authHandler.RegisterRoutes)
 
+		adminAuthHandler := auth.NewAdminHandler(auth.NewAdminService(pool))
+		adminAuthHandler.SetSessionTTL(cfg.SessionTTL)
+		adminAuthHandler.SetEphemeralStore(ephemeralStore)
+		routerOptions = append(routerOptions, adminAuthHandler.RegisterRoutes)
+
 		// Console service (dashboard, current user, password)
 		consoleService, err := adminapi.NewService(queries)
 		if err != nil {
@@ -110,7 +117,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		adminHandler := adminapi.NewHandler(nil, consoleService)
 		routerOptions = append(routerOptions, adminHandler.RegisterRoutes)
 
-		// Config service (IM providers, MCP connectors)
+		// Config service (IM providers)
 		configService, err := adminapi.NewConfigService(queries)
 		if err != nil {
 			closeFn()
@@ -129,6 +136,8 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 			closeFn()
 			return nil, err
 		}
+		organizationTreeCache := adminapi.NewOrganizationTreeCache(ephemeralStore)
+		adminCRUDService.SetOrganizationTreeCache(organizationTreeCache)
 		entityHandler := adminapi.NewEntityHandler(adminCRUDService)
 		routerOptions = append(routerOptions, entityHandler.RegisterRoutes)
 		userHandler := adminapi.NewUserHandler(adminCRUDService)
@@ -143,10 +152,6 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		routerOptions = append(routerOptions, permissionHandler.RegisterRoutes)
 		syncJobHandler := adminapi.NewSyncJobHandler(adminCRUDService)
 		routerOptions = append(routerOptions, syncJobHandler.RegisterRoutes)
-
-		// Resource Scopes CRUD (store/warehouse/country/brand)
-		resourceScopeHandler := adminapi.NewResourceScopeHandler(adminCRUDService)
-		routerOptions = append(routerOptions, resourceScopeHandler.RegisterRoutes)
 
 		// Session management (list/revoke)
 		sessionHandler := adminapi.NewSessionHandler(adminCRUDService)
@@ -248,6 +253,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 
 		// Create background worker for sync job processing
 		syncRunner := worker.NewSyncRunner(syncService, logger)
+		syncRunner.SetOrganizationTreeCacheInvalidator(organizationTreeCache)
 		cleanupRunner := worker.NewCleanupRunner(queries, time.Hour, logger)
 		bgWorker = worker.New(worker.Config{}, logger, syncRunner, auditService, cleanupRunner)
 

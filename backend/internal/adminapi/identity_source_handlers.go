@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -45,16 +46,11 @@ func NewIdentitySourceHandler(service identitySourceService) IdentitySourceHandl
 }
 
 func (h IdentitySourceHandler) RegisterRoutes(r chi.Router) {
-	r.Get("/admin/v1/identity-sources", h.listIdentitySources)
-	r.Get("/api/admin/v1/identity-sources", h.listIdentitySources)
-	r.Get("/admin/v1/identity-sources/{id}", h.getIdentitySource)
-	r.Get("/api/admin/v1/identity-sources/{id}", h.getIdentitySource)
-	r.Post("/admin/v1/identity-sources", h.createIdentitySource)
-	r.Post("/api/admin/v1/identity-sources", h.createIdentitySource)
-	r.Put("/admin/v1/identity-sources/{id}", h.updateIdentitySource)
-	r.Put("/api/admin/v1/identity-sources/{id}", h.updateIdentitySource)
-	r.Delete("/admin/v1/identity-sources/{id}", h.deleteIdentitySource)
-	r.Delete("/api/admin/v1/identity-sources/{id}", h.deleteIdentitySource)
+	r.Get("/sapi/identity-sources", h.listIdentitySources)
+	r.Get("/sapi/identity-sources/{id}", h.getIdentitySource)
+	r.Post("/sapi/identity-sources", h.createIdentitySource)
+	r.Put("/sapi/identity-sources/{id}", h.updateIdentitySource)
+	r.Delete("/sapi/identity-sources/{id}", h.deleteIdentitySource)
 }
 
 func (h IdentitySourceHandler) listIdentitySources(w http.ResponseWriter, r *http.Request) {
@@ -135,6 +131,10 @@ func (h IdentitySourceHandler) createIdentitySource(w http.ResponseWriter, r *ht
 	}
 	source, err := h.service.CreateIdentitySource(r.Context(), entityID, body.Type, body.Name, body.SyncEnabled)
 	if err != nil {
+		if isIdentitySourceValidationError(err) {
+			writeError(w, http.StatusBadRequest, "identity_source_invalid", err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "identity_source_create_failed", err.Error())
 		return
 	}
@@ -175,6 +175,10 @@ func (h IdentitySourceHandler) updateIdentitySource(w http.ResponseWriter, r *ht
 		syncEnabled,
 	)
 	if err != nil {
+		if isIdentitySourceValidationError(err) {
+			writeError(w, http.StatusBadRequest, "identity_source_invalid", err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "identity_source_update_failed", err.Error())
 		return
 	}
@@ -216,4 +220,12 @@ func identitySourceFromRow(id, entityID string, sourceType, name, status string,
 		SyncEnabled: syncEnabled,
 		CreatedAt:   createdAt.Time,
 	}
+}
+
+func isIdentitySourceValidationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "not enabled yet") || strings.Contains(message, "only one active primary identity source")
 }

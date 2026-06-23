@@ -49,6 +49,9 @@ INSERT INTO directory_users (
     external_union_id,
     external_open_id,
     name,
+    english_name,
+    employee_no,
+    job_title,
     email,
     phone,
     avatar_url,
@@ -56,13 +59,16 @@ INSERT INTO directory_users (
     raw_profile,
     last_synced_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now()
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now()
 )
 ON CONFLICT (entity_id, source_id, external_user_id)
 DO UPDATE SET
     external_union_id = EXCLUDED.external_union_id,
     external_open_id = EXCLUDED.external_open_id,
     name = EXCLUDED.name,
+    english_name = EXCLUDED.english_name,
+    employee_no = EXCLUDED.employee_no,
+    job_title = EXCLUDED.job_title,
     email = EXCLUDED.email,
     phone = EXCLUDED.phone,
     avatar_url = EXCLUDED.avatar_url,
@@ -70,13 +76,16 @@ DO UPDATE SET
     raw_profile = EXCLUDED.raw_profile,
     last_synced_at = now(),
     updated_at = now()
-RETURNING id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at;
+RETURNING id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title;
 
 -- name: CreateManagedUser :one
 INSERT INTO users (
     entity_id,
     username,
     display_name,
+    english_name,
+    employee_no,
+    job_title,
     email,
     phone,
     avatar_url,
@@ -85,9 +94,9 @@ INSERT INTO users (
     primary_source_id,
     locale
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 )
-RETURNING id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at;
+RETURNING id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at, english_name, employee_no, job_title;
 
 -- name: CreateAccountBinding :one
 INSERT INTO account_bindings (
@@ -130,12 +139,12 @@ FROM account_bindings
 WHERE entity_id = $1 AND source_id = $2 AND provider_uid = $3;
 
 -- name: GetDirectoryUserByExternalID :one
-SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
 FROM directory_users
 WHERE entity_id = $1 AND source_id = $2 AND external_user_id = $3;
 
 -- name: GetManagedUserByBinding :one
-SELECT u.id, u.entity_id, u.username, u.display_name, u.email, u.phone, u.avatar_url, u.lifecycle_status, u.user_type, u.primary_source_id, u.locale, u.created_at, u.updated_at
+SELECT u.id, u.entity_id, u.username, u.display_name, u.email, u.phone, u.avatar_url, u.lifecycle_status, u.user_type, u.primary_source_id, u.locale, u.created_at, u.updated_at, u.english_name, u.employee_no, u.job_title
 FROM users u
 JOIN account_bindings ab ON ab.entity_id = u.entity_id AND ab.user_id = u.id
 WHERE ab.entity_id = $1 AND ab.source_id = $2 AND ab.provider_uid = $3;
@@ -143,10 +152,13 @@ WHERE ab.entity_id = $1 AND ab.source_id = $2 AND ab.provider_uid = $3;
 -- name: UpdateManagedUserFromDirectory :one
 UPDATE users
 SET display_name = $4,
-    email = $5,
-    phone = $6,
-    avatar_url = $7,
-    lifecycle_status = $8,
+    english_name = $5,
+    employee_no = $6,
+    job_title = $7,
+    email = $8,
+    phone = $9,
+    avatar_url = $10,
+    lifecycle_status = $11,
     updated_at = now()
 WHERE entity_id = $1 AND id = $2 AND primary_source_id = $3
-RETURNING id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at;
+RETURNING id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at, english_name, employee_no, job_title;

@@ -57,6 +57,10 @@ type GroupMemberResponse struct {
 
 // organizationService defines the data-access contract for organization/department/group operations.
 type organizationService interface {
+	ResolveOrganizationTreeEntityID(ctx context.Context, candidate string) (string, error)
+	GetOrganizationTreeRoot(ctx context.Context, entityID string, limit, offset int32) (OrganizationTreeRootResponse, error)
+	ListOrganizationTreeChildren(ctx context.Context, entityID string, kind OrganizationTreeNodeKind, parentID string, limit, offset int32) ([]OrganizationTreeNode, error)
+	SearchOrganizationTree(ctx context.Context, entityID, query string, limit, offset int32) (OrganizationTreeSearchResponse, error)
 	// Organizations
 	ListOrganizations(ctx context.Context, entityID string, limit, offset int32) ([]OrganizationResponse, error)
 	CountOrganizations(ctx context.Context, entityID string) (int64, error)
@@ -94,45 +98,97 @@ func NewOrganizationHandler(service organizationService) OrganizationHandler {
 }
 
 func (h OrganizationHandler) RegisterRoutes(r chi.Router) {
+	// Organization tree read model
+	r.Get("/sapi/organization-tree/root", h.getOrganizationTreeRoot)
+	r.Get("/sapi/organization-tree/children", h.listOrganizationTreeChildren)
+	r.Get("/sapi/organization-tree/search", h.searchOrganizationTree)
 	// Organizations
-	r.Get("/admin/v1/organizations", h.listOrganizations)
-	r.Get("/api/admin/v1/organizations", h.listOrganizations)
-	r.Get("/admin/v1/organizations/{id}", h.getOrganization)
-	r.Get("/api/admin/v1/organizations/{id}", h.getOrganization)
-	r.Post("/admin/v1/organizations", h.createOrganization)
-	r.Post("/api/admin/v1/organizations", h.createOrganization)
-	r.Put("/admin/v1/organizations/{id}", h.updateOrganization)
-	r.Put("/api/admin/v1/organizations/{id}", h.updateOrganization)
-	r.Delete("/admin/v1/organizations/{id}", h.deleteOrganization)
-	r.Delete("/api/admin/v1/organizations/{id}", h.deleteOrganization)
+	r.Get("/sapi/organizations", h.listOrganizations)
+	r.Get("/sapi/organizations/{id}", h.getOrganization)
+	r.Post("/sapi/organizations", h.createOrganization)
+	r.Put("/sapi/organizations/{id}", h.updateOrganization)
+	r.Delete("/sapi/organizations/{id}", h.deleteOrganization)
 	// Departments
-	r.Get("/admin/v1/departments", h.listDepartments)
-	r.Get("/api/admin/v1/departments", h.listDepartments)
-	r.Get("/admin/v1/departments/{id}", h.getDepartment)
-	r.Get("/api/admin/v1/departments/{id}", h.getDepartment)
-	r.Post("/admin/v1/departments", h.createDepartment)
-	r.Post("/api/admin/v1/departments", h.createDepartment)
-	r.Put("/admin/v1/departments/{id}", h.updateDepartment)
-	r.Put("/api/admin/v1/departments/{id}", h.updateDepartment)
-	r.Delete("/admin/v1/departments/{id}", h.deleteDepartment)
-	r.Delete("/api/admin/v1/departments/{id}", h.deleteDepartment)
+	r.Get("/sapi/departments", h.listDepartments)
+	r.Get("/sapi/departments/{id}", h.getDepartment)
+	r.Post("/sapi/departments", h.createDepartment)
+	r.Put("/sapi/departments/{id}", h.updateDepartment)
+	r.Delete("/sapi/departments/{id}", h.deleteDepartment)
 	// Groups
-	r.Get("/admin/v1/groups", h.listGroups)
-	r.Get("/api/admin/v1/groups", h.listGroups)
-	r.Get("/admin/v1/groups/{id}", h.getGroup)
-	r.Get("/api/admin/v1/groups/{id}", h.getGroup)
-	r.Post("/admin/v1/groups", h.createGroup)
-	r.Post("/api/admin/v1/groups", h.createGroup)
-	r.Put("/admin/v1/groups/{id}", h.updateGroup)
-	r.Put("/api/admin/v1/groups/{id}", h.updateGroup)
-	r.Delete("/admin/v1/groups/{id}", h.deleteGroup)
-	r.Delete("/api/admin/v1/groups/{id}", h.deleteGroup)
-	r.Post("/admin/v1/groups/{id}/members", h.addGroupMember)
-	r.Post("/api/admin/v1/groups/{id}/members", h.addGroupMember)
-	r.Get("/admin/v1/groups/{id}/members", h.listGroupMembers)
-	r.Get("/api/admin/v1/groups/{id}/members", h.listGroupMembers)
-	r.Delete("/admin/v1/groups/{id}/members/{user_id}", h.removeGroupMember)
-	r.Delete("/api/admin/v1/groups/{id}/members/{user_id}", h.removeGroupMember)
+	r.Get("/sapi/groups", h.listGroups)
+	r.Get("/sapi/groups/{id}", h.getGroup)
+	r.Post("/sapi/groups", h.createGroup)
+	r.Put("/sapi/groups/{id}", h.updateGroup)
+	r.Delete("/sapi/groups/{id}", h.deleteGroup)
+	r.Post("/sapi/groups/{id}/members", h.addGroupMember)
+	r.Get("/sapi/groups/{id}/members", h.listGroupMembers)
+	r.Delete("/sapi/groups/{id}/members/{user_id}", h.removeGroupMember)
+}
+
+// --- Organization Tree ---
+
+func (h OrganizationHandler) getOrganizationTreeRoot(w http.ResponseWriter, r *http.Request) {
+	session, ok := readSession(w, r)
+	if !ok {
+		return
+	}
+	entityID, err := h.service.ResolveOrganizationTreeEntityID(r.Context(), session.EntityID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_entity_id", err.Error())
+		return
+	}
+	limit, offset := parsePagination(r)
+	root, err := h.service.GetOrganizationTreeRoot(r.Context(), entityID, limit, offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "organization_tree_root_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, root)
+}
+
+func (h OrganizationHandler) listOrganizationTreeChildren(w http.ResponseWriter, r *http.Request) {
+	session, ok := readSession(w, r)
+	if !ok {
+		return
+	}
+	entityID, err := h.service.ResolveOrganizationTreeEntityID(r.Context(), session.EntityID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_entity_id", err.Error())
+		return
+	}
+	parentID, err := ulidValue(r.URL.Query().Get("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_parent_id", err.Error())
+		return
+	}
+	kind := OrganizationTreeNodeKind(r.URL.Query().Get("kind"))
+	limit, offset := parsePagination(r)
+	children, err := h.service.ListOrganizationTreeChildren(r.Context(), entityID, kind, parentID, limit, offset)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "organization_tree_children_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, PagedResponse{Items: children, Total: int64(len(children)), Limit: int(limit), Offset: int(offset)})
+}
+
+func (h OrganizationHandler) searchOrganizationTree(w http.ResponseWriter, r *http.Request) {
+	session, ok := readSession(w, r)
+	if !ok {
+		return
+	}
+	entityID, err := h.service.ResolveOrganizationTreeEntityID(r.Context(), session.EntityID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_entity_id", err.Error())
+		return
+	}
+	query := r.URL.Query().Get("q")
+	limit, offset := parsePagination(r)
+	results, err := h.service.SearchOrganizationTree(r.Context(), entityID, query, limit, offset)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "organization_tree_search_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, results)
 }
 
 // --- Organizations ---

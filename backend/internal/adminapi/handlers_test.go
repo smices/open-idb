@@ -4,7 +4,6 @@ package adminapi
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -19,7 +18,7 @@ import (
 
 func TestTriggerFullSyncRequiresEntity(t *testing.T) {
 	router := newTestRouter(&fakeSyncService{})
-	req := httptest.NewRequest(http.MethodPost, "/admin/v1/identity-sources/source-1/sync/full", nil)
+	req := httptest.NewRequest(http.MethodPost, "/sapi/identity-sources/source-1/sync/full", nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -37,7 +36,7 @@ func TestTriggerFullSyncReturnsResult(t *testing.T) {
 		ManagedUsersCreated: 2,
 		BindingsCreated:     2,
 	}})
-	req := httptest.NewRequest(http.MethodPost, "/admin/v1/identity-sources/source-1/sync/full", nil)
+	req := httptest.NewRequest(http.MethodPost, "/sapi/identity-sources/source-1/sync/full", nil)
 	req.Header.Set("X-IDB-Entity-ID", "entity-1")
 	rec := httptest.NewRecorder()
 
@@ -63,7 +62,7 @@ func TestTriggerIncrementalSyncReturnsResult(t *testing.T) {
 		ManagedUsersCreated: 2,
 		BindingsCreated:     2,
 	}})
-	req := httptest.NewRequest(http.MethodPost, "/admin/v1/identity-sources/source-1/sync/incremental", nil)
+	req := httptest.NewRequest(http.MethodPost, "/sapi/identity-sources/source-1/sync/incremental", nil)
 	req.Header.Set("X-IDB-Entity-ID", "entity-1")
 	rec := httptest.NewRecorder()
 
@@ -86,7 +85,7 @@ func TestAPIFullSyncCanUseSessionEntity(t *testing.T) {
 		JobID:         "job-2",
 		UsersUpserted: 3,
 	}})
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/v1/identity-sources/source-1/sync/full", nil)
+	req := httptest.NewRequest(http.MethodPost, "/sapi/identity-sources/source-1/sync/full", nil)
 	req.AddCookie(testSessionCookie())
 	rec := httptest.NewRecorder()
 
@@ -106,7 +105,7 @@ func TestAPIFullSyncCanUseSessionEntity(t *testing.T) {
 
 func TestTriggerFullSyncReturnsServiceError(t *testing.T) {
 	router := newTestRouter(&fakeSyncService{err: errors.New("provider unavailable")})
-	req := httptest.NewRequest(http.MethodPost, "/admin/v1/identity-sources/source-1/sync/full", nil)
+	req := httptest.NewRequest(http.MethodPost, "/sapi/identity-sources/source-1/sync/full", nil)
 	req.Header.Set("X-IDB-Entity-ID", "entity-1")
 	rec := httptest.NewRecorder()
 
@@ -244,7 +243,7 @@ func TestHandleFeishuWebhookRejectsInvalidEvent(t *testing.T) {
 
 func TestDashboardSummaryRequiresSession(t *testing.T) {
 	router := newConsoleTestRouter(&fakeConsoleService{})
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/v1/dashboard/summary", nil)
+	req := httptest.NewRequest(http.MethodGet, "/sapi/dashboard/summary", nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -263,7 +262,7 @@ func TestDashboardSummaryReturnsConsoleMetrics(t *testing.T) {
 		PendingAuthorization: 1,
 		SyncHealth:           "ready",
 	}})
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/v1/dashboard/summary", nil)
+	req := httptest.NewRequest(http.MethodGet, "/sapi/dashboard/summary", nil)
 	req.AddCookie(testSessionCookie())
 	rec := httptest.NewRecorder()
 
@@ -291,8 +290,8 @@ func TestCurrentUserReturnsSessionBackedProfile(t *testing.T) {
 		MustChangePassword: true,
 		WeakPassword:       true,
 	}})
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/v1/me", nil)
-	req.AddCookie(testSessionCookie())
+	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	req.AddCookie(testUserSessionCookie())
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -311,9 +310,9 @@ func TestCurrentUserReturnsSessionBackedProfile(t *testing.T) {
 
 func TestUpdatePasswordRejectsWeakPassword(t *testing.T) {
 	router := newConsoleTestRouter(&fakeConsoleService{})
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/v1/me/password", strings.NewReader(`{"current_password":"admin123","new_password":"123456"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/me/password", strings.NewReader(`{"current_password":"admin123","new_password":"123456"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(testSessionCookie())
+	req.AddCookie(testUserSessionCookie())
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -326,9 +325,9 @@ func TestUpdatePasswordRejectsWeakPassword(t *testing.T) {
 func TestUpdatePasswordCallsConsoleService(t *testing.T) {
 	console := &fakeConsoleService{}
 	router := newConsoleTestRouter(console)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/v1/me/password", strings.NewReader(`{"current_password":"admin123","new_password":"StrongerPass123!"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/me/password", strings.NewReader(`{"current_password":"admin123","new_password":"StrongerPass123!"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(testSessionCookie())
+	req.AddCookie(testUserSessionCookie())
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -393,6 +392,7 @@ type fakeConsoleService struct {
 	summary       DashboardSummary
 	user          CurrentUser
 	err           error
+	profileInput  UpdateProfileInput
 	passwordInput UpdatePasswordInput
 }
 
@@ -404,15 +404,47 @@ func (f *fakeConsoleService) CurrentUser(context.Context, auth.Session) (Current
 	return f.user, f.err
 }
 
+func (f *fakeConsoleService) UpdateProfile(_ context.Context, input UpdateProfileInput) (CurrentUser, error) {
+	f.profileInput = input
+	return f.user, f.err
+}
+
 func (f *fakeConsoleService) UpdatePassword(_ context.Context, input UpdatePasswordInput) error {
 	f.passwordInput = input
 	return f.err
 }
 
 func testSessionCookie() *http.Cookie {
-	payload := `{"UserID":"user-1","EntityID":"entity-1","Username":"admin","DisplayName":"Administrator","MustChangePassword":true,"WeakPassword":true}`
+	value, err := auth.EncodeAdminSession(auth.AdminSession{
+		AdminID:     "user-1",
+		EntityID:    "entity-1",
+		Username:    "admin",
+		DisplayName: "Administrator",
+		Role:        "enterprise_admin",
+	})
+	if err != nil {
+		panic(err)
+	}
+	return &http.Cookie{
+		Name:  "idb_admin_session",
+		Value: value,
+	}
+}
+
+func testUserSessionCookie() *http.Cookie {
+	value, err := auth.EncodeSession(auth.Session{
+		UserID:             "user-1",
+		EntityID:           "entity-1",
+		Username:           "admin",
+		DisplayName:        "Administrator",
+		MustChangePassword: true,
+		WeakPassword:       true,
+	})
+	if err != nil {
+		panic(err)
+	}
 	return &http.Cookie{
 		Name:  "idb_session",
-		Value: base64.RawURLEncoding.EncodeToString([]byte(payload)),
+		Value: value,
 	}
 }

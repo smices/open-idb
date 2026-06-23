@@ -18,10 +18,8 @@ func NewRoleHandler(service userService) RoleHandler {
 }
 
 func (h RoleHandler) RegisterRoutes(r chi.Router) {
-	r.Get("/admin/v1/roles", h.listRoles)
-	r.Get("/api/admin/v1/roles", h.listRoles)
-	r.Get("/admin/v1/roles/{id}", h.getRole)
-	r.Get("/api/admin/v1/roles/{id}", h.getRole)
+	r.Get("/sapi/roles", h.listRoles)
+	r.Get("/sapi/roles/{id}", h.getRole)
 }
 
 func (h RoleHandler) listRoles(w http.ResponseWriter, r *http.Request) {

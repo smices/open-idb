@@ -26,6 +26,16 @@ type Session struct {
 	ExpiresAt          time.Time
 }
 
+type AdminSession struct {
+	ID          string
+	AdminID     string
+	EntityID     string
+	Username    string
+	DisplayName string
+	Role        string
+	ExpiresAt   time.Time
+}
+
 type SessionMetadata struct {
 	LoginMethod string
 	DeviceID    string
@@ -38,15 +48,26 @@ type SessionResolver interface {
 	ResolveSession(ctx context.Context, sessionID string) (Session, error)
 }
 
+type AdminSessionResolver interface {
+	ResolveAdminSession(ctx context.Context, sessionID string) (AdminSession, error)
+}
+
 var configuredSessionResolver struct {
-	mu       sync.RWMutex
-	resolver SessionResolver
+	mu            sync.RWMutex
+	resolver      SessionResolver
+	adminResolver AdminSessionResolver
 }
 
 func SetSessionResolver(resolver SessionResolver) {
 	configuredSessionResolver.mu.Lock()
 	defer configuredSessionResolver.mu.Unlock()
 	configuredSessionResolver.resolver = resolver
+}
+
+func SetAdminSessionResolver(resolver AdminSessionResolver) {
+	configuredSessionResolver.mu.Lock()
+	defer configuredSessionResolver.mu.Unlock()
+	configuredSessionResolver.adminResolver = resolver
 }
 
 func ResolveSession(ctx context.Context, value string) (Session, error) {
@@ -61,6 +82,20 @@ func ResolveSession(ctx context.Context, value string) (Session, error) {
 		return resolver.ResolveSession(ctx, value)
 	}
 	return DecodeSession(value)
+}
+
+func ResolveAdminSession(ctx context.Context, value string) (AdminSession, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return AdminSession{}, fmt.Errorf("admin session id is required")
+	}
+	configuredSessionResolver.mu.RLock()
+	resolver := configuredSessionResolver.adminResolver
+	configuredSessionResolver.mu.RUnlock()
+	if resolver != nil {
+		return resolver.ResolveAdminSession(ctx, value)
+	}
+	return DecodeAdminSession(value)
 }
 
 type DatabaseSessionResolver struct {
@@ -146,6 +181,14 @@ func EncodeSession(session Session) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(payload), nil
 }
 
+func EncodeAdminSession(session AdminSession) (string, error) {
+	payload, err := json.Marshal(session)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
 func DecodeSession(value string) (Session, error) {
 	payload, err := base64.RawURLEncoding.DecodeString(value)
 	if err != nil {
@@ -157,6 +200,21 @@ func DecodeSession(value string) (Session, error) {
 	}
 	if session.UserID == "" || session.EntityID == "" || session.Username == "" {
 		return Session{}, fmt.Errorf("session is missing required identity fields")
+	}
+	return session, nil
+}
+
+func DecodeAdminSession(value string) (AdminSession, error) {
+	payload, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return AdminSession{}, err
+	}
+	var session AdminSession
+	if err := json.Unmarshal(payload, &session); err != nil {
+		return AdminSession{}, err
+	}
+	if session.AdminID == "" || session.Username == "" {
+		return AdminSession{}, fmt.Errorf("admin session is missing required identity fields")
 	}
 	return session, nil
 }

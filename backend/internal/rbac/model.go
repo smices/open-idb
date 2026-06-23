@@ -21,25 +21,6 @@ type PermissionResponse struct {
 	Type     string `json:"type"`
 }
 
-// ResourceScopeResponse represents a resource scope in the system.
-type ResourceScopeResponse struct {
-	ID       string `json:"id"`
-	EntityID string `json:"entity_id"`
-	Type     string `json:"type"`
-	Key      string `json:"key"`
-	Name     string `json:"name"`
-}
-
-// AssignmentResponse represents an application assignment in the system.
-type AssignmentResponse struct {
-	ID            string `json:"id"`
-	EntityID      string `json:"entity_id"`
-	ApplicationID string `json:"application_id"`
-	SubjectType   string `json:"subject_type"`
-	SubjectID     string `json:"subject_id"`
-	Effect        string `json:"effect"`
-}
-
 // ListResult represents a paginated list response.
 type ListResult struct {
 	Items  interface{} `json:"items"`

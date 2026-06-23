@@ -63,44 +63,6 @@ func (s *ConfigDBService) UpsertIMProviderConfig(ctx context.Context, session au
 	return imProviderConfigFromRow(row), nil
 }
 
-func (s *ConfigDBService) ListMCPConnectors(ctx context.Context, session auth.Session) ([]MCPConnector, error) {
-	entityID, err := ulidValue(session.EntityID)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := s.queries.ListMCPConnectors(ctx, entityID)
-	if err != nil {
-		return nil, err
-	}
-	connectors := make([]MCPConnector, 0, len(rows))
-	for _, row := range rows {
-		connectors = append(connectors, mcpConnectorFromRow(row))
-	}
-	return connectors, nil
-}
-
-func (s *ConfigDBService) CreateMCPConnector(ctx context.Context, session auth.Session, input CreateMCPConnectorInput) (MCPConnector, error) {
-	if err := validateMCPConnectorInput(input); err != nil {
-		return MCPConnector{}, err
-	}
-	entityID, err := ulidValue(session.EntityID)
-	if err != nil {
-		return MCPConnector{}, err
-	}
-	row, err := s.queries.CreateMCPConnector(ctx, generated.CreateMCPConnectorParams{
-		EntityID:    entityID,
-		Name:        input.Name,
-		EndpointUrl: input.EndpointURL,
-		AuthType:    input.AuthType,
-		Status:      input.Status,
-		Description: input.Description,
-	})
-	if err != nil {
-		return MCPConnector{}, err
-	}
-	return mcpConnectorFromRow(row), nil
-}
-
 func imProviderConfigFromRow(row generated.ImProviderConfig) IMProviderConfig {
 	return IMProviderConfig{
 		ID:              ulidString(row.ID),
@@ -110,17 +72,6 @@ func imProviderConfigFromRow(row generated.ImProviderConfig) IMProviderConfig {
 		OAuthConfigured: row.OauthConfigured,
 		SyncEnabled:     row.SyncEnabled,
 		Config:          row.Config,
-	}
-}
-
-func mcpConnectorFromRow(row generated.McpConnector) MCPConnector {
-	return MCPConnector{
-		ID:          ulidString(row.ID),
-		Name:        row.Name,
-		EndpointURL: row.EndpointUrl,
-		AuthType:    row.AuthType,
-		Status:      row.Status,
-		Description: row.Description,
 	}
 }
 
@@ -175,19 +126,6 @@ func normalizeIMProviderConfig(rawConfig json.RawMessage) json.RawMessage {
 		return json.RawMessage("{}")
 	}
 	return rawConfig
-}
-
-func validateMCPConnectorInput(input CreateMCPConnectorInput) error {
-	if input.Name == "" {
-		return fmt.Errorf("name is required")
-	}
-	if input.EndpointURL == "" {
-		return fmt.Errorf("endpoint_url is required")
-	}
-	if input.AuthType != "none" && input.AuthType != "bearer" && input.AuthType != "basic" && input.AuthType != "api_key" {
-		return fmt.Errorf("unsupported auth_type")
-	}
-	return validateStatus(input.Status)
 }
 
 func validateStatus(status string) error {

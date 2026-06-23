@@ -50,18 +50,12 @@ func NewOIDCClientHandler(service oidcClientService) OIDCClientHandler {
 }
 
 func (h OIDCClientHandler) RegisterRoutes(r chi.Router) {
-	r.Get("/admin/v1/oidc-clients", h.listOIDCClients)
-	r.Get("/api/admin/v1/oidc-clients", h.listOIDCClients)
-	r.Get("/admin/v1/oidc-clients/{id}", h.getOIDCClient)
-	r.Get("/api/admin/v1/oidc-clients/{id}", h.getOIDCClient)
-	r.Post("/admin/v1/oidc-clients", h.createOIDCClient)
-	r.Post("/api/admin/v1/oidc-clients", h.createOIDCClient)
-	r.Put("/admin/v1/oidc-clients/{id}", h.updateOIDCClient)
-	r.Put("/api/admin/v1/oidc-clients/{id}", h.updateOIDCClient)
-	r.Delete("/admin/v1/oidc-clients/{id}", h.deleteOIDCClient)
-	r.Delete("/api/admin/v1/oidc-clients/{id}", h.deleteOIDCClient)
-	r.Post("/admin/v1/oidc-clients/{id}/rotate-secret", h.rotateSecret)
-	r.Post("/api/admin/v1/oidc-clients/{id}/rotate-secret", h.rotateSecret)
+	r.Get("/sapi/oidc-clients", h.listOIDCClients)
+	r.Get("/sapi/oidc-clients/{id}", h.getOIDCClient)
+	r.Post("/sapi/oidc-clients", h.createOIDCClient)
+	r.Put("/sapi/oidc-clients/{id}", h.updateOIDCClient)
+	r.Delete("/sapi/oidc-clients/{id}", h.deleteOIDCClient)
+	r.Post("/sapi/oidc-clients/{id}/rotate-secret", h.rotateSecret)
 }
 
 func (h OIDCClientHandler) listOIDCClients(w http.ResponseWriter, r *http.Request) {

@@ -29,8 +29,7 @@ func NewHandler(service AuditService) Handler {
 
 // RegisterRoutes mounts audit log routes on the given router.
 func (h Handler) RegisterRoutes(r chi.Router) {
-	r.Get("/admin/v1/audit-logs", h.listAuditLogs)
-	r.Get("/api/admin/v1/audit-logs", h.listAuditLogs)
+	r.Get("/sapi/audit-logs", h.listAuditLogs)
 }
 
 func (h Handler) listAuditLogs(w http.ResponseWriter, r *http.Request) {
@@ -66,17 +65,24 @@ func (h Handler) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func readSession(w http.ResponseWriter, r *http.Request) (auth.Session, bool) {
-	cookie, err := r.Cookie("idb_session")
+	cookie, err := r.Cookie("idb_admin_session")
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "session_required", "idb_session cookie is required")
+		writeError(w, http.StatusUnauthorized, "admin_session_required", "idb_admin_session cookie is required")
 		return auth.Session{}, false
 	}
-	session, err := auth.ResolveSession(r.Context(), cookie.Value)
+	adminSession, err := auth.ResolveAdminSession(r.Context(), cookie.Value)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid_session", "idb_session cookie is invalid")
+		writeError(w, http.StatusUnauthorized, "invalid_admin_session", "idb_admin_session cookie is invalid")
 		return auth.Session{}, false
 	}
-	return session, true
+	return auth.Session{
+		ID:          adminSession.ID,
+		UserID:      adminSession.AdminID,
+		EntityID:    adminSession.EntityID,
+		Username:    adminSession.Username,
+		DisplayName: adminSession.DisplayName,
+		ExpiresAt:   adminSession.ExpiresAt,
+	}, true
 }
 
 func parseIntQuery(r *http.Request, key string, fallback int) int {

@@ -198,7 +198,7 @@ func TestListProvidersHandlerEndpoint(t *testing.T) {
 	r := chi.NewRouter()
 	handler.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/v1/auth/providers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/providers", nil)
 	req.Header.Set("X-IDB-Entity-ID", "01HZZZZZZZ0000000000000001")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -235,7 +235,7 @@ func TestListProvidersHandlerMissingEntity(t *testing.T) {
 	r := chi.NewRouter()
 	handler.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/v1/auth/providers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/providers", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 

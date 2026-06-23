@@ -36,8 +36,8 @@ func TestLoginAccountSetsSessionAndRedirects(t *testing.T) {
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusFound)
 	}
-	if location := rec.Header().Get("Location"); location != "/dashboard" {
-		t.Fatalf("Location = %q, want /dashboard", location)
+	if location := rec.Header().Get("Location"); location != "/portal" {
+		t.Fatalf("Location = %q, want /portal", location)
 	}
 	if cookie := rec.Result().Cookies()[0]; cookie.Name != "idb_session" || cookie.Value == "" {
 		t.Fatalf("cookie = %#v", cookie)
@@ -100,8 +100,8 @@ func TestLoginAccountRateLimitsRepeatedAttempts(t *testing.T) {
 func TestSafeReturnToRejectsExternalURL(t *testing.T) {
 	got := safeReturnTo("https://attacker.example/oauth2/authorize?client_id=demo-app&idp=feishu")
 
-	if got != "/dashboard" {
-		t.Fatalf("safeReturnTo() = %q, want /dashboard", got)
+	if got != "/portal" {
+		t.Fatalf("safeReturnTo() = %q, want /portal", got)
 	}
 }
 
@@ -128,7 +128,7 @@ func TestLoginContextResolvesOIDCApplicationReturnTo(t *testing.T) {
 	}).RegisterRoutes(router)
 
 	returnTo := "/api/oauth2/authorize?response_type=code&client_id=demo-app&redirect_uri=https%3A%2F%2Fdemo-app.local.test%2Fauth%2Foidc%2Fcallback"
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/v1/auth/context?path=/login&return_to="+url.QueryEscape(returnTo), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/context?path=/login&return_to="+url.QueryEscape(returnTo), nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -179,7 +179,7 @@ func TestLoginContextBuildsFeishuAutoRedirectForOIDCReturnTo(t *testing.T) {
 	}).RegisterRoutes(router)
 
 	returnTo := "/api/oauth2/authorize?response_type=code&client_id=demo-app&redirect_uri=https%3A%2F%2Fdemo-app.local.test%2Fauth%2Foidc%2Fcallback&idp=feishu"
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/v1/auth/context?path=/login&return_to="+url.QueryEscape(returnTo), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/context?path=/login&return_to="+url.QueryEscape(returnTo), nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)

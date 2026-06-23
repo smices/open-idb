@@ -65,6 +65,16 @@ func resolveLoginContext(path string, returnTo string) LoginContext {
 	safeReturn := safeReturnTo(returnTo)
 	parts := strings.Split(strings.Trim(normalizedPath, "/"), "/")
 
+	if normalizedPath == "/admin/login" {
+		return LoginContext{
+			Mode:                 LoginModeEntityAdmin,
+			Methods:              []string{"password"},
+			AllowEntitySelection: false,
+			Reason:               "admin",
+			ReturnTo:             safeReturnToWithDefault(returnTo, "/admin"),
+		}
+	}
+
 	if len(parts) >= 4 && parts[0] == "t" && parts[2] == "admin" && parts[3] == "login" {
 		return LoginContext{
 			Mode:   LoginModeEntityAdmin,

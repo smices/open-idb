@@ -67,15 +67,7 @@ func TestOIDCAuthorizationCodeFlow(t *testing.T) {
 	clientID := "idb-console"
 	redirectURI := "https://app.example.test/callback"
 	app := createOIDCTestClient(ctx, t, queries, entity.ID, clientID, redirectURI)
-	if _, err := queries.CreateApplicationAssignment(ctx, generated.CreateApplicationAssignmentParams{
-		EntityID:      entity.ID,
-		ApplicationID: app.ID,
-		SubjectType:   "user",
-		SubjectID:     user.ID,
-		Effect:        "allow",
-	}); err != nil {
-		t.Fatalf("create application assignment: %v", err)
-	}
+	insertApplicationAssignment(ctx, t, pool, entity.ID, app.ID, "user", user.ID, "allow")
 
 	privateKey, err := sso.GenerateRSAKey()
 	if err != nil {
@@ -104,15 +96,7 @@ func TestOIDCAuthorizationCodeFlow(t *testing.T) {
 	challenge := s256Challenge(verifier)
 
 	localUser := createOIDCTestLocalManagementUser(ctx, t, queries, entity.ID)
-	if _, err := queries.CreateApplicationAssignment(ctx, generated.CreateApplicationAssignmentParams{
-		EntityID:      entity.ID,
-		ApplicationID: app.ID,
-		SubjectType:   "user",
-		SubjectID:     localUser.ID,
-		Effect:        "allow",
-	}); err != nil {
-		t.Fatalf("create local user application assignment: %v", err)
-	}
+	insertApplicationAssignment(ctx, t, pool, entity.ID, app.ID, "user", localUser.ID, "allow")
 	localAuthorize := authorizeRequest(ctx, t, server, entity.ID, localUser.ID, clientID, redirectURI, challenge, "admin", "Admin")
 	_, _ = io.ReadAll(localAuthorize.Body)
 	localAuthorize.Body.Close()
@@ -332,6 +316,17 @@ func authorizeRequest(ctx context.Context, t *testing.T, server *httptest.Server
 		t.Fatalf("authorize request: %v", err)
 	}
 	return res
+}
+
+func insertApplicationAssignment(ctx context.Context, t *testing.T, pool *pgxpool.Pool, entityID, applicationID, subjectType, subjectID, effect string) {
+	t.Helper()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO application_assignments (entity_id, application_id, subject_type, subject_id, effect)
+		VALUES ($1, $2, $3, $4, $5)
+	`, entityID, applicationID, subjectType, subjectID, effect)
+	if err != nil {
+		t.Fatalf("insert application assignment: %v", err)
+	}
 }
 
 func getJSON(t *testing.T, endpoint string, wantStatus int) map[string]interface{} {

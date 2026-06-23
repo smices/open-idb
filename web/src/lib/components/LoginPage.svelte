@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import { api, type LoginContext, type LoginMode, type LoginProvider } from '$lib/api';
   import { t, tf } from '$lib/i18n';
+  import { redirectToPath } from '$lib/session';
   import { AppWindow, Building2, KeyRound, ShieldCheck } from 'lucide-svelte';
   import { onMount } from 'svelte';
 
@@ -18,7 +19,9 @@
   let autoRedirecting = false;
 
   $: query = $page.url.searchParams;
-  $: returnTo = query.get('return_to') || '/dashboard';
+  $: isAdminLogin = $page.url.pathname === '/admin/login';
+  $: returnTo = query.get('return_to') || (isAdminLogin ? '/admin' : '/portal');
+  $: loginAction = isAdminLogin ? '/sapi/login/account' : '/api/login/account';
   $: loginErrorKey = query.get('login_error');
   $: mode = context?.mode || modeFromPath($page.url.pathname);
   $: pathEntitySlug = entitySlugFromPath($page.url.pathname);
@@ -58,7 +61,7 @@
 
   function modeFromPath(pathname: string): LoginMode {
     if (pathname === '/auth/continue') return 'app';
-    if (/^\/t\/[^/]+\/admin\/login$/.test(pathname)) return 'entity_admin';
+    if (pathname === '/admin/login' || /^\/t\/[^/]+\/admin\/login$/.test(pathname)) return 'entity_admin';
     return 'user';
   }
 
@@ -115,11 +118,13 @@
   const loadContext = async () => {
     loadingContext = true;
     try {
-      context = await api.getLoginContext({ path: $page.url.pathname, return_to: returnTo });
+      context = isAdminLogin
+        ? await api.getAdminLoginContext({ path: $page.url.pathname, return_to: returnTo })
+        : await api.getLoginContext({ path: $page.url.pathname, return_to: returnTo });
       busyError = loginErrorText(loginErrorKey);
       if (!busyError && context?.auto_redirect_url) {
         autoRedirecting = true;
-        window.location.assign(context.auto_redirect_url);
+        redirectToPath(context.auto_redirect_url);
         return;
       }
       const resolvedEntityRef = context?.entity?.id || context?.entity?.slug || '';
@@ -239,7 +244,7 @@
           </div>
         {/if}
 
-        <form method="post" action="/api/login/account" class="space-y-4">
+        <form method="post" action={loginAction} class="space-y-4">
           <input type="hidden" name="return_to" value={returnTo} />
           {#if entityRef}
             <input type="hidden" name="entity_id" value={entityRef} />
@@ -279,35 +284,3 @@
     </section>
   </section>
 </main>
-
-<style>
-  .feishu-mark {
-    display: grid;
-    grid-template-columns: repeat(2, 0.42rem);
-    grid-template-rows: repeat(2, 0.42rem);
-    gap: 0.08rem;
-    inline-size: 1rem;
-    block-size: 1rem;
-    place-content: center;
-  }
-
-  .feishu-mark span {
-    border-radius: 0.12rem;
-  }
-
-  .feishu-mark span:nth-child(1) {
-    background: #00d6b9;
-  }
-
-  .feishu-mark span:nth-child(2) {
-    background: #3370ff;
-  }
-
-  .feishu-mark span:nth-child(3) {
-    background: #00a1ff;
-  }
-
-  .feishu-mark span:nth-child(4) {
-    background: #7b67ee;
-  }
-</style>

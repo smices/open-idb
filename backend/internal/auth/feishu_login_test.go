@@ -34,7 +34,7 @@ func TestFeishuOAuthStateUsesEphemeralStore(t *testing.T) {
 	state := oauthState{
 		EntityID: testEntityULID,
 		SourceID: testSourceULID,
-		ReturnTo: "/dashboard",
+		ReturnTo: "/portal",
 	}
 
 	encoded, err := handler.encodeOAuthState(context.Background(), state)
@@ -588,7 +588,7 @@ func TestFeishuCallbackSetsSessionAndRedirects(t *testing.T) {
 	state := oauthState{
 		EntityID: "01HZZZZZZZ0000000000000001",
 		SourceID: "01HZZZZZZZ0000000000000002",
-		ReturnTo: "/dashboard",
+		ReturnTo: "/portal",
 	}
 	stateBytes, _ := json.Marshal(state)
 	stateEncoded := base64.RawURLEncoding.EncodeToString(stateBytes)
@@ -605,8 +605,8 @@ func TestFeishuCallbackSetsSessionAndRedirects(t *testing.T) {
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusFound)
 	}
-	if location := rec.Header().Get("Location"); location != "/dashboard" {
-		t.Fatalf("Location = %q, want /dashboard", location)
+	if location := rec.Header().Get("Location"); location != "/portal" {
+		t.Fatalf("Location = %q, want /portal", location)
 	}
 
 	cookies := rec.Result().Cookies()
@@ -668,7 +668,7 @@ func TestFeishuCallbackRedirectsBrowserToConfiguredWebBaseURL(t *testing.T) {
 	state := oauthState{
 		EntityID: "01HZZZZZZZ0000000000000001",
 		SourceID: "01HZZZZZZZ0000000000000002",
-		ReturnTo: "/dashboard",
+		ReturnTo: "/portal",
 	}
 	stateBytes, _ := json.Marshal(state)
 	stateEncoded := base64.RawURLEncoding.EncodeToString(stateBytes)
@@ -684,8 +684,8 @@ func TestFeishuCallbackRedirectsBrowserToConfiguredWebBaseURL(t *testing.T) {
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusFound)
 	}
-	if location := rec.Header().Get("Location"); location != "http://localhost:5180/dashboard" {
-		t.Fatalf("Location = %q, want http://localhost:5180/dashboard", location)
+	if location := rec.Header().Get("Location"); location != "http://localhost:5180/portal" {
+		t.Fatalf("Location = %q, want http://localhost:5180/portal", location)
 	}
 }
 

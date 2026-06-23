@@ -39,7 +39,7 @@ func TestHealthRoutesReturnOK(t *testing.T) {
 }
 
 func TestFrontendRoutesDoNotServeBackendUI(t *testing.T) {
-	for _, path := range []string{"/", "/login", "/t/configured_entity/admin/login", "/auth/continue", "/dashboard"} {
+	for _, path := range []string{"/", "/login", "/auth/continue", "/portal", "/portal/profile"} {
 		t.Run(path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, path, nil)
 			addSessionCookie(t, req)
@@ -55,8 +55,8 @@ func TestFrontendRoutesDoNotServeBackendUI(t *testing.T) {
 	}
 }
 
-func TestAnonymousFrontendRoutesRequireSession(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+func TestAnonymousPortalRoutesRequireUserSession(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/portal", nil)
 	rec := httptest.NewRecorder()
 
 	NewRouter().ServeHTTP(rec, req)
@@ -67,12 +67,50 @@ func TestAnonymousFrontendRoutesRequireSession(t *testing.T) {
 	assertJSONError(t, rec, "session_required")
 }
 
-func TestAnonymousAdminAPIsRequireSession(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/v1/dashboard/summary", nil)
+func TestAdminFrontendRoutesRequireAdminSession(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	rec := httptest.NewRecorder()
+
+	NewRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	assertJSONError(t, rec, "admin_session_required")
+}
+
+func TestAdminFrontendRejectsUserSession(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	addSessionCookie(t, req)
+	rec := httptest.NewRecorder()
+
+	NewRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	assertJSONError(t, rec, "admin_session_required")
+}
+
+func TestAdminFrontendRoutesDoNotServeBackendUI(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	addAdminSessionCookie(t, req)
+	rec := httptest.NewRecorder()
+
+	NewRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	assertJSONError(t, rec, "not_found")
+}
+
+func TestAnonymousSAPIRequiresAdminSession(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/sapi/dashboard/summary", nil)
 	rec := httptest.NewRecorder()
 
 	NewRouter(func(r chi.Router) {
-		r.Get("/api/admin/v1/dashboard/summary", func(w http.ResponseWriter, r *http.Request) {
+		r.Get("/sapi/dashboard/summary", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		})
 	}).ServeHTTP(rec, req)
@@ -80,16 +118,33 @@ func TestAnonymousAdminAPIsRequireSession(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
-	assertJSONError(t, rec, "session_required")
+	assertJSONError(t, rec, "admin_session_required")
 }
 
-func TestAuthenticatedAdminAPIsReachHandler(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/v1/dashboard/summary", nil)
+func TestSAPIRejectsUserSession(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/sapi/dashboard/summary", nil)
 	addSessionCookie(t, req)
 	rec := httptest.NewRecorder()
 
 	NewRouter(func(r chi.Router) {
-		r.Get("/api/admin/v1/dashboard/summary", func(w http.ResponseWriter, r *http.Request) {
+		r.Get("/sapi/dashboard/summary", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	assertJSONError(t, rec, "admin_session_required")
+}
+
+func TestAuthenticatedSAPIReachHandler(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/sapi/dashboard/summary", nil)
+	addAdminSessionCookie(t, req)
+	rec := httptest.NewRecorder()
+
+	NewRouter(func(r chi.Router) {
+		r.Get("/sapi/dashboard/summary", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		})
 	}).ServeHTTP(rec, req)
@@ -99,23 +154,36 @@ func TestAuthenticatedAdminAPIsReachHandler(t *testing.T) {
 	}
 }
 
+func TestOldAdminAPIPathIsNotPublicOrCompatible(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/sapi/dashboard/summary", nil)
+	addAdminSessionCookie(t, req)
+	rec := httptest.NewRecorder()
+
+	NewRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	assertJSONError(t, rec, "not_found")
+}
+
 func TestPublicAuthAndProtocolRoutesRemainReachable(t *testing.T) {
 	for _, tc := range []struct {
 		method string
 		path   string
 	}{
-		{http.MethodGet, "/api/admin/v1/auth/context"},
-		{http.MethodGet, "/api/admin/v1/auth/providers"},
+		{http.MethodGet, "/api/auth/context"},
+		{http.MethodGet, "/api/auth/providers"},
+		{http.MethodGet, "/sapi/auth/context"},
 		{http.MethodPost, "/api/login/account"},
+		{http.MethodPost, "/sapi/login/account"},
 		{http.MethodGet, "/auth/feishu/login"},
 		{http.MethodGet, "/auth/feishu/callback"},
 		{http.MethodPost, "/auth/feishu/exchange"},
 		{http.MethodGet, "/api/auth/feishu/login"},
 		{http.MethodGet, "/api/auth/feishu/callback"},
 		{http.MethodPost, "/api/auth/feishu/exchange"},
-		{http.MethodPost, "/login/legacy"},
-		{http.MethodPost, "/api/admin/v1/login/legacy"},
-		{http.MethodPost, "/admin/v1/login/legacy"},
+		{http.MethodPost, "/api/login/legacy"},
 		{http.MethodGet, "/.well-known/openid-configuration"},
 		{http.MethodGet, "/.well-known/jwks.json"},
 		{http.MethodGet, "/oauth2/authorize"},
@@ -160,6 +228,19 @@ func addSessionCookie(t *testing.T, req *http.Request) {
 		t.Fatalf("EncodeSession: %v", err)
 	}
 	req.AddCookie(&http.Cookie{Name: "idb_session", Value: session})
+}
+
+func addAdminSessionCookie(t *testing.T, req *http.Request) {
+	t.Helper()
+	session, err := auth.EncodeAdminSession(auth.AdminSession{
+		AdminID:     "01KT1698M30H8R3BQ4F0DBY0BG",
+		Username:    "admin",
+		DisplayName: "Administrator",
+	})
+	if err != nil {
+		t.Fatalf("EncodeAdminSession: %v", err)
+	}
+	req.AddCookie(&http.Cookie{Name: "idb_admin_session", Value: session})
 }
 
 func assertJSONError(t *testing.T, rec *httptest.ResponseRecorder, code string) {

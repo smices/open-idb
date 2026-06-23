@@ -4,7 +4,6 @@ package adminapi
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/smices/open-idb/internal/auth"
 )
 
 // --- mock service ---
@@ -138,14 +138,14 @@ func newUserTestRouter(handler UserHandler) *chi.Mux {
 }
 
 func adminTestSessionCookie() *http.Cookie {
-	session := map[string]interface{}{
-		"UserID":   "01HZZZZZZZ0000000000000002",
-		"EntityID": "01HZZZZZZZ0000000000000099",
-		"Username": "admin",
-	}
-	payload, _ := json.Marshal(session)
-	encoded := base64.RawURLEncoding.EncodeToString(payload)
-	return &http.Cookie{Name: "idb_session", Value: encoded}
+	session, _ := auth.EncodeAdminSession(auth.AdminSession{
+		AdminID:     "01HZZZZZZZ0000000000000002",
+		EntityID:     "01HZZZZZZZ0000000000000099",
+		Username:    "admin",
+		DisplayName: "Administrator",
+		Role:        "enterprise_admin",
+	})
+	return &http.Cookie{Name: "idb_admin_session", Value: session}
 }
 
 // --- tests ---
@@ -162,7 +162,7 @@ func TestListUsers_ReturnsProperJSON(t *testing.T) {
 	handler := NewUserHandler(mock)
 	router := newUserTestRouter(handler)
 
-	req := httptest.NewRequest("GET", "/admin/v1/users?limit=10&offset=0", nil)
+	req := httptest.NewRequest("GET", "/sapi/users?limit=10&offset=0", nil)
 	req.AddCookie(adminTestSessionCookie())
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -205,7 +205,7 @@ func TestListUsers_MissingSession_Returns401(t *testing.T) {
 	handler := NewUserHandler(&mockUserService{})
 	router := newUserTestRouter(handler)
 
-	req := httptest.NewRequest("GET", "/admin/v1/users", nil)
+	req := httptest.NewRequest("GET", "/sapi/users", nil)
 	// no cookie
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -218,8 +218,8 @@ func TestListUsers_MissingSession_Returns401(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to decode error response: %v", err)
 	}
-	if resp["error"] != "session_required" {
-		t.Errorf("expected error code session_required, got %s", resp["error"])
+	if resp["error"] != "admin_session_required" {
+		t.Errorf("expected error code admin_session_required, got %s", resp["error"])
 	}
 }
 
@@ -232,7 +232,7 @@ func TestGetUserByID_Success(t *testing.T) {
 	handler := NewUserHandler(mock)
 	router := newUserTestRouter(handler)
 
-	req := httptest.NewRequest("GET", "/admin/v1/users/01HZZZZZZZ0000000000000001", nil)
+	req := httptest.NewRequest("GET", "/sapi/users/01HZZZZZZZ0000000000000001", nil)
 	req.AddCookie(adminTestSessionCookie())
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -257,7 +257,7 @@ func TestGetUserByID_InvalidID_Returns400(t *testing.T) {
 	handler := NewUserHandler(&mockUserService{})
 	router := newUserTestRouter(handler)
 
-	req := httptest.NewRequest("GET", "/admin/v1/users/not-a-ulid", nil)
+	req := httptest.NewRequest("GET", "/sapi/users/not-a-ulid", nil)
 	req.AddCookie(adminTestSessionCookie())
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -281,7 +281,7 @@ func TestDisableUser_Success(t *testing.T) {
 	handler := NewUserHandler(mock)
 	router := newUserTestRouter(handler)
 
-	req := httptest.NewRequest("POST", "/admin/v1/users/01HZZZZZZZ0000000000000001/disable", nil)
+	req := httptest.NewRequest("POST", "/sapi/users/01HZZZZZZZ0000000000000001/disable", nil)
 	req.AddCookie(adminTestSessionCookie())
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -310,7 +310,7 @@ func TestEnableUser_Success(t *testing.T) {
 	handler := NewUserHandler(mock)
 	router := newUserTestRouter(handler)
 
-	req := httptest.NewRequest("POST", "/admin/v1/users/01HZZZZZZZ0000000000000001/enable", nil)
+	req := httptest.NewRequest("POST", "/sapi/users/01HZZZZZZZ0000000000000001/enable", nil)
 	req.AddCookie(adminTestSessionCookie())
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)

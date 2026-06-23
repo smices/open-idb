@@ -13,6 +13,7 @@ export interface UserSummary {
   phone?: string;
   avatar_url?: string;
   locale: string;
+  weak_password?: boolean;
   console_scope?: 'user' | 'enterprise_admin';
   capabilities?: Array<'user' | 'enterprise' | 'system'>;
 }
@@ -22,7 +23,7 @@ export const authUser: Writable<UserSummary | null> = writable(null);
 export const sidebarCollapsed: Writable<boolean> = writable(
   browser ? localStorage.getItem('idb-sidebar-collapsed') === '1' : false,
 );
-export const themeMode: Writable<ThemeMode> = writable(browser ? getThemeModeFromStorage() : 'system');
+export const themeMode: Writable<ThemeMode> = writable(browser ? getThemeModeFromStorage() : 'light');
 
 themeMode.subscribe((mode) => {
   if (browser) {

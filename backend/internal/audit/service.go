@@ -16,7 +16,7 @@ import (
 // auditQuerier abstracts the generated query methods for testability.
 type auditQuerier interface {
 	CreateAuditLog(ctx context.Context, arg generated.CreateAuditLogParams) (generated.AuditLog, error)
-	ListAuditLogs(ctx context.Context, arg generated.ListAuditLogsParams) ([]generated.AuditLog, error)
+	ListAuditLogs(ctx context.Context, arg generated.ListAuditLogsParams) ([]generated.ListAuditLogsRow, error)
 	CountAuditLogs(ctx context.Context, arg generated.CountAuditLogsParams) (int64, error)
 }
 
@@ -51,9 +51,12 @@ type AuditLogEntry struct {
 	EntityID     string          `json:"entity_id"`
 	ActorUserID  string          `json:"actor_user_id"`
 	ActorType    string          `json:"actor_type"`
+	ActorName    string          `json:"actor_display_name"`
 	Action       string          `json:"action"`
 	ResourceType string          `json:"resource_type"`
 	ResourceID   string          `json:"resource_id"`
+	ResourceName string          `json:"resource_display_name"`
+	Outcome      string          `json:"outcome"`
 	Before       json.RawMessage `json:"before"`
 	After        json.RawMessage `json:"after"`
 	IP           string          `json:"ip"`
@@ -161,15 +164,18 @@ func filterParams(opts ListOptions) optFilters {
 	}
 }
 
-func toEntry(row generated.AuditLog) AuditLogEntry {
+func toEntry(row generated.ListAuditLogsRow) AuditLogEntry {
 	return AuditLogEntry{
 		ID:           ulidString(row.ID),
 		EntityID:     ulidString(row.EntityID),
 		ActorUserID:  textString(row.ActorUserID),
 		ActorType:    row.ActorType,
+		ActorName:    interfaceString(row.ActorDisplayName),
 		Action:       row.Action,
 		ResourceType: row.ResourceType,
 		ResourceID:   row.ResourceID,
+		ResourceName: interfaceString(row.ResourceDisplayName),
+		Outcome:      row.Outcome,
 		Before:       json.RawMessage(row.BeforeState),
 		After:        json.RawMessage(row.AfterState),
 		IP:           row.Ip,
@@ -195,6 +201,16 @@ func textString(value pgtype.Text) string {
 		return ""
 	}
 	return value.String
+}
+
+func interfaceString(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return fmt.Sprint(value)
 }
 
 func optionalText(value string) pgtype.Text {

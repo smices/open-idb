@@ -18,10 +18,8 @@ func NewPermissionHandler(service userService) PermissionHandler {
 }
 
 func (h PermissionHandler) RegisterRoutes(r chi.Router) {
-	r.Get("/admin/v1/permissions", h.listPermissions)
-	r.Get("/api/admin/v1/permissions", h.listPermissions)
-	r.Get("/admin/v1/permissions/{id}", h.getPermission)
-	r.Get("/api/admin/v1/permissions/{id}", h.getPermission)
+	r.Get("/sapi/permissions", h.listPermissions)
+	r.Get("/sapi/permissions/{id}", h.getPermission)
 }
 
 func (h PermissionHandler) listPermissions(w http.ResponseWriter, r *http.Request) {

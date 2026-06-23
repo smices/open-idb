@@ -39,15 +39,3 @@ func TestToPermissionResponse(t *testing.T) {
 	// via integration tests with real database connections.
 	t.Log("conversion functions tested via integration tests")
 }
-
-func TestToResourceScopeResponse(t *testing.T) {
-	// Similar to TestToRoleResponse, conversion functions are tested
-	// via integration tests with real database connections.
-	t.Log("conversion functions tested via integration tests")
-}
-
-func TestToAssignmentResponse(t *testing.T) {
-	// Similar to TestToRoleResponse, conversion functions are tested
-	// via integration tests with real database connections.
-	t.Log("conversion functions tested via integration tests")
-}

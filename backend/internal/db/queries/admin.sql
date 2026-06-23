@@ -3,7 +3,7 @@
 -- === Users ===
 
 -- name: ListUsers :many
-SELECT id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at
+SELECT id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at, english_name, employee_no, job_title
 FROM users
 WHERE entity_id = $1
   AND (sqlc.narg('lifecycle_status')::text IS NULL OR lifecycle_status = sqlc.narg('lifecycle_status')::text)
@@ -17,7 +17,7 @@ WHERE entity_id = $1
   AND (sqlc.narg('lifecycle_status')::text IS NULL OR lifecycle_status = sqlc.narg('lifecycle_status')::text);
 
 -- name: GetUserByID :one
-SELECT id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at
+SELECT id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at, english_name, employee_no, job_title
 FROM users
 WHERE entity_id = $1 AND id = $2;
 
@@ -25,7 +25,7 @@ WHERE entity_id = $1 AND id = $2;
 UPDATE users
 SET lifecycle_status = $3, updated_at = now()
 WHERE entity_id = $1 AND id = $2
-RETURNING id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at;
+RETURNING id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at, english_name, employee_no, job_title;
 
 -- name: UpdateUser :one
 UPDATE users
@@ -35,12 +35,12 @@ SET display_name = COALESCE(sqlc.narg('display_name'), display_name),
     locale = COALESCE(sqlc.narg('locale'), locale),
     updated_at = now()
 WHERE entity_id = $1 AND id = $2
-RETURNING id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at;
+RETURNING id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at, english_name, employee_no, job_title;
 
 -- === Directory Users ===
 
 -- name: ListDirectoryUsers :many
-SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
 FROM directory_users
 WHERE entity_id = $1
   AND (sqlc.narg('source_id')::text IS NULL OR source_id = sqlc.narg('source_id')::text)
@@ -54,7 +54,7 @@ WHERE entity_id = $1
   AND (sqlc.narg('source_id')::text IS NULL OR source_id = sqlc.narg('source_id')::text);
 
 -- name: GetDirectoryUserByID :one
-SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
 FROM directory_users
 WHERE entity_id = $1 AND id = $2;
 

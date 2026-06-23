@@ -99,6 +99,15 @@ export interface CurrentUser {
   capabilities?: Array<'user' | 'enterprise' | 'system'>;
 }
 
+export interface AdminCurrentUser {
+  id: string;
+  admin_id: string;
+  entity_id?: string;
+  username: string;
+  display_name: string;
+  role: 'platform_admin' | 'enterprise_admin' | string;
+}
+
 export interface Entity {
   id: string;
   name: string;
@@ -179,6 +188,9 @@ export interface DirectoryUser {
   external_union_id?: string;
   external_open_id?: string;
   name: string;
+  english_name?: string;
+  employee_no?: string;
+  job_title?: string;
   email?: string;
   phone?: string;
   avatar_url?: string;
@@ -217,6 +229,40 @@ export interface Department {
   updated_at: string;
 }
 
+export type OrganizationTreeNodeKind = 'company' | 'organization' | 'department' | 'user';
+
+export interface OrganizationTreeNode {
+  id: string;
+  kind: OrganizationTreeNodeKind;
+  name: string;
+  parent_id?: string;
+  organization_id?: string;
+  source_id?: string;
+  external_department_id?: string;
+  english_name?: string;
+  employee_no?: string;
+  job_title?: string;
+  email?: string;
+  phone?: string;
+  status?: string;
+  has_children: boolean;
+  updated_at?: string;
+}
+
+export interface OrganizationTreeRootResponse {
+  root: OrganizationTreeNode;
+  children: OrganizationTreeNode[];
+  limit: number;
+  offset: number;
+}
+
+export interface OrganizationTreeSearchResponse {
+  items: OrganizationTreeNode[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface Group {
   id: string;
   entity_id: string;
@@ -230,18 +276,11 @@ export interface GroupMember {
   user_id: string;
   username: string;
   display_name: string;
+  english_name?: string;
+  employee_no?: string;
+  job_title?: string;
   email?: string;
   lifecycle_status: string;
-}
-
-export interface ResourceScope {
-  id: string;
-  entity_id: string;
-  type: string;
-  key: string;
-  name: string;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface PagedResponse<T> {
@@ -411,20 +450,6 @@ export interface LegacyUsersListResponse {
   offset: number;
 }
 
-export interface ApplicationAssignment {
-  id: string;
-  entity_id: string;
-  application_id: string;
-  subject_type: 'user' | 'group' | 'department' | 'role';
-  subject_id: string;
-  effect: string;
-}
-
-export interface AssignmentListResponse {
-  assignments: ApplicationAssignment[];
-  total: number;
-}
-
 export interface IMProviderConfig {
   id?: string;
   provider: string;
@@ -433,15 +458,6 @@ export interface IMProviderConfig {
   oauth_configured: boolean;
   sync_enabled: boolean;
   config: Record<string, string>;
-}
-
-export interface MCPConnector {
-  id?: string;
-  name: string;
-  endpoint_url: string;
-  auth_type: 'none' | 'api_key' | 'bearer' | 'basic';
-  status: 'active' | 'disabled';
-  description: string;
 }
 
 export interface LoginProvider {
@@ -474,35 +490,65 @@ export interface LegacyLoginResponse {
   session: string;
 }
 
+export interface UserApplicationAccess {
+  application_id: string;
+  application_name: string;
+  application_type: string;
+  has_access: boolean;
+  roles: Array<{
+    role_id: string;
+    role_code: string;
+    permissions: string[];
+    resource_scopes: Array<{ type: string; key: string; effect: string }>;
+  }>;
+}
+
+export interface UserAccessSummary {
+  user_id: string;
+  entity_id: string;
+  lifecycle_status: string;
+  applications: UserApplicationAccess[];
+}
+
 export const api = {
-  me: (): Promise<CurrentUser> => apiRequest<CurrentUser>('/api/admin/v1/me'),
+  me: (): Promise<CurrentUser> => apiRequest<CurrentUser>('/api/me'),
+  adminMe: (): Promise<AdminCurrentUser> => apiRequest<AdminCurrentUser>('/sapi/me'),
+  updateMe: (payload: { display_name: string }): Promise<CurrentUser> =>
+    apiRequest<CurrentUser>('/api/me', { method: 'PATCH', body: payload }),
+  updateAdminMe: (payload: { display_name: string }): Promise<AdminCurrentUser> =>
+    apiRequest<AdminCurrentUser>('/sapi/me', { method: 'PATCH', body: payload }),
+  myAccess: (): Promise<UserAccessSummary> => apiRequest<UserAccessSummary>('/api/me/access'),
   listEntities: (params?: { limit?: number; offset?: number }) => {
     const suffix = queryString({ limit: params?.limit, offset: params?.offset });
-    return apiRequest<EntityListResponse>(`/api/admin/v1/entities${suffix}`);
+    return apiRequest<EntityListResponse>(`/sapi/entities${suffix}`);
   },
-  getEntity: (id: string) => apiRequest<Entity>(`/api/admin/v1/entities/${encodeURIComponent(id)}`),
+  getEntity: (id: string) => apiRequest<Entity>(`/sapi/entities/${encodeURIComponent(id)}`),
   createEntity: (payload: { name: string; slug: string; default_locale?: string; brand_name?: string; logo_url?: string; login_message?: string }) =>
-    apiRequest<Entity>('/api/admin/v1/entities', { method: 'POST', body: payload }),
+    apiRequest<Entity>('/sapi/entities', { method: 'POST', body: payload }),
   updateEntity: (id: string, payload: { name?: string; status?: string; default_locale?: string; brand_name?: string; logo_url?: string; login_message?: string }) =>
-    apiRequest<Entity>(`/api/admin/v1/entities/${encodeURIComponent(id)}`, {
+    apiRequest<Entity>(`/sapi/entities/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: payload,
     }),
   listLoginProviders: (entityId?: string) => {
     const suffix = queryString({ entity_id: entityId });
-    return apiRequest<LoginProvider[]>(`/api/admin/v1/auth/providers${suffix}`);
+    return apiRequest<LoginProvider[]>(`/api/auth/providers${suffix}`);
   },
   getLoginContext: (params?: { path?: string; return_to?: string }) => {
     const suffix = queryString({ path: params?.path, return_to: params?.return_to });
-    return apiRequest<LoginContext>(`/api/admin/v1/auth/context${suffix}`);
+    return apiRequest<LoginContext>(`/api/auth/context${suffix}`);
+  },
+  getAdminLoginContext: (params?: { path?: string; return_to?: string }) => {
+    const suffix = queryString({ path: params?.path, return_to: params?.return_to });
+    return apiRequest<LoginContext>(`/sapi/auth/context${suffix}`);
   },
   legacyLogin: (payload: { entity_id: string; application_id: string; username: string; password: string }) =>
-    apiRequest<LegacyLoginResponse>('/api/admin/v1/login/legacy', {
+    apiRequest<LegacyLoginResponse>('/api/login/legacy', {
       method: 'POST',
       body: payload,
     }),
   dashboardSummary: (): Promise<DashboardSummary> =>
-    apiRequest<DashboardSummary>('/api/admin/v1/dashboard/summary'),
+    apiRequest<DashboardSummary>('/sapi/dashboard/summary'),
   listAuditLogs: (params?: {
     action?: string;
     resource_type?: string;
@@ -517,11 +563,11 @@ export const api = {
       limit: params?.limit,
       offset: params?.offset,
     });
-    return apiRequest<AuditLogListResponse>(`/api/admin/v1/audit-logs${suffix}`);
+    return apiRequest<AuditLogListResponse>(`/sapi/audit-logs${suffix}`);
   },
   listSyncJobs: (params?: { limit?: number; offset?: number }) => {
     const suffix = queryString({ limit: params?.limit, offset: params?.offset });
-    return apiRequest<SyncJobListResponse>(`/api/admin/v1/sync-jobs${suffix}`);
+    return apiRequest<SyncJobListResponse>(`/sapi/sync-jobs${suffix}`);
   },
   listDirectoryUsers: (params?: { source_id?: string; limit?: number; offset?: number }) => {
     const suffix = queryString({
@@ -529,94 +575,107 @@ export const api = {
       limit: params?.limit,
       offset: params?.offset,
     });
-    return apiRequest<DirectoryUserListResponse>(`/api/admin/v1/directory-users${suffix}`);
+    return apiRequest<DirectoryUserListResponse>(`/sapi/directory-users${suffix}`);
   },
   getDirectoryUser: (id: string) =>
-    apiRequest<DirectoryUser>(`/api/admin/v1/directory-users/${encodeURIComponent(id)}`),
+    apiRequest<DirectoryUser>(`/sapi/directory-users/${encodeURIComponent(id)}`),
   listOrganizations: (params?: { limit?: number; offset?: number }) => {
     const suffix = queryString({ limit: params?.limit, offset: params?.offset });
-    return apiRequest<PagedResponse<Organization>>(`/api/admin/v1/organizations${suffix}`);
+    return apiRequest<PagedResponse<Organization>>(`/sapi/organizations${suffix}`);
   },
   getOrganization: (id: string) =>
-    apiRequest<Organization>(`/api/admin/v1/organizations/${encodeURIComponent(id)}`),
+    apiRequest<Organization>(`/sapi/organizations/${encodeURIComponent(id)}`),
   createOrganization: (payload: { name: string; parent_id?: string }) =>
-    apiRequest<Organization>('/api/admin/v1/organizations', { method: 'POST', body: payload }),
+    apiRequest<Organization>('/sapi/organizations', { method: 'POST', body: payload }),
   updateOrganization: (id: string, payload: { name?: string; parent_id?: string }) =>
-    apiRequest<Organization>(`/api/admin/v1/organizations/${encodeURIComponent(id)}`, {
+    apiRequest<Organization>(`/sapi/organizations/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: payload,
     }),
   deleteOrganization: (id: string) =>
-    apiRequest<void>(`/api/admin/v1/organizations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    apiRequest<void>(`/sapi/organizations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   listDepartments: (params?: { organization_id?: string; limit?: number; offset?: number }) => {
     const suffix = queryString({
       organization_id: params?.organization_id,
       limit: params?.limit,
       offset: params?.offset,
     });
-    return apiRequest<PagedResponse<Department>>(`/api/admin/v1/departments${suffix}`);
+    return apiRequest<PagedResponse<Department>>(`/sapi/departments${suffix}`);
   },
   getDepartment: (id: string) =>
-    apiRequest<Department>(`/api/admin/v1/departments/${encodeURIComponent(id)}`),
+    apiRequest<Department>(`/sapi/departments/${encodeURIComponent(id)}`),
+  getOrganizationTreeRoot: (params?: { limit?: number; offset?: number }) => {
+    const suffix = queryString({ limit: params?.limit, offset: params?.offset });
+    return apiRequest<OrganizationTreeRootResponse>(`/sapi/organization-tree/root${suffix}`);
+  },
+  listOrganizationTreeChildren: (params: {
+    kind: OrganizationTreeNodeKind;
+    id: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const suffix = queryString({
+      kind: params.kind,
+      id: params.id,
+      limit: params.limit,
+      offset: params.offset,
+    });
+    return apiRequest<PagedResponse<OrganizationTreeNode>>(`/sapi/organization-tree/children${suffix}`);
+  },
+  searchOrganizationTree: (params: { q: string; limit?: number; offset?: number }) => {
+    const suffix = queryString({
+      q: params.q,
+      limit: params.limit,
+      offset: params.offset,
+    });
+    return apiRequest<OrganizationTreeSearchResponse>(`/sapi/organization-tree/search${suffix}`);
+  },
   createDepartment: (payload: {
     organization_id: string;
     name: string;
     parent_id?: string;
     source_id?: string;
     external_department_id?: string;
-  }) => apiRequest<Department>('/api/admin/v1/departments', { method: 'POST', body: payload }),
+  }) => apiRequest<Department>('/sapi/departments', { method: 'POST', body: payload }),
   updateDepartment: (id: string, payload: { name?: string; parent_id?: string }) =>
-    apiRequest<Department>(`/api/admin/v1/departments/${encodeURIComponent(id)}`, {
+    apiRequest<Department>(`/sapi/departments/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: payload,
     }),
   deleteDepartment: (id: string) =>
-    apiRequest<void>(`/api/admin/v1/departments/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    apiRequest<void>(`/sapi/departments/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   listGroups: (params?: { type?: string; limit?: number; offset?: number }) => {
     const suffix = queryString({ type: params?.type, limit: params?.limit, offset: params?.offset });
-    return apiRequest<PagedResponse<Group>>(`/api/admin/v1/groups${suffix}`);
+    return apiRequest<PagedResponse<Group>>(`/sapi/groups${suffix}`);
   },
-  getGroup: (id: string) => apiRequest<Group>(`/api/admin/v1/groups/${encodeURIComponent(id)}`),
+  getGroup: (id: string) => apiRequest<Group>(`/sapi/groups/${encodeURIComponent(id)}`),
   createGroup: (payload: { name: string; type?: string }) =>
-    apiRequest<Group>('/api/admin/v1/groups', { method: 'POST', body: payload }),
+    apiRequest<Group>('/sapi/groups', { method: 'POST', body: payload }),
   updateGroup: (id: string, payload: { name?: string }) =>
-    apiRequest<Group>(`/api/admin/v1/groups/${encodeURIComponent(id)}`, {
+    apiRequest<Group>(`/sapi/groups/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: payload,
     }),
   deleteGroup: (id: string) =>
-    apiRequest<void>(`/api/admin/v1/groups/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    apiRequest<void>(`/sapi/groups/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   listGroupMembers: (groupId: string, params?: { limit?: number; offset?: number }) => {
     const suffix = queryString({ limit: params?.limit, offset: params?.offset });
-    return apiRequest<PagedResponse<GroupMember>>(`/api/admin/v1/groups/${encodeURIComponent(groupId)}/members${suffix}`);
+    return apiRequest<PagedResponse<GroupMember>>(`/sapi/groups/${encodeURIComponent(groupId)}/members${suffix}`);
   },
   addGroupMember: (groupId: string, userId: string) =>
-    apiRequest<void>(`/api/admin/v1/groups/${encodeURIComponent(groupId)}/members`, {
+    apiRequest<void>(`/sapi/groups/${encodeURIComponent(groupId)}/members`, {
       method: 'POST',
       body: { user_id: userId },
     }),
   removeGroupMember: (groupId: string, userId: string) =>
     apiRequest<void>(
-      `/api/admin/v1/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}`,
+      `/sapi/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}`,
       { method: 'DELETE' },
     ),
-  listResourceScopes: (params?: { type?: string; limit?: number; offset?: number }) => {
-    const suffix = queryString({ type: params?.type, limit: params?.limit, offset: params?.offset });
-    return apiRequest<PagedResponse<ResourceScope>>(`/api/admin/v1/resource-scopes${suffix}`);
-  },
-  getResourceScope: (id: string) =>
-    apiRequest<ResourceScope>(`/api/admin/v1/resource-scopes/${encodeURIComponent(id)}`),
-  createResourceScope: (payload: { type: string; key: string; name: string }) =>
-    apiRequest<ResourceScope>('/api/admin/v1/resource-scopes', { method: 'POST', body: payload }),
-  updateResourceScope: (id: string, payload: { name?: string }) =>
-    apiRequest<ResourceScope>(`/api/admin/v1/resource-scopes/${encodeURIComponent(id)}`, {
-      method: 'PUT',
-      body: payload,
-    }),
-  deleteResourceScope: (id: string) =>
-    apiRequest<void>(`/api/admin/v1/resource-scopes/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   updatePassword: (payload: { current_password: string; new_password: string }) =>
-    apiRequest<void>('/api/admin/v1/me/password', { method: 'POST', body: payload }),
+    apiRequest<void>('/api/me/password', { method: 'POST', body: payload }),
+  updateAdminPassword: (payload: { current_password: string; new_password: string }) =>
+    apiRequest<void>('/sapi/me/password', { method: 'POST', body: payload }),
 
   listUsers: (params?: { status?: string; limit?: number; offset?: number }) => {
     const suffix = queryString({
@@ -624,25 +683,25 @@ export const api = {
       limit: params?.limit,
       offset: params?.offset,
     });
-    return apiRequest<UserListResponse>(`/api/admin/v1/users${suffix}`);
+    return apiRequest<UserListResponse>(`/sapi/users${suffix}`);
   },
-  getUser: (id: string) => apiRequest<User>(`/api/admin/v1/users/${encodeURIComponent(id)}`),
+  getUser: (id: string) => apiRequest<User>(`/sapi/users/${encodeURIComponent(id)}`),
   updateUser: (id: string, payload: UpdateUserRequest) =>
-    apiRequest<User>(`/api/admin/v1/users/${encodeURIComponent(id)}`, { method: 'PUT', body: payload }),
+    apiRequest<User>(`/sapi/users/${encodeURIComponent(id)}`, { method: 'PUT', body: payload }),
   disableUser: (id: string) =>
-    apiRequest<User>(`/api/admin/v1/users/${encodeURIComponent(id)}/disable`, { method: 'POST' }),
+    apiRequest<User>(`/sapi/users/${encodeURIComponent(id)}/disable`, { method: 'POST' }),
   enableUser: (id: string) =>
-    apiRequest<User>(`/api/admin/v1/users/${encodeURIComponent(id)}/enable`, { method: 'POST' }),
+    apiRequest<User>(`/sapi/users/${encodeURIComponent(id)}/enable`, { method: 'POST' }),
   listUserSessions: (userId: string, params?: { limit?: number }) => {
     const suffix = queryString({ limit: params?.limit });
-    return apiRequest<UserSessionListResponse>(`/api/admin/v1/users/${encodeURIComponent(userId)}/sessions${suffix}`);
+    return apiRequest<UserSessionListResponse>(`/sapi/users/${encodeURIComponent(userId)}/sessions${suffix}`);
   },
   revokeSession: (sessionId: string) =>
-    apiRequest<{ status: string }>(`/api/admin/v1/sessions/${encodeURIComponent(sessionId)}/revoke`, {
+    apiRequest<{ status: string }>(`/sapi/sessions/${encodeURIComponent(sessionId)}/revoke`, {
       method: 'POST',
     }),
   listUserBindings: (userId: string) =>
-    apiRequest<AccountBinding[]>(`/api/admin/v1/users/${encodeURIComponent(userId)}/bindings`),
+    apiRequest<AccountBinding[]>(`/sapi/users/${encodeURIComponent(userId)}/bindings`),
   createUserBinding: (
     userId: string,
     payload: {
@@ -653,47 +712,47 @@ export const api = {
       is_primary: boolean;
     },
   ) =>
-    apiRequest<AccountBinding>(`/api/admin/v1/users/${encodeURIComponent(userId)}/bindings`, {
+    apiRequest<AccountBinding>(`/sapi/users/${encodeURIComponent(userId)}/bindings`, {
       method: 'POST',
       body: payload,
     }),
   deleteUserBinding: (userId: string, bindingId: string) =>
     apiRequest<void>(
-      `/api/admin/v1/users/${encodeURIComponent(userId)}/bindings/${encodeURIComponent(bindingId)}`,
+      `/sapi/users/${encodeURIComponent(userId)}/bindings/${encodeURIComponent(bindingId)}`,
       { method: 'DELETE' },
     ),
-  getUserRoles: (id: string) => apiRequest<Role[]>(`/api/admin/v1/users/${encodeURIComponent(id)}/roles`),
+  getUserRoles: (id: string) => apiRequest<Role[]>(`/sapi/users/${encodeURIComponent(id)}/roles`),
   assignRoleToUser: (userId: string, roleId: string) =>
-    apiRequest<void>(`/api/admin/v1/users/${encodeURIComponent(userId)}/roles`, {
+    apiRequest<void>(`/sapi/users/${encodeURIComponent(userId)}/roles`, {
       method: 'POST',
       body: { role_id: roleId },
     }),
   removeRoleFromUser: (userId: string, roleId: string) =>
     apiRequest<void>(
-      `/api/admin/v1/users/${encodeURIComponent(userId)}/roles/${encodeURIComponent(roleId)}`,
+      `/sapi/users/${encodeURIComponent(userId)}/roles/${encodeURIComponent(roleId)}`,
       { method: 'DELETE' },
     ),
 
   listApplications: (params?: { limit?: number; offset?: number }) => {
     const suffix = queryString({ limit: params?.limit, offset: params?.offset });
-    return apiRequest<ApplicationListResponse>(`/api/admin/v1/applications${suffix}`);
+    return apiRequest<ApplicationListResponse>(`/sapi/applications${suffix}`);
   },
-  getApplication: (id: string) => apiRequest<Application>(`/api/admin/v1/applications/${encodeURIComponent(id)}`),
+  getApplication: (id: string) => apiRequest<Application>(`/sapi/applications/${encodeURIComponent(id)}`),
   createApplication: (payload: { name: string; type: string }) =>
-    apiRequest<Application>('/api/admin/v1/applications', { method: 'POST', body: payload }),
+    apiRequest<Application>('/sapi/applications', { method: 'POST', body: payload }),
   updateApplication: (id: string, payload: { name?: string; status?: string }) =>
-    apiRequest<Application>(`/api/admin/v1/applications/${encodeURIComponent(id)}`, {
+    apiRequest<Application>(`/sapi/applications/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: payload,
     }),
   deleteApplication: (id: string) =>
-    apiRequest<void>(`/api/admin/v1/applications/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    apiRequest<void>(`/sapi/applications/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   listOIDCClients: (params?: { limit?: number; offset?: number }) => {
     const suffix = queryString({ limit: params?.limit, offset: params?.offset });
-    return apiRequest<{ clients: OIDCClient[]; total: number }>(`/api/admin/v1/oidc-clients${suffix}`);
+    return apiRequest<{ clients: OIDCClient[]; total: number }>(`/sapi/oidc-clients${suffix}`);
   },
-  getOIDCClient: (id: string) => apiRequest<OIDCClient>(`/api/admin/v1/oidc-clients/${encodeURIComponent(id)}`),
+  getOIDCClient: (id: string) => apiRequest<OIDCClient>(`/sapi/oidc-clients/${encodeURIComponent(id)}`),
   createOIDCClient: (payload: {
     application_id: string;
     client_id: string;
@@ -703,7 +762,7 @@ export const api = {
     response_types?: string[];
     pkce_required?: boolean;
   }) =>
-    apiRequest<OIDCClientCreateResponse>('/api/admin/v1/oidc-clients', {
+    apiRequest<OIDCClientCreateResponse>('/sapi/oidc-clients', {
       method: 'POST',
       body: payload,
     }),
@@ -718,28 +777,28 @@ export const api = {
       status?: string;
     },
   ) =>
-    apiRequest<OIDCClient>(`/api/admin/v1/oidc-clients/${encodeURIComponent(id)}`, {
+    apiRequest<OIDCClient>(`/sapi/oidc-clients/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: payload,
     }),
   deleteOIDCClient: (id: string) =>
-    apiRequest<void>(`/api/admin/v1/oidc-clients/${encodeURIComponent(id)}`, {
+    apiRequest<void>(`/sapi/oidc-clients/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     }),
   rotateOIDCClientSecret: (id: string) =>
-    apiRequest<OIDCClientCreateResponse>(`/api/admin/v1/oidc-clients/${encodeURIComponent(id)}/rotate-secret`, {
+    apiRequest<OIDCClientCreateResponse>(`/sapi/oidc-clients/${encodeURIComponent(id)}/rotate-secret`, {
       method: 'POST',
     }),
 
   listLegacyUsers: (applicationId: string, params?: { limit?: number; offset?: number }) => {
     const suffix = queryString({ limit: params?.limit, offset: params?.offset });
     return apiRequest<LegacyUsersListResponse>(
-      `/api/admin/v1/applications/${encodeURIComponent(applicationId)}/legacy-users${suffix}`,
+      `/sapi/applications/${encodeURIComponent(applicationId)}/legacy-users${suffix}`,
     );
   },
   getLegacyUser: (applicationId: string, username: string) =>
     apiRequest<LegacyAppUser>(
-      `/api/admin/v1/applications/${encodeURIComponent(applicationId)}/legacy-users/${encodeURIComponent(username)}`,
+      `/sapi/applications/${encodeURIComponent(applicationId)}/legacy-users/${encodeURIComponent(username)}`,
     ),
   createLegacyUser: (
     applicationId: string,
@@ -752,7 +811,7 @@ export const api = {
     },
   ) =>
     apiRequest<LegacyAppUser>(
-      `/api/admin/v1/applications/${encodeURIComponent(applicationId)}/legacy-users`,
+      `/sapi/applications/${encodeURIComponent(applicationId)}/legacy-users`,
       { method: 'POST', body: payload },
     ),
   updateLegacyUser: (
@@ -766,51 +825,51 @@ export const api = {
     },
   ) =>
     apiRequest<LegacyAppUser>(
-      `/api/admin/v1/applications/${encodeURIComponent(applicationId)}/legacy-users/${encodeURIComponent(username)}`,
+      `/sapi/applications/${encodeURIComponent(applicationId)}/legacy-users/${encodeURIComponent(username)}`,
       { method: 'PUT', body: payload },
     ),
   setLegacyUserStatus: (applicationId: string, username: string, isActive: boolean) => {
     const action = isActive ? 'enable' : 'disable';
     return apiRequest<LegacyAppUser>(
-      `/api/admin/v1/applications/${encodeURIComponent(applicationId)}/legacy-users/${encodeURIComponent(username)}/${action}`,
+      `/sapi/applications/${encodeURIComponent(applicationId)}/legacy-users/${encodeURIComponent(username)}/${action}`,
       { method: 'POST' },
     );
   },
   deleteLegacyUser: (applicationId: string, username: string) =>
     apiRequest<void>(
-      `/api/admin/v1/applications/${encodeURIComponent(applicationId)}/legacy-users/${encodeURIComponent(username)}`,
+      `/sapi/applications/${encodeURIComponent(applicationId)}/legacy-users/${encodeURIComponent(username)}`,
       { method: 'DELETE' },
     ),
 
   listIdentitySources: (params?: { limit?: number; offset?: number }) => {
     const suffix = queryString({ limit: params?.limit, offset: params?.offset });
-    return apiRequest<IdentitySourceListResponse>(`/api/admin/v1/identity-sources${suffix}`);
+    return apiRequest<IdentitySourceListResponse>(`/sapi/identity-sources${suffix}`);
   },
   getIdentitySource: (id: string) =>
-    apiRequest<IdentitySource>(`/api/admin/v1/identity-sources/${encodeURIComponent(id)}`),
+    apiRequest<IdentitySource>(`/sapi/identity-sources/${encodeURIComponent(id)}`),
   createIdentitySource: (payload: { type: string; name: string; sync_enabled?: boolean }) =>
-    apiRequest<IdentitySource>('/api/admin/v1/identity-sources', { method: 'POST', body: payload }),
+    apiRequest<IdentitySource>('/sapi/identity-sources', { method: 'POST', body: payload }),
   updateIdentitySource: (
     id: string,
     payload: { name?: string; status?: string; sync_enabled?: boolean },
   ) =>
-    apiRequest<IdentitySource>(`/api/admin/v1/identity-sources/${encodeURIComponent(id)}`, {
+    apiRequest<IdentitySource>(`/sapi/identity-sources/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: payload,
     }),
   deleteIdentitySource: (id: string) =>
-    apiRequest<void>(`/api/admin/v1/identity-sources/${encodeURIComponent(id)}`, {
+    apiRequest<void>(`/sapi/identity-sources/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     }),
   triggerSourceSync: (sourceId: string, mode: IdentitySourceSyncMode) =>
     apiRequest<void>(
-      `/api/admin/v1/identity-sources/${encodeURIComponent(sourceId)}/sync/${mode}`,
+      `/sapi/identity-sources/${encodeURIComponent(sourceId)}/sync/${mode}`,
       { method: 'POST' },
     ),
 
-  listIMProviderConfigs: () => apiRequest<IMProviderConfig[]>('/api/admin/v1/integrations/im'),
+  listIMProviderConfigs: () => apiRequest<IMProviderConfig[]>('/sapi/integrations/im'),
   upsertIMProviderConfig: (provider: string, payload: Partial<IMProviderConfig>) =>
-    apiRequest<IMProviderConfig>(`/api/admin/v1/integrations/im/${encodeURIComponent(provider)}`, {
+    apiRequest<IMProviderConfig>(`/sapi/integrations/im/${encodeURIComponent(provider)}`, {
       method: 'PUT',
       body: {
         provider,
@@ -818,83 +877,47 @@ export const api = {
         config: payload.config || {},
       },
     }),
-  listMCPConnectors: () => apiRequest<MCPConnector[]>('/api/admin/v1/mcp/connectors'),
-  createMCPConnector: (payload: Omit<MCPConnector, 'id'>) =>
-    apiRequest<MCPConnector>('/api/admin/v1/mcp/connectors', {
-      method: 'POST',
-      body: payload,
-    }),
-
   listRoles: (params?: { limit?: number; offset?: number }) => {
     const suffix = queryString({ limit: params?.limit, offset: params?.offset });
-    return apiRequest<{ items: Role[]; total: number }>(`/api/admin/v1/roles${suffix}`);
+    return apiRequest<{ items: Role[]; total: number }>(`/sapi/roles${suffix}`);
   },
-  getRole: (id: string) => apiRequest<Role>(`/api/admin/v1/roles/${encodeURIComponent(id)}`),
+  getRole: (id: string) => apiRequest<Role>(`/sapi/roles/${encodeURIComponent(id)}`),
   createRole: (payload: { name: string; code: string; description?: string }) =>
-    apiRequest<Role>('/api/admin/v1/roles', { method: 'POST', body: payload }),
+    apiRequest<Role>('/sapi/roles', { method: 'POST', body: payload }),
   updateRole: (id: string, payload: { name?: string; description?: string }) =>
-    apiRequest<Role>(`/api/admin/v1/roles/${encodeURIComponent(id)}`, { method: 'PUT', body: payload }),
+    apiRequest<Role>(`/sapi/roles/${encodeURIComponent(id)}`, { method: 'PUT', body: payload }),
   deleteRole: (id: string) =>
-    apiRequest<void>(`/api/admin/v1/roles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    apiRequest<void>(`/sapi/roles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   listPermissions: (params?: { limit?: number; offset?: number }) => {
     const suffix = queryString({ limit: params?.limit, offset: params?.offset });
-    return apiRequest<{ items: Permission[]; total: number }>(`/api/admin/v1/permissions${suffix}`);
+    return apiRequest<{ items: Permission[]; total: number }>(`/sapi/permissions${suffix}`);
   },
-  getPermission: (id: string) => apiRequest<Permission>(`/api/admin/v1/permissions/${encodeURIComponent(id)}`),
+  getPermission: (id: string) => apiRequest<Permission>(`/sapi/permissions/${encodeURIComponent(id)}`),
   createPermission: (payload: { code: string; name: string; type: string }) =>
-    apiRequest<Permission>('/api/admin/v1/permissions', { method: 'POST', body: payload }),
+    apiRequest<Permission>('/sapi/permissions', { method: 'POST', body: payload }),
   updatePermission: (id: string, payload: { name: string }) =>
-    apiRequest<Permission>(`/api/admin/v1/permissions/${encodeURIComponent(id)}`, {
+    apiRequest<Permission>(`/sapi/permissions/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: payload,
     }),
   deletePermission: (id: string) =>
-    apiRequest<void>(`/api/admin/v1/permissions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    apiRequest<void>(`/sapi/permissions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   checkPermission: (payload: { user_id: string; permission: string }) =>
-    apiRequest<PermissionCheckResponse>('/api/admin/v1/permissions/check', {
+    apiRequest<PermissionCheckResponse>('/sapi/permissions/check', {
       method: 'POST',
       body: payload,
     }),
   assignPermissionToRole: (roleId: string, permissionId: string) =>
-    apiRequest<void>(`/api/admin/v1/roles/${encodeURIComponent(roleId)}/permissions`, {
+    apiRequest<void>(`/sapi/roles/${encodeURIComponent(roleId)}/permissions`, {
       method: 'POST',
       body: { permission_id: permissionId },
     }),
   removePermissionFromRole: (roleId: string, permissionId: string) =>
     apiRequest<void>(
-      `/api/admin/v1/roles/${encodeURIComponent(roleId)}/permissions/${encodeURIComponent(permissionId)}`,
+      `/sapi/roles/${encodeURIComponent(roleId)}/permissions/${encodeURIComponent(permissionId)}`,
       { method: 'DELETE' },
     ),
   listRolePermissions: (roleId: string) =>
-    apiRequest<Permission[]>(`/api/admin/v1/roles/${encodeURIComponent(roleId)}/permissions`),
-  assignResourceScopeToRole: (roleId: string, resourceScopeId: string, effect: 'allow' | 'deny') =>
-    apiRequest<{ status: string }>('/api/admin/v1/roles/scopes', {
-      method: 'POST',
-      body: { role_id: roleId, resource_scope_id: resourceScopeId, effect },
-    }),
-  removeResourceScopeFromRole: (roleId: string, resourceScopeId: string) =>
-    apiRequest<void>(
-      `/api/admin/v1/roles/${encodeURIComponent(roleId)}/scopes/${encodeURIComponent(resourceScopeId)}`,
-      { method: 'DELETE' },
-    ),
-
-  listAssignments: (appId: string, params?: { limit?: number; offset?: number }) => {
-    const suffix = queryString({ limit: params?.limit, offset: params?.offset });
-    return apiRequest<AssignmentListResponse>(
-      `/api/admin/v1/applications/${encodeURIComponent(appId)}/assignments${suffix}`,
-    );
-  },
-  createAssignment: (
-    appId: string,
-    payload: { subject_type: string; subject_id: string; effect: string },
-  ) =>
-    apiRequest<ApplicationAssignment>(
-      `/api/admin/v1/applications/${encodeURIComponent(appId)}/assignments`,
-      { method: 'POST', body: payload },
-    ),
-  deleteAssignment: (assignmentId: string) =>
-    apiRequest<void>(`/api/admin/v1/applications/assignments/${encodeURIComponent(assignmentId)}`, {
-      method: 'DELETE',
-    }),
+    apiRequest<Permission[]>(`/sapi/roles/${encodeURIComponent(roleId)}/permissions`),
 };

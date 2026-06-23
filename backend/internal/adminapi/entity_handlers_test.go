@@ -59,7 +59,7 @@ func TestEntityHandlerListsEntities(t *testing.T) {
 
 	r := chi.NewRouter()
 	NewEntityHandler(service).RegisterRoutes(r)
-	req := entityRequest(t, http.MethodGet, "/api/admin/v1/entities", nil)
+	req := entityRequest(t, http.MethodGet, "/sapi/entities", nil)
 	rr := httptest.NewRecorder()
 
 	r.ServeHTTP(rr, req)
@@ -84,7 +84,7 @@ func TestEntityHandlerCreatesEntity(t *testing.T) {
 
 	r := chi.NewRouter()
 	NewEntityHandler(service).RegisterRoutes(r)
-	req := entityRequest(t, http.MethodPost, "/api/admin/v1/entities", strings.NewReader(`{"name":"Configured Entity","slug":"configured_entity","default_locale":"zh-CN","brand_name":"Configured Brand","login_message":"Configured login message."}`))
+	req := entityRequest(t, http.MethodPost, "/sapi/entities", strings.NewReader(`{"name":"Configured Entity","slug":"configured_entity","default_locale":"zh-CN","brand_name":"Configured Brand","login_message":"Configured login message."}`))
 	rr := httptest.NewRecorder()
 
 	r.ServeHTTP(rr, req)
@@ -100,16 +100,17 @@ func TestEntityHandlerCreatesEntity(t *testing.T) {
 func entityRequest(t *testing.T, method, target string, body io.Reader) *http.Request {
 	t.Helper()
 	req := httptest.NewRequest(method, target, body)
-	session, err := auth.EncodeSession(auth.Session{
-		UserID:      "01HZZZZZZZ0000000000000001",
+	session, err := auth.EncodeAdminSession(auth.AdminSession{
+		AdminID:     "01HZZZZZZZ0000000000000001",
 		EntityID:    "01HZZZZZZZ0000000000000099",
 		Username:    "admin",
 		DisplayName: "Administrator",
+		Role:        "enterprise_admin",
 	})
 	if err != nil {
 		t.Fatalf("encode session: %v", err)
 	}
-	req.AddCookie(&http.Cookie{Name: "idb_session", Value: session})
+	req.AddCookie(&http.Cookie{Name: "idb_admin_session", Value: session})
 	return req
 }
 

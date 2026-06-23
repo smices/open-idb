@@ -57,7 +57,8 @@ func (h *Handler) SetEphemeralStore(store ephemeral.Store) {
 }
 
 func (h Handler) RegisterRoutes(r chi.Router) {
-	r.Get("/api/admin/v1/auth/context", h.loginContext)
+	r.Get("/api/auth/context", h.loginContext)
+	r.Get("/sapi/auth/context", h.loginContext)
 	r.Post("/api/login/account", h.loginAccount)
 }
 
@@ -163,11 +164,11 @@ func acceptsHTML(r *http.Request) bool {
 
 func safeReturnTo(value string) string {
 	if value == "" || !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") {
-		return "/dashboard"
+		return "/portal"
 	}
 	u, err := url.Parse(value)
 	if err != nil || u.IsAbs() || u.Host != "" {
-		return "/dashboard"
+		return "/portal"
 	}
 	return u.RequestURI()
 }

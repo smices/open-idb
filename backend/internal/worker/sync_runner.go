@@ -17,8 +17,9 @@ import (
 // delegates to idp.SyncService for the actual directory import and
 // sync_job record management, then emits structured audit events.
 type SyncRunner struct {
-	syncService *idp.SyncService
-	logger      *zap.Logger
+	syncService      *idp.SyncService
+	logger           *zap.Logger
+	cacheInvalidator organizationTreeCacheInvalidator
 }
 
 // NewSyncRunner creates a SyncRunner backed by the given SyncService.
@@ -27,6 +28,14 @@ func NewSyncRunner(syncService *idp.SyncService, logger *zap.Logger) *SyncRunner
 		syncService: syncService,
 		logger:      logger,
 	}
+}
+
+type organizationTreeCacheInvalidator interface {
+	InvalidateOrganizationTree(ctx context.Context, entityID string) error
+}
+
+func (r *SyncRunner) SetOrganizationTreeCacheInvalidator(invalidator organizationTreeCacheInvalidator) {
+	r.cacheInvalidator = invalidator
 }
 
 // SyncJobRequest identifies a single sync job to execute.
@@ -117,6 +126,11 @@ func (r *SyncRunner) Run(ctx context.Context, req SyncJobRequest) ([]audit.Event
 		zap.Int("managed_users_updated", result.ManagedUsersUpdated),
 		zap.Int("bindings_created", result.BindingsCreated),
 	)
+	if r.cacheInvalidator != nil {
+		if cacheErr := r.cacheInvalidator.InvalidateOrganizationTree(ctx, req.EntityID); cacheErr != nil {
+			log.Warn("organization tree cache invalidation failed", zap.Error(cacheErr))
+		}
+	}
 
 	return []audit.Event{startEvent, {
 		EntityID:     req.EntityID,

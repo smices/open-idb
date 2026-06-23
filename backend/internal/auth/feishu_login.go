@@ -359,7 +359,7 @@ func (h FeishuLoginHandler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/auth/feishu/login", h.loginRedirect)
 	r.Get("/api/auth/feishu/callback", h.loginCallback)
 	r.Post("/api/auth/feishu/exchange", h.loginExchange)
-	r.Get("/api/admin/v1/auth/providers", h.listProviders)
+	r.Get("/api/auth/providers", h.listProviders)
 }
 
 // oauthState is encoded into the OAuth state parameter for the redirect flow.

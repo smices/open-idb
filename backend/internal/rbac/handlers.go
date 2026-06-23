@@ -23,66 +23,28 @@ func NewHandler(service *Service) Handler {
 }
 
 // RegisterRoutes registers RBAC routes with the router.
-// Note: Role, Permission, and Resource Scope CRUD are handled by adminapi package.
-// This handler only registers routes unique to RBAC runtime enforcement.
 func (h Handler) RegisterRoutes(r chi.Router) {
-	// Role permission and resource scope assignment (adminapi has CRUD, rbac has assignment)
-	r.Get("/admin/v1/roles", h.listRoles)
-	r.Get("/admin/v1/roles/{id}", h.getRole)
-	r.Get("/admin/v1/roles/{id}/permissions", h.listRolePermissions)
-	r.Post("/admin/v1/roles", h.createRole)
-	r.Put("/admin/v1/roles/{id}", h.updateRole)
-	r.Delete("/admin/v1/roles/{id}", h.deleteRole)
-	r.Post("/admin/v1/roles/{id}/permissions", h.assignPermissionToRole)
-	r.Delete("/admin/v1/roles/{id}/permissions/{pid}", h.removePermissionFromRole)
-	r.Post("/admin/v1/roles/{id}/resource-scopes", h.assignResourceScopeToRole)
+	r.Get("/sapi/roles", h.listRoles)
+	r.Get("/sapi/roles/{id}", h.getRole)
+	r.Get("/sapi/roles/{id}/permissions", h.listRolePermissions)
+	r.Post("/sapi/roles", h.createRole)
+	r.Put("/sapi/roles/{id}", h.updateRole)
+	r.Delete("/sapi/roles/{id}", h.deleteRole)
+	r.Post("/sapi/roles/{id}/permissions", h.assignPermissionToRole)
+	r.Delete("/sapi/roles/{id}/permissions/{pid}", h.removePermissionFromRole)
 
-	r.Post("/admin/v1/permissions", h.createPermission)
-	r.Get("/admin/v1/permissions", h.listPermissions)
-	r.Get("/admin/v1/permissions/{id}", h.getPermission)
-	r.Put("/admin/v1/permissions/{id}", h.updatePermission)
-	r.Delete("/admin/v1/permissions/{id}", h.deletePermission)
+	r.Post("/sapi/permissions", h.createPermission)
+	r.Get("/sapi/permissions", h.listPermissions)
+	r.Get("/sapi/permissions/{id}", h.getPermission)
+	r.Put("/sapi/permissions/{id}", h.updatePermission)
+	r.Delete("/sapi/permissions/{id}", h.deletePermission)
 	// Permission check (unique to rbac)
-	r.Post("/admin/v1/permissions/check", h.checkPermission)
+	r.Post("/sapi/permissions/check", h.checkPermission)
 
 	// User roles (unique to rbac)
-	r.Post("/admin/v1/users/{id}/roles", h.assignRoleToUser)
-	r.Delete("/admin/v1/users/{id}/roles/{role_id}", h.removeRoleFromUser)
-	r.Get("/admin/v1/users/{id}/roles", h.getUserRoles)
-
-	// Application assignments (unique to rbac)
-	r.Post("/admin/v1/applications/{id}/assignments", h.createApplicationAssignment)
-	r.Get("/admin/v1/applications/{id}/assignments", h.listApplicationAssignments)
-	r.Delete("/admin/v1/applications/assignments/{aid}", h.deleteApplicationAssignment)
-
-	// Duplicate routes with /api prefix
-	r.Get("/api/admin/v1/roles", h.listRoles)
-	r.Get("/api/admin/v1/roles/{id}", h.getRole)
-	r.Get("/api/admin/v1/roles/{id}/permissions", h.listRolePermissions)
-	r.Post("/api/admin/v1/roles/{id}/permissions", h.assignPermissionToRole)
-	r.Delete("/api/admin/v1/roles/{id}/permissions/{pid}", h.removePermissionFromRole)
-	r.Post("/api/admin/v1/roles/{id}/resource-scopes", h.assignResourceScopeToRole)
-
-	r.Post("/api/admin/v1/permissions/check", h.checkPermission)
-
-	r.Post("/api/admin/v1/users/{id}/roles", h.assignRoleToUser)
-	r.Delete("/api/admin/v1/users/{id}/roles/{role_id}", h.removeRoleFromUser)
-	r.Get("/api/admin/v1/users/{id}/roles", h.getUserRoles)
-
-	r.Post("/api/admin/v1/applications/{id}/assignments", h.createApplicationAssignment)
-	r.Get("/api/admin/v1/applications/{id}/assignments", h.listApplicationAssignments)
-	r.Delete("/api/admin/v1/applications/assignments/{aid}", h.deleteApplicationAssignment)
-
-	// Role permission and permission CRUD (adminapi has list/detail, rbac has mutation endpoints)
-	r.Post("/api/admin/v1/roles", h.createRole)
-	r.Put("/api/admin/v1/roles/{id}", h.updateRole)
-	r.Delete("/api/admin/v1/roles/{id}", h.deleteRole)
-
-	r.Post("/api/admin/v1/permissions", h.createPermission)
-	r.Get("/api/admin/v1/permissions", h.listPermissions)
-	r.Get("/api/admin/v1/permissions/{id}", h.getPermission)
-	r.Put("/api/admin/v1/permissions/{id}", h.updatePermission)
-	r.Delete("/api/admin/v1/permissions/{id}", h.deletePermission)
+	r.Post("/sapi/users/{id}/roles", h.assignRoleToUser)
+	r.Delete("/sapi/users/{id}/roles/{role_id}", h.removeRoleFromUser)
+	r.Get("/sapi/users/{id}/roles", h.getUserRoles)
 }
 
 func (h Handler) createRole(w http.ResponseWriter, r *http.Request) {
@@ -258,36 +220,6 @@ func (h Handler) removePermissionFromRole(w http.ResponseWriter, r *http.Request
 	err := h.service.RemovePermissionFromRole(r.Context(), session.EntityID, roleID, permissionID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "remove_permission_failed", err.Error())
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h Handler) assignResourceScopeToRole(w http.ResponseWriter, r *http.Request) {
-	session, ok := readSession(w, r)
-	if !ok {
-		return
-	}
-
-	roleID := chi.URLParam(r, "id")
-	var request struct {
-		ResourceScopeID string `json:"resource_scope_id"`
-		Effect          string `json:"effect"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json body")
-		return
-	}
-
-	if request.ResourceScopeID == "" || request.Effect == "" {
-		writeError(w, http.StatusBadRequest, "missing_fields", "resource_scope_id and effect are required")
-		return
-	}
-
-	err := h.service.AssignResourceScopeToRole(r.Context(), session.EntityID, roleID, request.ResourceScopeID, request.Effect)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "assign_resource_scope_failed", err.Error())
 		return
 	}
 
@@ -501,156 +433,25 @@ func (h Handler) getUserRoles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, roles)
 }
 
-func (h Handler) listResourceScopes(w http.ResponseWriter, r *http.Request) {
-	session, ok := readSession(w, r)
-	if !ok {
-		return
-	}
-
-	scopeType := r.URL.Query().Get("type")
-	limit := int32(20)
-	offset := int32(0)
-
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := parseInt32(l); err == nil {
-			limit = parsed
-		}
-	}
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if parsed, err := parseInt32(o); err == nil {
-			offset = parsed
-		}
-	}
-
-	result, err := h.service.ListResourceScopes(r.Context(), session.EntityID, scopeType, limit, offset)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "list_resource_scopes_failed", err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (h Handler) createResourceScope(w http.ResponseWriter, r *http.Request) {
-	session, ok := readSession(w, r)
-	if !ok {
-		return
-	}
-
-	var request struct {
-		Type string `json:"type"`
-		Key  string `json:"key"`
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json body")
-		return
-	}
-
-	if request.Type == "" || request.Key == "" || request.Name == "" {
-		writeError(w, http.StatusBadRequest, "missing_fields", "type, key, and name are required")
-		return
-	}
-
-	scope, err := h.service.CreateResourceScope(r.Context(), session.EntityID, request.Type, request.Key, request.Name)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "create_resource_scope_failed", err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, scope)
-}
-
-func (h Handler) createApplicationAssignment(w http.ResponseWriter, r *http.Request) {
-	session, ok := readSession(w, r)
-	if !ok {
-		return
-	}
-
-	appID := chi.URLParam(r, "id")
-	var request struct {
-		SubjectType string `json:"subject_type"`
-		SubjectID   string `json:"subject_id"`
-		Effect      string `json:"effect"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json body")
-		return
-	}
-
-	if request.SubjectType == "" || request.SubjectID == "" || request.Effect == "" {
-		writeError(w, http.StatusBadRequest, "missing_fields", "subject_type, subject_id, and effect are required")
-		return
-	}
-
-	assignment, err := h.service.CreateApplicationAssignment(r.Context(), session.EntityID, appID, request.SubjectType, request.SubjectID, request.Effect)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "create_assignment_failed", err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, assignment)
-}
-
-func (h Handler) listApplicationAssignments(w http.ResponseWriter, r *http.Request) {
-	session, ok := readSession(w, r)
-	if !ok {
-		return
-	}
-
-	appID := chi.URLParam(r, "id")
-	limit := int32(20)
-	offset := int32(0)
-
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := parseInt32(l); err == nil {
-			limit = parsed
-		}
-	}
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if parsed, err := parseInt32(o); err == nil {
-			offset = parsed
-		}
-	}
-
-	result, err := h.service.ListApplicationAssignments(r.Context(), session.EntityID, appID, limit, offset)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "list_assignments_failed", err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (h Handler) deleteApplicationAssignment(w http.ResponseWriter, r *http.Request) {
-	session, ok := readSession(w, r)
-	if !ok {
-		return
-	}
-
-	aid := chi.URLParam(r, "aid")
-	err := h.service.DeleteApplicationAssignment(r.Context(), session.EntityID, aid)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "delete_assignment_failed", err.Error())
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// readSession reads and validates the idb_session cookie.
 func readSession(w http.ResponseWriter, r *http.Request) (auth.Session, bool) {
-	cookie, err := r.Cookie("idb_session")
+	cookie, err := r.Cookie("idb_admin_session")
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "session_required", "idb_session cookie is required")
+		writeError(w, http.StatusUnauthorized, "admin_session_required", "idb_admin_session cookie is required")
 		return auth.Session{}, false
 	}
-	session, err := auth.ResolveSession(r.Context(), cookie.Value)
+	adminSession, err := auth.ResolveAdminSession(r.Context(), cookie.Value)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid_session", "idb_session cookie is invalid")
+		writeError(w, http.StatusUnauthorized, "invalid_admin_session", "idb_admin_session cookie is invalid")
 		return auth.Session{}, false
 	}
-	return session, true
+	return auth.Session{
+		ID:          adminSession.ID,
+		UserID:      adminSession.AdminID,
+		EntityID:    adminSession.EntityID,
+		Username:    adminSession.Username,
+		DisplayName: adminSession.DisplayName,
+		ExpiresAt:   adminSession.ExpiresAt,
+	}, true
 }
 
 // writeJSON writes a JSON response.

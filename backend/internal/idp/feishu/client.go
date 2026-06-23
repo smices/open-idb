@@ -12,7 +12,9 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode"
 
+	"github.com/mozillazg/go-pinyin"
 	"github.com/smices/open-idb/internal/idp"
 )
 
@@ -177,7 +179,14 @@ func (c *Client) entityAccessToken(ctx context.Context) (string, error) {
 }
 
 func (c *Client) departments(ctx context.Context, token string) ([]idp.DirectoryDepartment, error) {
-	out := make([]idp.DirectoryDepartment, 0)
+	type rawDepartment struct {
+		ExternalID string
+		ParentID   string
+		Name       string
+		Raw        []byte
+	}
+	rawDepartments := make([]rawDepartment, 0)
+	openIDToDepartmentID := make(map[string]string)
 	pageToken := ""
 
 	for {
@@ -197,11 +206,14 @@ func (c *Client) departments(ctx context.Context, token string) ([]idp.Directory
 				return nil, err
 			}
 			externalID := firstNonEmpty(item.DepartmentID, item.OpenDepartmentID)
-			out = append(out, idp.DirectoryDepartment{
-				ExternalDepartmentID:       externalID,
-				ParentExternalDepartmentID: item.ParentID,
-				Name:                       item.Name,
-				RawProfile:                 cloneBytes(raw),
+			if item.OpenDepartmentID != "" && externalID != "" {
+				openIDToDepartmentID[item.OpenDepartmentID] = externalID
+			}
+			rawDepartments = append(rawDepartments, rawDepartment{
+				ExternalID: externalID,
+				ParentID:   item.ParentID,
+				Name:       item.Name,
+				Raw:        cloneBytes(raw),
 			})
 		}
 
@@ -214,6 +226,20 @@ func (c *Client) departments(ctx context.Context, token string) ([]idp.Directory
 		}
 		pageToken = nextPageToken
 	}
+
+	out := make([]idp.DirectoryDepartment, 0, len(rawDepartments))
+	for _, item := range rawDepartments {
+		parentID := item.ParentID
+		if mapped, ok := openIDToDepartmentID[parentID]; ok {
+			parentID = mapped
+		}
+		out = append(out, idp.DirectoryDepartment{
+			ExternalDepartmentID:       item.ExternalID,
+			ParentExternalDepartmentID: parentID,
+			Name:                       item.Name,
+			RawProfile:                 cloneBytes(item.Raw),
+		})
+	}
 	return out, nil
 }
 
@@ -221,6 +247,7 @@ func (c *Client) departmentsPage(ctx context.Context, token string, pageToken st
 	var response feishuPaginatedResponse
 	query := url.Values{}
 	query.Set("fetch_child", "true")
+	query.Set("department_id_type", "department_id")
 	query.Set("page_size", strconv.Itoa(defaultPageSize))
 	if pageToken != "" {
 		query.Set("page_token", pageToken)
@@ -284,14 +311,20 @@ func (c *Client) usersByDepartment(ctx context.Context, token string, department
 
 		for _, raw := range response.Data.Items {
 			var item struct {
-				UserID    string `json:"user_id"`
-				UnionID   string `json:"union_id"`
-				OpenID    string `json:"open_id"`
-				Name      string `json:"name"`
-				Email     string `json:"email"`
-				Mobile    string `json:"mobile"`
-				AvatarURL string `json:"avatar_url"`
-				Status    struct {
+				UserID     string          `json:"user_id"`
+				UnionID    string          `json:"union_id"`
+				OpenID     string          `json:"open_id"`
+				Name       string          `json:"name"`
+				EnName     string          `json:"en_name"`
+				English    string          `json:"english_name"`
+				NameEN     string          `json:"name_en"`
+				I18nName   json.RawMessage `json:"i18n_name"`
+				Email      string          `json:"email"`
+				Mobile     string          `json:"mobile"`
+				AvatarURL  string          `json:"avatar_url"`
+				EmployeeNo string          `json:"employee_no"`
+				JobTitle   string          `json:"job_title"`
+				Status     struct {
 					IsActivated bool `json:"is_activated"`
 					IsFrozen    bool `json:"is_frozen"`
 					IsResigned  bool `json:"is_resigned"`
@@ -305,11 +338,14 @@ func (c *Client) usersByDepartment(ctx context.Context, token string, department
 				ExternalUnionID: item.UnionID,
 				ExternalOpenID:  item.OpenID,
 				Name:            item.Name,
+				EnglishName:     englishNameForUser(item.Name, item.EnName, item.English, item.NameEN, item.I18nName),
+				EmployeeNo:      item.EmployeeNo,
+				JobTitle:        item.JobTitle,
 				Email:           item.Email,
 				Phone:           item.Mobile,
 				AvatarURL:       item.AvatarURL,
 				Status:          mapUserStatus(item.Status.IsActivated, item.Status.IsFrozen, item.Status.IsResigned),
-				RawProfile:      cloneBytes(raw),
+				RawProfile:      rawProfileWithDepartment(raw, departmentID),
 			})
 		}
 
@@ -343,6 +379,56 @@ func (c *Client) usersByDepartmentPage(ctx context.Context, token string, depart
 		return feishuPaginatedResponse{}, fmt.Errorf("feishu users failed: code=%d msg=%s", response.Code, response.Msg)
 	}
 	return response, nil
+}
+
+func rawProfileWithDepartment(raw []byte, departmentID string) []byte {
+	departmentID = strings.TrimSpace(departmentID)
+	if departmentID == "" {
+		return cloneBytes(raw)
+	}
+	var profile map[string]interface{}
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		return cloneBytes(raw)
+	}
+	profile["department_ids"] = appendStringValue(profile["department_ids"], departmentID)
+	profile["department_id"] = departmentID
+	normalized, err := json.Marshal(profile)
+	if err != nil {
+		return cloneBytes(raw)
+	}
+	return normalized
+}
+
+func appendStringValue(value interface{}, next string) []string {
+	values := make([]string, 0, 1)
+	appendValue := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			return
+		}
+		for _, existing := range values {
+			if existing == candidate {
+				return
+			}
+		}
+		values = append(values, candidate)
+	}
+	switch typed := value.(type) {
+	case []interface{}:
+		for _, item := range typed {
+			if text, ok := item.(string); ok {
+				appendValue(text)
+			}
+		}
+	case []string:
+		for _, item := range typed {
+			appendValue(item)
+		}
+	case string:
+		appendValue(typed)
+	}
+	appendValue(next)
+	return values
 }
 
 func departmentIDType(departmentID string) string {
@@ -542,11 +628,91 @@ func mapUserStatus(activated bool, frozen bool, resigned bool) string {
 
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
-		if value != "" {
-			return value
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
 		}
 	}
 	return ""
+}
+
+func englishNameForUser(name string, values ...interface{}) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		switch typed := value.(type) {
+		case string:
+			parts = append(parts, typed)
+		case json.RawMessage:
+			parts = append(parts, englishNameFromI18n(typed))
+		}
+	}
+	if english := normalizeLatinName(firstNonEmpty(parts...)); english != "" {
+		return english
+	}
+	if !hasCJK(name) {
+		return normalizeLatinName(name)
+	}
+	return pinyinDisplayName(name)
+}
+
+func englishNameFromI18n(raw json.RawMessage) string {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return ""
+	}
+	var names map[string]string
+	if err := json.Unmarshal(raw, &names); err != nil {
+		return ""
+	}
+	return firstNonEmpty(names["en_us"], names["en-US"], names["en"], names["en_US"])
+}
+
+func normalizeLatinName(value string) string {
+	fields := strings.Fields(strings.TrimSpace(value))
+	if len(fields) == 0 {
+		return ""
+	}
+	for i, field := range fields {
+		runes := []rune(field)
+		if len(runes) == 0 {
+			continue
+		}
+		runes[0] = unicode.ToUpper(runes[0])
+		for j := 1; j < len(runes); j++ {
+			runes[j] = unicode.ToLower(runes[j])
+		}
+		fields[i] = string(runes)
+	}
+	return strings.Join(fields, "")
+}
+
+func hasCJK(value string) bool {
+	for _, r := range value {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
+}
+
+func pinyinDisplayName(value string) string {
+	args := pinyin.NewArgs()
+	args.Style = pinyin.Normal
+	args.Fallback = func(r rune, _ pinyin.Args) []string {
+		if unicode.IsSpace(r) {
+			return nil
+		}
+		return []string{string(r)}
+	}
+	chunks := pinyin.Pinyin(value, args)
+	parts := make([]string, 0, len(chunks))
+	for _, chunk := range chunks {
+		if len(chunk) == 0 {
+			continue
+		}
+		if normalized := normalizeLatinName(chunk[0]); normalized != "" {
+			parts = append(parts, normalized)
+		}
+	}
+	return strings.Join(parts, "")
 }
 
 func firstNonEmptyRaw(values ...json.RawMessage) json.RawMessage {

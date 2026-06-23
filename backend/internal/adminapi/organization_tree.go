@@ -1,0 +1,498 @@
+// SPDX-License-Identifier: MIT
+
+package adminapi
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/smices/open-idb/internal/db/generated"
+	"github.com/smices/open-idb/internal/ephemeral"
+	"github.com/smices/open-idb/internal/id"
+)
+
+const organizationTreeCacheTTL = 15 * time.Minute
+const organizationTreeVersionTTL = 30 * 24 * time.Hour
+
+type OrganizationTreeCache struct {
+	store ephemeral.Store
+}
+
+func NewOrganizationTreeCache(store ephemeral.Store) *OrganizationTreeCache {
+	if store == nil {
+		return nil
+	}
+	return &OrganizationTreeCache{store: store}
+}
+
+func (c *OrganizationTreeCache) InvalidateOrganizationTree(ctx context.Context, entityID string) error {
+	if c == nil || c.store == nil || entityID == "" {
+		return nil
+	}
+	return c.store.Set(ctx, organizationTreeVersionKey(entityID), []byte(id.NewULID()), organizationTreeVersionTTL)
+}
+
+func (s *AdminService) SetOrganizationTreeCache(cache *OrganizationTreeCache) {
+	s.organizationTreeCache = cache
+}
+
+func (s *AdminService) InvalidateOrganizationTree(ctx context.Context, entityID string) error {
+	if s.organizationTreeCache == nil {
+		return nil
+	}
+	return s.organizationTreeCache.InvalidateOrganizationTree(ctx, entityID)
+}
+
+func (s *AdminService) ResolveOrganizationTreeEntityID(ctx context.Context, candidate string) (string, error) {
+	if candidate != "" {
+		if err := id.ValidateULID(candidate); err != nil {
+			return "", err
+		}
+		return candidate, nil
+	}
+	entities, err := s.queries.ListEntities(ctx, generated.ListEntitiesParams{
+		Limit:  1,
+		Offset: 0,
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(entities) == 0 {
+		return "", fmt.Errorf("no entity is available")
+	}
+	return entities[0].ID, nil
+}
+
+type OrganizationTreeNodeKind string
+
+const (
+	organizationTreeKindCompany      OrganizationTreeNodeKind = "company"
+	organizationTreeKindOrganization OrganizationTreeNodeKind = "organization"
+	organizationTreeKindDepartment   OrganizationTreeNodeKind = "department"
+	organizationTreeKindUser         OrganizationTreeNodeKind = "user"
+)
+
+type OrganizationTreeNode struct {
+	ID                   string                   `json:"id"`
+	Kind                 OrganizationTreeNodeKind `json:"kind"`
+	Name                 string                   `json:"name"`
+	ParentID             string                   `json:"parent_id,omitempty"`
+	OrganizationID       string                   `json:"organization_id,omitempty"`
+	SourceID             string                   `json:"source_id,omitempty"`
+	ExternalDepartmentID string                   `json:"external_department_id,omitempty"`
+	EnglishName          string                   `json:"english_name,omitempty"`
+	EmployeeNo           string                   `json:"employee_no,omitempty"`
+	JobTitle             string                   `json:"job_title,omitempty"`
+	Email                string                   `json:"email,omitempty"`
+	Phone                string                   `json:"phone,omitempty"`
+	Status               string                   `json:"status,omitempty"`
+	HasChildren          bool                     `json:"has_children"`
+	UpdatedAt            time.Time                `json:"updated_at,omitempty"`
+}
+
+type OrganizationTreeRootResponse struct {
+	Root     OrganizationTreeNode   `json:"root"`
+	Children []OrganizationTreeNode `json:"children"`
+	Limit    int                    `json:"limit"`
+	Offset   int                    `json:"offset"`
+}
+
+type OrganizationTreeSearchResponse struct {
+	Items  []OrganizationTreeNode `json:"items"`
+	Total  int64                  `json:"total"`
+	Limit  int                    `json:"limit"`
+	Offset int                    `json:"offset"`
+}
+
+func (s *AdminService) GetOrganizationTreeRoot(ctx context.Context, entityID string, limit, offset int32) (OrganizationTreeRootResponse, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	return cachedOrganizationTreeValue(ctx, s.organizationTreeCache, entityID, "root", "", "", limit, offset, func() (OrganizationTreeRootResponse, error) {
+		entity, err := s.queries.GetEntityByID(ctx, entityID)
+		if err != nil {
+			return OrganizationTreeRootResponse{}, err
+		}
+		rootOrg, orgErr := s.queries.GetFirstOrganization(ctx, entityID)
+		if orgErr != nil && !errors.Is(orgErr, pgx.ErrNoRows) {
+			return OrganizationTreeRootResponse{}, orgErr
+		}
+
+		root := OrganizationTreeNode{
+			ID:   entity.ID,
+			Kind: organizationTreeKindCompany,
+			Name: entity.Name,
+		}
+		if entity.BrandName != "" {
+			root.Name = entity.BrandName
+		}
+		displayName := root.Name
+		var children []OrganizationTreeNode
+		if orgErr == nil {
+			root.ID = rootOrg.ID
+			root.Name = displayName
+			root.OrganizationID = rootOrg.ID
+			root.UpdatedAt = rootOrg.UpdatedAt.Time
+			children, err = s.listOrganizationRootDepartments(ctx, entityID, rootOrg.ID, limit, offset)
+		} else {
+			children, err = s.listRootTreeChildren(ctx, entityID, limit, offset)
+		}
+		if err != nil {
+			return OrganizationTreeRootResponse{}, err
+		}
+		rootUsers, err := s.listRootDirectoryUsers(ctx, entityID, limit, 0)
+		if err != nil {
+			return OrganizationTreeRootResponse{}, err
+		}
+		children = append(children, rootUsers...)
+		root.HasChildren = len(children) > 0
+
+		return OrganizationTreeRootResponse{
+			Root:     root,
+			Children: children,
+			Limit:    int(limit),
+			Offset:   int(offset),
+		}, nil
+	})
+}
+
+func (s *AdminService) ListOrganizationTreeChildren(ctx context.Context, entityID string, kind OrganizationTreeNodeKind, parentID string, limit, offset int32) ([]OrganizationTreeNode, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	return cachedOrganizationTreeValue(ctx, s.organizationTreeCache, entityID, "children", string(kind), parentID, limit, offset, func() ([]OrganizationTreeNode, error) {
+		switch kind {
+		case organizationTreeKindCompany:
+			return s.listCompanyTreeChildren(ctx, entityID, parentID, limit, offset)
+		case organizationTreeKindOrganization:
+			return s.listOrganizationTreeChildren(ctx, entityID, parentID, limit, offset)
+		case organizationTreeKindDepartment:
+			return s.listDepartmentTreeChildren(ctx, entityID, parentID, limit, offset)
+		default:
+			return nil, fmt.Errorf("unsupported organization tree node kind: %s", kind)
+		}
+	})
+}
+
+func (s *AdminService) listCompanyTreeChildren(ctx context.Context, entityID string, companyID string, limit, offset int32) ([]OrganizationTreeNode, error) {
+	if companyID != "" {
+		if _, err := s.queries.GetOrganizationByID(ctx, generated.GetOrganizationByIDParams{
+			EntityID: entityID,
+			ID:       companyID,
+		}); err == nil {
+			return s.listOrganizationRootDepartments(ctx, entityID, companyID, limit, offset)
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+	}
+	return s.listRootTreeChildren(ctx, entityID, limit, offset)
+}
+
+func (s *AdminService) listRootTreeChildren(ctx context.Context, entityID string, limit, offset int32) ([]OrganizationTreeNode, error) {
+	deptRows, err := s.queries.ListRootDepartments(ctx, generated.ListRootDepartmentsParams{
+		EntityID:       entityID,
+		Limit:          limit,
+		Offset:         offset,
+		OrganizationID: pgtype.Text{},
+	})
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]OrganizationTreeNode, 0, len(deptRows))
+	for _, row := range deptRows {
+		nodes = append(nodes, s.departmentTreeNode(ctx, row))
+	}
+	return nodes, nil
+}
+
+func (s *AdminService) listOrganizationRootDepartments(ctx context.Context, entityID string, organizationID string, limit, offset int32) ([]OrganizationTreeNode, error) {
+	deptRows, err := s.queries.ListRootDepartments(ctx, generated.ListRootDepartmentsParams{
+		EntityID: entityID,
+		Limit:    limit,
+		Offset:   offset,
+		OrganizationID: pgtype.Text{
+			String: organizationID,
+			Valid:  true,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]OrganizationTreeNode, 0, len(deptRows))
+	for _, row := range deptRows {
+		nodes = append(nodes, s.departmentTreeNode(ctx, row))
+	}
+	return nodes, nil
+}
+
+func (s *AdminService) listOrganizationTreeChildren(ctx context.Context, entityID string, organizationID string, limit, offset int32) ([]OrganizationTreeNode, error) {
+	orgRows, err := s.queries.ListChildOrganizations(ctx, generated.ListChildOrganizationsParams{
+		EntityID: entityID,
+		ParentID: pgtype.Text{
+			String: organizationID,
+			Valid:  true,
+		},
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]OrganizationTreeNode, 0, len(orgRows)+16)
+	for _, row := range orgRows {
+		nodes = append(nodes, s.organizationTreeNode(ctx, row))
+	}
+	deptRows, err := s.queries.ListRootDepartments(ctx, generated.ListRootDepartmentsParams{
+		EntityID: entityID,
+		Limit:    limit,
+		Offset:   0,
+		OrganizationID: pgtype.Text{
+			String: organizationID,
+			Valid:  true,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range deptRows {
+		nodes = append(nodes, s.departmentTreeNode(ctx, row))
+	}
+	return nodes, nil
+}
+
+func (s *AdminService) listDepartmentTreeChildren(ctx context.Context, entityID string, departmentID string, limit, offset int32) ([]OrganizationTreeNode, error) {
+	department, err := s.queries.GetDepartmentByID(ctx, generated.GetDepartmentByIDParams{
+		EntityID: entityID,
+		ID:       departmentID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	deptRows, err := s.queries.ListChildDepartments(ctx, generated.ListChildDepartmentsParams{
+		EntityID: entityID,
+		ParentID: pgtype.Text{
+			String: departmentID,
+			Valid:  true,
+		},
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]OrganizationTreeNode, 0, len(deptRows)+32)
+	for _, row := range deptRows {
+		nodes = append(nodes, s.departmentTreeNode(ctx, row))
+	}
+	if !department.SourceID.Valid || !department.ExternalDepartmentID.Valid {
+		return nodes, nil
+	}
+	userRows, err := s.queries.ListDirectoryUsersByDepartmentExternalID(ctx, generated.ListDirectoryUsersByDepartmentExternalIDParams{
+		EntityID: entityID,
+		SourceID: department.SourceID.String,
+		Column3:  department.ExternalDepartmentID.String,
+		Limit:    limit,
+		Offset:   0,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range userRows {
+		nodes = append(nodes, directoryUserTreeNode(row))
+	}
+	return nodes, nil
+}
+
+func (s *AdminService) organizationTreeNode(ctx context.Context, row generated.Organization) OrganizationTreeNode {
+	childCount, _ := s.queries.CountChildOrganizations(ctx, generated.CountChildOrganizationsParams{
+		EntityID: row.EntityID,
+		ParentID: pgtype.Text{
+			String: row.ID,
+			Valid:  true,
+		},
+	})
+	if childCount == 0 {
+		departments, _ := s.queries.ListRootDepartments(ctx, generated.ListRootDepartmentsParams{
+			EntityID: row.EntityID,
+			Limit:    1,
+			Offset:   0,
+			OrganizationID: pgtype.Text{
+				String: row.ID,
+				Valid:  true,
+			},
+		})
+		childCount = int64(len(departments))
+	}
+	parentID := ""
+	if row.ParentID.Valid {
+		parentID = row.ParentID.String
+	}
+	return OrganizationTreeNode{
+		ID:          row.ID,
+		Kind:        organizationTreeKindOrganization,
+		Name:        row.Name,
+		ParentID:    parentID,
+		HasChildren: childCount > 0,
+		UpdatedAt:   row.UpdatedAt.Time,
+	}
+}
+
+func (s *AdminService) departmentTreeNode(ctx context.Context, row generated.Department) OrganizationTreeNode {
+	childCount, _ := s.queries.CountChildDepartments(ctx, generated.CountChildDepartmentsParams{
+		EntityID: row.EntityID,
+		ParentID: pgtype.Text{
+			String: row.ID,
+			Valid:  true,
+		},
+	})
+	if childCount == 0 && row.SourceID.Valid && row.ExternalDepartmentID.Valid {
+		childCount, _ = s.queries.CountDirectoryUsersByDepartmentExternalID(ctx, generated.CountDirectoryUsersByDepartmentExternalIDParams{
+			EntityID: row.EntityID,
+			SourceID: row.SourceID.String,
+			Column3:  row.ExternalDepartmentID.String,
+		})
+	}
+	parentID := ""
+	if row.ParentID.Valid {
+		parentID = row.ParentID.String
+	}
+	return OrganizationTreeNode{
+		ID:                   row.ID,
+		Kind:                 organizationTreeKindDepartment,
+		Name:                 row.Name,
+		ParentID:             parentID,
+		OrganizationID:       row.OrganizationID,
+		SourceID:             textString(row.SourceID),
+		ExternalDepartmentID: textString(row.ExternalDepartmentID),
+		HasChildren:          childCount > 0,
+		UpdatedAt:            row.UpdatedAt.Time,
+	}
+}
+
+func directoryUserTreeNode(row generated.DirectoryUser) OrganizationTreeNode {
+	return OrganizationTreeNode{
+		ID:          row.ID,
+		Kind:        organizationTreeKindUser,
+		Name:        row.Name,
+		SourceID:    row.SourceID,
+		EnglishName: row.EnglishName,
+		EmployeeNo:  row.EmployeeNo,
+		JobTitle:    row.JobTitle,
+		Email:       textString(row.Email),
+		Phone:       textString(row.Phone),
+		Status:      row.Status,
+		HasChildren: false,
+		UpdatedAt:   row.UpdatedAt.Time,
+	}
+}
+
+func (s *AdminService) listRootDirectoryUsers(ctx context.Context, entityID string, limit, offset int32) ([]OrganizationTreeNode, error) {
+	userRows, err := s.queries.ListRootDirectoryUsers(ctx, generated.ListRootDirectoryUsersParams{
+		EntityID: entityID,
+		Limit:    limit,
+		Offset:   offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]OrganizationTreeNode, 0, len(userRows))
+	for _, row := range userRows {
+		nodes = append(nodes, directoryUserTreeNode(row))
+	}
+	return nodes, nil
+}
+
+func (s *AdminService) SearchOrganizationTree(ctx context.Context, entityID, query string, limit, offset int32) (OrganizationTreeSearchResponse, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if query == "" {
+		return OrganizationTreeSearchResponse{Items: []OrganizationTreeNode{}, Limit: int(limit), Offset: int(offset)}, nil
+	}
+	deptRows, err := s.queries.SearchOrganizationTreeDepartments(ctx, generated.SearchOrganizationTreeDepartmentsParams{
+		EntityID: entityID,
+		Column2:  query,
+		Limit:    limit,
+		Offset:   offset,
+	})
+	if err != nil {
+		return OrganizationTreeSearchResponse{}, err
+	}
+	userRows, err := s.queries.SearchOrganizationTreeUsers(ctx, generated.SearchOrganizationTreeUsersParams{
+		EntityID: entityID,
+		Column2:  query,
+		Limit:    limit,
+		Offset:   offset,
+	})
+	if err != nil {
+		return OrganizationTreeSearchResponse{}, err
+	}
+	nodes := make([]OrganizationTreeNode, 0, len(deptRows)+len(userRows))
+	for _, row := range deptRows {
+		nodes = append(nodes, s.departmentTreeNode(ctx, row))
+	}
+	for _, row := range userRows {
+		nodes = append(nodes, directoryUserTreeNode(row))
+	}
+	return OrganizationTreeSearchResponse{
+		Items:  nodes,
+		Total:  int64(len(nodes)),
+		Limit:  int(limit),
+		Offset: int(offset),
+	}, nil
+}
+
+func organizationTreeVersionKey(entityID string) string {
+	return "orgtree:version:" + entityID
+}
+
+func organizationTreeCacheVersion(ctx context.Context, cache *OrganizationTreeCache, entityID string) string {
+	if cache == nil || cache.store == nil {
+		return ""
+	}
+	value, ok, err := cache.store.Get(ctx, organizationTreeVersionKey(entityID))
+	if err != nil || !ok || len(value) == 0 {
+		return "0"
+	}
+	return string(value)
+}
+
+func cachedOrganizationTreeValue[T any](
+	ctx context.Context,
+	cache *OrganizationTreeCache,
+	entityID string,
+	scope string,
+	kind string,
+	parentID string,
+	limit int32,
+	offset int32,
+	load func() (T, error),
+) (T, error) {
+	var zero T
+	if cache == nil || cache.store == nil {
+		return load()
+	}
+	version := organizationTreeCacheVersion(ctx, cache, entityID)
+	key := ephemeral.Key("orgtree", entityID, version, scope, kind, parentID, fmt.Sprintf("%d", limit), fmt.Sprintf("%d", offset))
+	if raw, ok, err := cache.store.Get(ctx, key); err == nil && ok {
+		var cached T
+		if err := json.Unmarshal(raw, &cached); err == nil {
+			return cached, nil
+		}
+	}
+	value, err := load()
+	if err != nil {
+		return zero, err
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return zero, err
+	}
+	_ = cache.store.Set(ctx, key, raw, organizationTreeCacheTTL)
+	return value, nil
+}

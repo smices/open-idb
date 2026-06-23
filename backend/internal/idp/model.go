@@ -19,6 +19,9 @@ type DirectoryUser struct {
 	ExternalUnionID string
 	ExternalOpenID  string
 	Name            string
+	EnglishName     string
+	EmployeeNo      string
+	JobTitle        string
 	Email           string
 	Phone           string
 	AvatarURL       string

@@ -45,12 +45,9 @@ func NewBindingHandler(service bindingService) BindingHandler {
 }
 
 func (h BindingHandler) RegisterRoutes(r chi.Router) {
-	r.Get("/admin/v1/users/{id}/bindings", h.listBindings)
-	r.Get("/api/admin/v1/users/{id}/bindings", h.listBindings)
-	r.Post("/admin/v1/users/{id}/bindings", h.createBinding)
-	r.Post("/api/admin/v1/users/{id}/bindings", h.createBinding)
-	r.Delete("/admin/v1/users/{id}/bindings/{binding_id}", h.deleteBinding)
-	r.Delete("/api/admin/v1/users/{id}/bindings/{binding_id}", h.deleteBinding)
+	r.Get("/sapi/users/{id}/bindings", h.listBindings)
+	r.Post("/sapi/users/{id}/bindings", h.createBinding)
+	r.Delete("/sapi/users/{id}/bindings/{binding_id}", h.deleteBinding)
 }
 
 func (h BindingHandler) listBindings(w http.ResponseWriter, r *http.Request) {

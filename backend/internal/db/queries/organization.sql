@@ -81,6 +81,159 @@ WHERE entity_id = $1
 ORDER BY created_at ASC
 LIMIT 1;
 
+-- name: ListRootOrganizations :many
+SELECT id, entity_id, name, parent_id, created_at, updated_at
+FROM organizations
+WHERE entity_id = $1
+  AND (parent_id IS NULL OR parent_id = '')
+ORDER BY name ASC, created_at ASC
+LIMIT $2 OFFSET $3;
+
+-- name: ListChildOrganizations :many
+SELECT id, entity_id, name, parent_id, created_at, updated_at
+FROM organizations
+WHERE entity_id = $1 AND parent_id = $2
+ORDER BY name ASC, created_at ASC
+LIMIT $3 OFFSET $4;
+
+-- name: CountChildOrganizations :one
+SELECT count(*)::bigint
+FROM organizations
+WHERE entity_id = $1 AND parent_id = $2;
+
+-- name: ListRootDepartments :many
+SELECT id, entity_id, organization_id, name, parent_id, source_id, external_department_id, created_at, updated_at
+FROM departments
+WHERE entity_id = $1
+  AND (
+    (sqlc.narg('organization_id')::text IS NULL AND (organization_id IS NULL OR organization_id = ''))
+    OR organization_id = sqlc.narg('organization_id')::text
+  )
+  AND (parent_id IS NULL OR parent_id = '')
+ORDER BY name ASC, created_at ASC
+LIMIT $2 OFFSET $3;
+
+-- name: ListChildDepartments :many
+SELECT id, entity_id, organization_id, name, parent_id, source_id, external_department_id, created_at, updated_at
+FROM departments
+WHERE entity_id = $1 AND parent_id = $2
+ORDER BY name ASC, created_at ASC
+LIMIT $3 OFFSET $4;
+
+-- name: CountChildDepartments :one
+SELECT count(*)::bigint
+FROM departments
+WHERE entity_id = $1 AND parent_id = $2;
+
+-- name: ListDirectoryUsersByDepartmentExternalID :many
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
+FROM directory_users
+WHERE entity_id = $1
+  AND source_id = $2
+  AND (
+    raw_profile->'department_ids' ? $3::text
+    OR raw_profile->'departmentIds' ? $3::text
+    OR raw_profile->'department_id_list' ? $3::text
+    OR raw_profile->>'department_id' = $3::text
+    OR raw_profile->>'departmentId' = $3::text
+  )
+ORDER BY name ASC, created_at ASC
+LIMIT $4 OFFSET $5;
+
+-- name: CountDirectoryUsersByDepartmentExternalID :one
+SELECT count(*)::bigint
+FROM directory_users
+WHERE entity_id = $1
+  AND source_id = $2
+  AND (
+    raw_profile->'department_ids' ? $3::text
+    OR raw_profile->'departmentIds' ? $3::text
+    OR raw_profile->'department_id_list' ? $3::text
+    OR raw_profile->>'department_id' = $3::text
+    OR raw_profile->>'departmentId' = $3::text
+  );
+
+-- name: ListRootDirectoryUsers :many
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
+FROM directory_users
+WHERE entity_id = $1
+  AND (
+    raw_profile->'department_ids' ? '0'
+    OR raw_profile->'departmentIds' ? '0'
+    OR raw_profile->'department_id_list' ? '0'
+    OR raw_profile->>'department_id' = '0'
+    OR raw_profile->>'departmentId' = '0'
+    OR (
+      NOT (raw_profile ? 'department_ids')
+      AND NOT (raw_profile ? 'departmentIds')
+      AND NOT (raw_profile ? 'department_id_list')
+      AND NOT (raw_profile ? 'department_id')
+      AND NOT (raw_profile ? 'departmentId')
+    )
+    OR (
+      COALESCE(raw_profile->'department_ids', '[]'::jsonb) = '[]'::jsonb
+      AND COALESCE(raw_profile->'departmentIds', '[]'::jsonb) = '[]'::jsonb
+      AND COALESCE(raw_profile->'department_id_list', '[]'::jsonb) = '[]'::jsonb
+      AND COALESCE(raw_profile->>'department_id', '') = ''
+      AND COALESCE(raw_profile->>'departmentId', '') = ''
+    )
+  )
+ORDER BY name ASC, created_at ASC
+LIMIT $2 OFFSET $3;
+
+-- name: CountRootDirectoryUsers :one
+SELECT count(*)::bigint
+FROM directory_users
+WHERE entity_id = $1
+  AND (
+    raw_profile->'department_ids' ? '0'
+    OR raw_profile->'departmentIds' ? '0'
+    OR raw_profile->'department_id_list' ? '0'
+    OR raw_profile->>'department_id' = '0'
+    OR raw_profile->>'departmentId' = '0'
+    OR (
+      NOT (raw_profile ? 'department_ids')
+      AND NOT (raw_profile ? 'departmentIds')
+      AND NOT (raw_profile ? 'department_id_list')
+      AND NOT (raw_profile ? 'department_id')
+      AND NOT (raw_profile ? 'departmentId')
+    )
+    OR (
+      COALESCE(raw_profile->'department_ids', '[]'::jsonb) = '[]'::jsonb
+      AND COALESCE(raw_profile->'departmentIds', '[]'::jsonb) = '[]'::jsonb
+      AND COALESCE(raw_profile->'department_id_list', '[]'::jsonb) = '[]'::jsonb
+      AND COALESCE(raw_profile->>'department_id', '') = ''
+      AND COALESCE(raw_profile->>'departmentId', '') = ''
+    )
+  );
+
+-- name: SearchOrganizationTreeUsers :many
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
+FROM directory_users
+WHERE entity_id = $1
+  AND (
+    name ILIKE '%' || $2::text || '%'
+    OR english_name ILIKE '%' || $2::text || '%'
+    OR employee_no ILIKE '%' || $2::text || '%'
+    OR job_title ILIKE '%' || $2::text || '%'
+    OR email ILIKE '%' || $2::text || '%'
+    OR phone ILIKE '%' || $2::text || '%'
+    OR external_user_id ILIKE '%' || $2::text || '%'
+  )
+ORDER BY name ASC, created_at ASC
+LIMIT $3 OFFSET $4;
+
+-- name: SearchOrganizationTreeDepartments :many
+SELECT id, entity_id, organization_id, name, parent_id, source_id, external_department_id, created_at, updated_at
+FROM departments
+WHERE entity_id = $1
+  AND (
+    name ILIKE '%' || $2::text || '%'
+    OR external_department_id ILIKE '%' || $2::text || '%'
+  )
+ORDER BY name ASC, created_at ASC
+LIMIT $3 OFFSET $4;
+
 -- name: UpsertDepartmentBySource :one
 INSERT INTO departments (entity_id, organization_id, name, parent_id, source_id, external_department_id)
 VALUES ($1, $2, $3, $4, $5, $6)

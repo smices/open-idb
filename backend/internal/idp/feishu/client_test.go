@@ -32,6 +32,9 @@ func TestFullSyncFetchesTokenDepartmentsAndUsers(t *testing.T) {
 			if got := r.URL.Query().Get("fetch_child"); got != "true" {
 				t.Fatalf("department fetch_child = %q, want true", got)
 			}
+			if got := r.URL.Query().Get("department_id_type"); got != "department_id" {
+				t.Fatalf("department_id_type = %q, want department_id", got)
+			}
 			writeJSON(t, w, map[string]interface{}{
 				"code": 0,
 				"data": map[string]interface{}{
@@ -104,6 +107,66 @@ func TestFullSyncFetchesTokenDepartmentsAndUsers(t *testing.T) {
 	}
 	if !strings.Contains(string(data.Users[0].RawProfile), "张三") {
 		t.Fatalf("user raw profile = %s", string(data.Users[0].RawProfile))
+	}
+	var rawUser map[string]interface{}
+	if err := json.Unmarshal(data.Users[0].RawProfile, &rawUser); err != nil {
+		t.Fatalf("unmarshal user raw profile: %v", err)
+	}
+	departmentIDs, ok := rawUser["department_ids"].([]interface{})
+	if !ok || len(departmentIDs) != 1 || departmentIDs[0] != "0" {
+		t.Fatalf("user department_ids = %#v, want [0]", rawUser["department_ids"])
+	}
+}
+
+func TestFullSyncNormalizesOpenDepartmentParentIDs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			writeJSON(t, w, map[string]interface{}{"code": 0, "tenant_access_token": "tenant-token"})
+		case "/open-apis/contact/v3/departments/0/children":
+			writeJSON(t, w, map[string]interface{}{
+				"code": 0,
+				"data": map[string]interface{}{
+					"items": []map[string]interface{}{
+						{
+							"department_id":        "dep_parent",
+							"open_department_id":   "od_parent",
+							"parent_department_id": "0",
+							"name":                 "总部",
+						},
+						{
+							"department_id":        "dep_child",
+							"open_department_id":   "od_child",
+							"parent_department_id": "od_parent",
+							"name":                 "平台部",
+						},
+					},
+				},
+			})
+		case "/open-apis/contact/v3/users/find_by_department":
+			writeJSON(t, w, map[string]interface{}{"code": 0, "data": map[string]interface{}{"items": []map[string]interface{}{}}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{AppID: "app-id", AppSecret: "secret", BaseURL: server.URL}, server.Client())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	data, err := client.FullSync(context.Background())
+	if err != nil {
+		t.Fatalf("FullSync() error = %v", err)
+	}
+	if len(data.Departments) != 2 {
+		t.Fatalf("len(departments) = %d, want 2", len(data.Departments))
+	}
+	if data.Departments[1].ExternalDepartmentID != "dep_child" {
+		t.Fatalf("child external ID = %q, want dep_child", data.Departments[1].ExternalDepartmentID)
+	}
+	if data.Departments[1].ParentExternalDepartmentID != "dep_parent" {
+		t.Fatalf("child parent external ID = %q, want dep_parent", data.Departments[1].ParentExternalDepartmentID)
 	}
 }
 

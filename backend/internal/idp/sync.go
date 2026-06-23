@@ -269,6 +269,9 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 			ExternalUnionID: textValue(user.ExternalUnionID),
 			ExternalOpenID:  textValue(user.ExternalOpenID),
 			Name:            user.Name,
+			EnglishName:     user.EnglishName,
+			EmployeeNo:      user.EmployeeNo,
+			JobTitle:        user.JobTitle,
 			Email:           textValue(user.Email),
 			Phone:           textValue(user.Phone),
 			AvatarUrl:       textValue(user.AvatarURL),
@@ -295,6 +298,9 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 				ID:              binding.UserID,
 				PrimarySourceID: textValue(sourceID),
 				DisplayName:     user.Name,
+				EnglishName:     user.EnglishName,
+				EmployeeNo:      user.EmployeeNo,
+				JobTitle:        user.JobTitle,
 				Email:           textValue(user.Email),
 				Phone:           textValue(user.Phone),
 				AvatarUrl:       textValue(user.AvatarURL),
@@ -330,6 +336,9 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 			EntityID:        entityID,
 			Username:        usernameForDirectoryUser(user),
 			DisplayName:     user.Name,
+			EnglishName:     user.EnglishName,
+			EmployeeNo:      user.EmployeeNo,
+			JobTitle:        user.JobTitle,
 			Email:           textValue(user.Email),
 			Phone:           textValue(user.Phone),
 			AvatarUrl:       textValue(user.AvatarURL),
@@ -537,21 +546,30 @@ func (s *SyncService) failJob(ctx context.Context, entityID string, jobID string
 // Errors are logged but do not fail the sync job — department mapping is
 // best-effort and can be retried on the next sync.
 func (s *SyncService) mapDepartments(ctx context.Context, input FullSyncInput, entityID, sourceID string, departments []DirectoryDepartment, traceID string) {
-	// Find or create a default organization for this entity
+	// Find or create a company root for this entity.
 	org, err := s.queries.GetFirstOrganization(ctx, entityID)
 	if err != nil {
-		// No organization exists — create a default one
+		name := "Company"
+		if entity, entityErr := s.queries.GetEntityByID(ctx, entityID); entityErr == nil {
+			name = strings.TrimSpace(entity.BrandName)
+			if name == "" {
+				name = strings.TrimSpace(entity.Name)
+			}
+		}
+		if name == "" {
+			name = "Company"
+		}
 		org, err = s.queries.CreateOrganization(ctx, generated.CreateOrganizationParams{
 			EntityID: entityID,
-			Name:     "Default",
+			Name:     name,
 		})
 		if err != nil {
 			return // best-effort, log and continue
 		}
 	}
 
-	// First pass: upsert all departments (without parent_id)
-	deptIDs := make(map[string]string) // external_id → department ULID
+	// First pass: upsert all departments and index every known provider ID.
+	deptIDs := make(map[string]string) // provider department/open_department ID → department ULID
 	for _, dept := range departments {
 		row, err := s.queries.UpsertDepartmentBySource(ctx, generated.UpsertDepartmentBySourceParams{
 			EntityID:             entityID,
@@ -563,12 +581,15 @@ func (s *SyncService) mapDepartments(ctx context.Context, input FullSyncInput, e
 		if err != nil {
 			continue // best-effort
 		}
-		deptIDs[dept.ExternalDepartmentID] = row.ID
+		for _, key := range departmentLookupKeys(dept) {
+			deptIDs[key] = row.ID
+		}
 	}
 
 	// Second pass: resolve parent relationships
 	for _, dept := range departments {
-		if dept.ParentExternalDepartmentID == "" {
+		parentExternalID := strings.TrimSpace(dept.ParentExternalDepartmentID)
+		if parentExternalID == "" || parentExternalID == "0" {
 			continue
 		}
 		childID, ok := deptIDs[dept.ExternalDepartmentID]
@@ -586,6 +607,32 @@ func (s *SyncService) mapDepartments(ctx context.Context, input FullSyncInput, e
 			ParentID: pgtypeULID(parentID),
 		})
 	}
+}
+
+func departmentLookupKeys(dept DirectoryDepartment) []string {
+	keys := make([]string, 0, 3)
+	appendKey := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || value == "0" {
+			return
+		}
+		for _, existing := range keys {
+			if existing == value {
+				return
+			}
+		}
+		keys = append(keys, value)
+	}
+	appendKey(dept.ExternalDepartmentID)
+	var raw struct {
+		DepartmentID     string `json:"department_id"`
+		OpenDepartmentID string `json:"open_department_id"`
+	}
+	if len(dept.RawProfile) > 0 && json.Unmarshal(dept.RawProfile, &raw) == nil {
+		appendKey(raw.DepartmentID)
+		appendKey(raw.OpenDepartmentID)
+	}
+	return keys
 }
 
 func pgtypeULID(v string) pgtype.Text {

@@ -27,6 +27,7 @@ type DefaultFeishuWebhookTargetResolver interface {
 type ConsoleService interface {
 	DashboardSummary(ctx context.Context, session auth.Session) (DashboardSummary, error)
 	CurrentUser(ctx context.Context, session auth.Session) (CurrentUser, error)
+	UpdateProfile(ctx context.Context, input UpdateProfileInput) (CurrentUser, error)
 	UpdatePassword(ctx context.Context, input UpdatePasswordInput) error
 }
 
@@ -63,6 +64,12 @@ type UpdatePasswordInput struct {
 	WeakPassword    bool
 }
 
+type UpdateProfileInput struct {
+	EntityID    string
+	UserID      string
+	DisplayName string
+}
+
 type Handler struct {
 	syncService    SyncService
 	consoleService ConsoleService
@@ -74,20 +81,16 @@ func NewHandler(syncService SyncService, consoleService ConsoleService) Handler 
 
 func (h Handler) RegisterRoutes(r chi.Router) {
 	if h.syncService != nil {
-		r.Post("/admin/v1/identity-sources/{source_id}/sync/full", h.triggerFullSync)
-		r.Post("/api/admin/v1/identity-sources/{source_id}/sync/full", h.triggerFullSync)
-		r.Post("/admin/v1/identity-sources/{source_id}/sync/incremental", h.triggerIncrementalSync)
-		r.Post("/api/admin/v1/identity-sources/{source_id}/sync/incremental", h.triggerIncrementalSync)
+		r.Post("/sapi/identity-sources/{source_id}/sync/full", h.triggerFullSync)
+		r.Post("/sapi/identity-sources/{source_id}/sync/incremental", h.triggerIncrementalSync)
 		r.Post("/api/webhooks/feishu", h.handleFeishuWebhook)
 		r.Post("/api/webhooks/feishu/{entity_id}/{source_id}", h.handleFeishuWebhook)
 	}
 	if h.consoleService != nil {
-		r.Get("/admin/v1/dashboard/summary", h.dashboardSummary)
-		r.Get("/admin/v1/me", h.currentUser)
-		r.Post("/admin/v1/me/password", h.updatePassword)
-		r.Get("/api/admin/v1/dashboard/summary", h.dashboardSummary)
-		r.Get("/api/admin/v1/me", h.currentUser)
-		r.Post("/api/admin/v1/me/password", h.updatePassword)
+		r.Get("/sapi/dashboard/summary", h.dashboardSummary)
+		r.Get("/api/me", h.currentUser)
+		r.Patch("/api/me", h.updateProfile)
+		r.Post("/api/me/password", h.updatePassword)
 	}
 }
 
@@ -232,7 +235,7 @@ func (h Handler) dashboardSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) currentUser(w http.ResponseWriter, r *http.Request) {
-	session, ok := readSession(w, r)
+	session, ok := readUserSession(w, r)
 	if !ok {
 		return
 	}
@@ -244,8 +247,37 @@ func (h Handler) currentUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, user)
 }
 
+func (h Handler) updateProfile(w http.ResponseWriter, r *http.Request) {
+	session, ok := readUserSession(w, r)
+	if !ok {
+		return
+	}
+	var request struct {
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_profile_request", "invalid json body")
+		return
+	}
+	displayName := strings.TrimSpace(request.DisplayName)
+	if displayName == "" {
+		writeError(w, http.StatusBadRequest, "invalid_display_name", "display_name is required")
+		return
+	}
+	user, err := h.consoleService.UpdateProfile(r.Context(), UpdateProfileInput{
+		EntityID:    session.EntityID,
+		UserID:      session.UserID,
+		DisplayName: displayName,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "profile_update_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, user)
+}
+
 func (h Handler) updatePassword(w http.ResponseWriter, r *http.Request) {
-	session, ok := readSession(w, r)
+	session, ok := readUserSession(w, r)
 	if !ok {
 		return
 	}
@@ -278,6 +310,27 @@ func (h Handler) updatePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func readSession(w http.ResponseWriter, r *http.Request) (auth.Session, bool) {
+	cookie, err := r.Cookie("idb_admin_session")
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "admin_session_required", "idb_admin_session cookie is required")
+		return auth.Session{}, false
+	}
+	adminSession, err := auth.ResolveAdminSession(r.Context(), cookie.Value)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid_admin_session", "idb_admin_session cookie is invalid")
+		return auth.Session{}, false
+	}
+	return auth.Session{
+		ID:          adminSession.ID,
+		UserID:      adminSession.AdminID,
+		EntityID:    adminSession.EntityID,
+		Username:    adminSession.Username,
+		DisplayName: adminSession.DisplayName,
+		ExpiresAt:   adminSession.ExpiresAt,
+	}, true
+}
+
+func readUserSession(w http.ResponseWriter, r *http.Request) (auth.Session, bool) {
 	cookie, err := r.Cookie("idb_session")
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "session_required", "idb_session cookie is required")

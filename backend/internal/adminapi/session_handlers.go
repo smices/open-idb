@@ -43,10 +43,8 @@ func NewSessionHandler(service sessionService) SessionHandler {
 }
 
 func (h SessionHandler) RegisterRoutes(r chi.Router) {
-	r.Get("/admin/v1/users/{userID}/sessions", h.listUserSessions)
-	r.Get("/api/admin/v1/users/{userID}/sessions", h.listUserSessions)
-	r.Post("/admin/v1/sessions/{id}/revoke", h.revokeSession)
-	r.Post("/api/admin/v1/sessions/{id}/revoke", h.revokeSession)
+	r.Get("/sapi/users/{userID}/sessions", h.listUserSessions)
+	r.Post("/sapi/sessions/{id}/revoke", h.revokeSession)
 }
 
 func (h SessionHandler) listUserSessions(w http.ResponseWriter, r *http.Request) {

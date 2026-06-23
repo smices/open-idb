@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -16,8 +17,20 @@ import (
 // AdminService wraps *generated.Queries and provides data-access methods
 // for all admin resource handlers. It satisfies the userService interface.
 type AdminService struct {
-	queries *generated.Queries
-	audit   *auditWriter
+	queries               *generated.Queries
+	audit                 *auditWriter
+	organizationTreeCache *OrganizationTreeCache
+}
+
+var enabledIdentitySourceTypes = map[string]bool{
+	"feishu": true,
+}
+
+var primaryIdentitySourceTypes = map[string]bool{
+	"feishu":   true,
+	"dingtalk": true,
+	"wecom":    true,
+	"ldap":     true,
 }
 
 func NewAdminService(queries *generated.Queries, auditLogger ...AuditLogger) (*AdminService, error) {
@@ -400,6 +413,22 @@ func (s *AdminService) GetIdentitySourceByID(ctx context.Context, entityID, id s
 }
 
 func (s *AdminService) CreateIdentitySource(ctx context.Context, entityID string, sourceType, name string, syncEnabled bool) (IdentitySourceResponse, error) {
+	sourceType = strings.TrimSpace(strings.ToLower(sourceType))
+	name = strings.TrimSpace(name)
+	if !enabledIdentitySourceTypes[sourceType] {
+		return IdentitySourceResponse{}, fmt.Errorf("identity source type %q is not enabled yet", sourceType)
+	}
+	if primaryIdentitySourceTypes[sourceType] {
+		existing, err := s.ListIdentitySources(ctx, entityID, 200, 0)
+		if err != nil {
+			return IdentitySourceResponse{}, err
+		}
+		for _, item := range existing {
+			if item.ID != "" && primaryIdentitySourceTypes[item.Type] && item.Status == "active" {
+				return IdentitySourceResponse{}, fmt.Errorf("only one active primary identity source is allowed")
+			}
+		}
+	}
 	row, err := s.queries.CreateIdentitySource(ctx, generated.CreateIdentitySourceParams{
 		EntityID:    entityID,
 		Type:        sourceType,
@@ -413,6 +442,23 @@ func (s *AdminService) CreateIdentitySource(ctx context.Context, entityID string
 }
 
 func (s *AdminService) UpdateIdentitySource(ctx context.Context, entityID, id string, name, status pgtype.Text, syncEnabled pgtype.Bool) (IdentitySourceResponse, error) {
+	if status.Valid && status.String == "active" {
+		current, err := s.GetIdentitySourceByID(ctx, entityID, id)
+		if err != nil {
+			return IdentitySourceResponse{}, err
+		}
+		if primaryIdentitySourceTypes[current.Type] {
+			existing, err := s.ListIdentitySources(ctx, entityID, 200, 0)
+			if err != nil {
+				return IdentitySourceResponse{}, err
+			}
+			for _, item := range existing {
+				if item.ID != id && primaryIdentitySourceTypes[item.Type] && item.Status == "active" {
+					return IdentitySourceResponse{}, fmt.Errorf("only one active primary identity source is allowed")
+				}
+			}
+		}
+	}
 	row, err := s.queries.UpdateIdentitySource(ctx, generated.UpdateIdentitySourceParams{
 		EntityID:    entityID,
 		ID:          id,
@@ -973,124 +1019,4 @@ func hashSecret(secret string) string {
 	// Simple hash for now - in production use bcrypt or argon2
 	// The SSO package already uses SHA-256 for token hashing
 	return secret
-}
-
-// --- Resource Scopes ---
-
-func (s *AdminService) ListResourceScopes(ctx context.Context, entityID string, scopeType pgtype.Text, limit, offset int32) ([]ResourceScopeResponse, error) {
-	rows, err := s.queries.ListResourceScopes(ctx, generated.ListResourceScopesParams{
-		EntityID: entityID,
-		Limit:    limit,
-		Offset:   offset,
-		Type:     scopeType,
-	})
-	if err != nil {
-		return nil, err
-	}
-	scopes := make([]ResourceScopeResponse, 0, len(rows))
-	for _, row := range rows {
-		scopes = append(scopes, resourceScopeFromRow(row))
-	}
-	return scopes, nil
-}
-
-func (s *AdminService) CountResourceScopes(ctx context.Context, entityID string, scopeType pgtype.Text) (int64, error) {
-	return s.queries.CountResourceScopes(ctx, generated.CountResourceScopesParams{
-		EntityID: entityID,
-		Type:     scopeType,
-	})
-}
-
-func (s *AdminService) GetResourceScopeByID(ctx context.Context, entityID, id string) (ResourceScopeResponse, error) {
-	row, err := s.queries.GetResourceScopeByID(ctx, generated.GetResourceScopeByIDParams{
-		EntityID: entityID,
-		ID:       id,
-	})
-	if err != nil {
-		return ResourceScopeResponse{}, err
-	}
-	return resourceScopeFromRow(row), nil
-}
-
-func (s *AdminService) CreateResourceScope(ctx context.Context, entityID string, scopeType, key, name string) (ResourceScopeResponse, error) {
-	row, err := s.queries.CreateResourceScope(ctx, generated.CreateResourceScopeParams{
-		EntityID: entityID,
-		Type:     scopeType,
-		Key:      key,
-		Name:     name,
-	})
-	if err != nil {
-		return ResourceScopeResponse{}, err
-	}
-	resp := resourceScopeFromRow(row)
-	if err := s.audit.logCreate(ctx, ulidString(entityID), "", "resource_scope", resp.ID, resp); err != nil {
-		return ResourceScopeResponse{}, err
-	}
-	return resp, nil
-}
-
-func (s *AdminService) UpdateResourceScope(ctx context.Context, entityID, id string, name pgtype.Text) (ResourceScopeResponse, error) {
-	before, err := s.GetResourceScopeByID(ctx, entityID, id)
-	if err != nil {
-		return ResourceScopeResponse{}, err
-	}
-	row, err := s.queries.UpdateResourceScope(ctx, generated.UpdateResourceScopeParams{
-		EntityID: entityID,
-		ID:       id,
-		Name:     name,
-	})
-	if err != nil {
-		return ResourceScopeResponse{}, err
-	}
-	resp := resourceScopeFromRow(row)
-	if err := s.audit.logUpdate(ctx, ulidString(entityID), "", "resource_scope", resp.ID, before, resp); err != nil {
-		return ResourceScopeResponse{}, err
-	}
-	return resp, nil
-}
-
-func (s *AdminService) DeleteResourceScope(ctx context.Context, entityID, id string) error {
-	before, err := s.GetResourceScopeByID(ctx, entityID, id)
-	if err != nil {
-		return err
-	}
-	if err := s.queries.DeleteResourceScope(ctx, generated.DeleteResourceScopeParams{
-		EntityID: entityID,
-		ID:       id,
-	}); err != nil {
-		return err
-	}
-	if err := s.audit.logDelete(ctx, ulidString(entityID), "", "resource_scope", before.ID, before); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *AdminService) AssignResourceScopeToRole(ctx context.Context, entityID, roleID, scopeID string, effect string) error {
-	return s.queries.AddResourceScopeToRole(ctx, generated.AddResourceScopeToRoleParams{
-		EntityID:        entityID,
-		RoleID:          roleID,
-		ResourceScopeID: scopeID,
-		Effect:          effect,
-	})
-}
-
-func (s *AdminService) RemoveResourceScopeFromRole(ctx context.Context, entityID, roleID, scopeID string) error {
-	return s.queries.RemoveResourceScopeFromRole(ctx, generated.RemoveResourceScopeFromRoleParams{
-		EntityID:        entityID,
-		RoleID:          roleID,
-		ResourceScopeID: scopeID,
-	})
-}
-
-func resourceScopeFromRow(row generated.ResourceScope) ResourceScopeResponse {
-	return ResourceScopeResponse{
-		ID:        ulidString(row.ID),
-		EntityID:  ulidString(row.EntityID),
-		Type:      row.Type,
-		Key:       row.Key,
-		Name:      row.Name,
-		CreatedAt: row.CreatedAt.Time.Format(time.RFC3339),
-		UpdatedAt: row.UpdatedAt.Time.Format(time.RFC3339),
-	}
 }

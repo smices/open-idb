@@ -171,11 +171,6 @@ WHERE entity_id = $1 AND role_id = $2 AND resource_scope_id = $3;
 
 -- === Application Assignments ===
 
--- name: CreateApplicationAssignment :one
-INSERT INTO application_assignments (entity_id, application_id, subject_type, subject_id, effect)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, entity_id, application_id, subject_type, subject_id, effect, created_at;
-
 -- name: HasApplicationAccess :one
 SELECT
     EXISTS (
@@ -210,19 +205,3 @@ SELECT
             ))
           )
     ) AS has_access;
-
--- name: ListApplicationAssignments :many
-SELECT id, entity_id, application_id, subject_type, subject_id, effect, created_at
-FROM application_assignments
-WHERE entity_id = $1 AND application_id = $2
-ORDER BY created_at DESC
-LIMIT $3 OFFSET $4;
-
--- name: CountApplicationAssignments :one
-SELECT count(*)::bigint
-FROM application_assignments
-WHERE entity_id = $1 AND application_id = $2;
-
--- name: DeleteApplicationAssignment :exec
-DELETE FROM application_assignments
-WHERE entity_id = $1 AND id = $2;

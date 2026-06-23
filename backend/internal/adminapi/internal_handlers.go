@@ -21,7 +21,7 @@ type internalService interface {
 
 // --- Response and input types ---
 
-// IntrospectResponse is the response for POST /internal/v1/introspect.
+// IntrospectResponse is the response for POST /sapi/internal/introspect.
 type IntrospectResponse struct {
 	Active    bool     `json:"active"`
 	UserID    string   `json:"user_id,omitempty"`
@@ -31,7 +31,7 @@ type IntrospectResponse struct {
 	TokenType string   `json:"token_type,omitempty"`
 }
 
-// CheckPermissionInput is the request body for POST /internal/v1/permissions/check.
+// CheckPermissionInput is the request body for POST /sapi/internal/permissions/check.
 type CheckPermissionInput struct {
 	UserID         string `json:"user_id"`
 	PermissionCode string `json:"permission_code"`
@@ -39,13 +39,13 @@ type CheckPermissionInput struct {
 	ResourceKey    string `json:"resource_key,omitempty"`
 }
 
-// CheckPermissionResult is the response for POST /internal/v1/permissions/check.
+// CheckPermissionResult is the response for POST /sapi/internal/permissions/check.
 type CheckPermissionResult struct {
 	Allowed bool   `json:"allowed"`
 	Reason  string `json:"reason,omitempty"`
 }
 
-// UserAccessSummary is the response for GET /internal/v1/users/{id}/access.
+// UserAccessSummary is the response for GET /sapi/internal/users/{id}/access.
 type UserAccessSummary struct {
 	UserID       string                  `json:"user_id"`
 	EntityID     string                  `json:"entity_id"`
@@ -77,7 +77,7 @@ type ResourceScopeInfo struct {
 	Effect string `json:"effect"`
 }
 
-// AuditEventInput is the request body for POST /internal/v1/audit-events.
+// AuditEventInput is the request body for POST /sapi/internal/audit-events.
 type AuditEventInput struct {
 	ActorUserID  string          `json:"actor_user_id,omitempty"`
 	ActorType    string          `json:"actor_type"`
@@ -91,7 +91,7 @@ type AuditEventInput struct {
 	TraceID      string          `json:"trace_id,omitempty"`
 }
 
-// AuditEventResult is the response for POST /internal/v1/audit-events.
+// AuditEventResult is the response for POST /sapi/internal/audit-events.
 type AuditEventResult struct {
 	ID        string `json:"id"`
 	CreatedAt string `json:"created_at"`
@@ -112,19 +112,27 @@ func NewInternalHandler(service internalService) InternalHandler {
 
 // RegisterRoutes registers internal API routes with the router.
 func (h InternalHandler) RegisterRoutes(r chi.Router) {
-	r.Post("/internal/v1/introspect", h.introspectToken)
-	r.Post("/internal/v1/permissions/check", h.checkPermission)
-	r.Get("/internal/v1/users/{id}/access", h.getUserAccess)
-	r.Post("/internal/v1/audit-events", h.createAuditEvent)
-
-	// Duplicate routes with /api prefix for consistency.
-	r.Post("/api/internal/v1/introspect", h.introspectToken)
-	r.Post("/api/internal/v1/permissions/check", h.checkPermission)
-	r.Get("/api/internal/v1/users/{id}/access", h.getUserAccess)
-	r.Post("/api/internal/v1/audit-events", h.createAuditEvent)
+	r.Get("/api/me/access", h.getCurrentUserAccess)
+	r.Post("/sapi/internal/introspect", h.introspectToken)
+	r.Post("/sapi/internal/permissions/check", h.checkPermission)
+	r.Get("/sapi/internal/users/{id}/access", h.getUserAccess)
+	r.Post("/sapi/internal/audit-events", h.createAuditEvent)
 }
 
-// introspectToken handles POST /internal/v1/introspect.
+func (h InternalHandler) getCurrentUserAccess(w http.ResponseWriter, r *http.Request) {
+	session, ok := readUserSession(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.service.GetUserAccess(r.Context(), session.EntityID, session.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "get_user_access_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// introspectToken handles POST /sapi/internal/introspect.
 // It accepts a token_hash and returns whether the token is active along with
 // its associated metadata.
 func (h InternalHandler) introspectToken(w http.ResponseWriter, r *http.Request) {
@@ -154,7 +162,7 @@ func (h InternalHandler) introspectToken(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, result)
 }
 
-// checkPermission handles POST /internal/v1/permissions/check.
+// checkPermission handles POST /sapi/internal/permissions/check.
 // It verifies whether a user holds a specific permission, optionally scoped
 // to a resource type and key.
 func (h InternalHandler) checkPermission(w http.ResponseWriter, r *http.Request) {
@@ -182,7 +190,7 @@ func (h InternalHandler) checkPermission(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, result)
 }
 
-// getUserAccess handles GET /internal/v1/users/{id}/access.
+// getUserAccess handles GET /sapi/internal/users/{id}/access.
 // It returns a full access summary for the specified user including their
 // accessible applications, roles, permissions, and resource scopes.
 func (h InternalHandler) getUserAccess(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +215,7 @@ func (h InternalHandler) getUserAccess(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-// createAuditEvent handles POST /internal/v1/audit-events.
+// createAuditEvent handles POST /sapi/internal/audit-events.
 // It ingests an audit event from another service and writes it to the audit_logs table.
 func (h InternalHandler) createAuditEvent(w http.ResponseWriter, r *http.Request) {
 	entityID, ok := requireEntityID(w, r)

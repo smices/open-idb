@@ -24,8 +24,8 @@ func TestLegacyLoginSuccess(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	queries, service, entity, user, app := setupLegacyLoginHarness(t, ctx)
-	if err := grantLegacyAppAccess(ctx, t, queries, entity.ID, app.ID, user.ID); err != nil {
+	queries, service, entity, user, app, pool := setupLegacyLoginHarness(t, ctx)
+	if err := grantLegacyAppAccess(ctx, t, pool, entity.ID, app.ID, user.ID); err != nil {
 		t.Fatalf("grant app access: %v", err)
 	}
 	if err := createLegacyMapping(ctx, t, queries, entity.ID, app.ID, user.ID, "legacy-user", "legacy-pass"); err != nil {
@@ -53,7 +53,7 @@ func TestLegacyLoginFailsWhenMappingMissing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	_, service, entity, _, app := setupLegacyLoginHarness(t, ctx)
+	_, service, entity, _, app, _ := setupLegacyLoginHarness(t, ctx)
 	if _, err := service.AuthenticateLegacy(ctx, pgULIDString(entity.ID), pgULIDString(app.ID), "missing-user", "any", "127.0.0.1", "agent", "trace-missing"); err == nil {
 		t.Fatal("AuthenticateLegacy() error = nil, want error")
 	} else {
@@ -67,8 +67,8 @@ func TestLegacyLoginLocksAfterRepeatedFailures(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	queries, service, entity, user, app := setupLegacyLoginHarness(t, ctx)
-	if err := grantLegacyAppAccess(ctx, t, queries, entity.ID, app.ID, user.ID); err != nil {
+	queries, service, entity, user, app, pool := setupLegacyLoginHarness(t, ctx)
+	if err := grantLegacyAppAccess(ctx, t, pool, entity.ID, app.ID, user.ID); err != nil {
 		t.Fatalf("grant app access: %v", err)
 	}
 	if err := createLegacyMapping(ctx, t, queries, entity.ID, app.ID, user.ID, "legacy-user", "legacy-pass"); err != nil {
@@ -101,7 +101,7 @@ func TestLegacyLoginDeniedWithoutApplicationAccess(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	queries, service, entity, user, app := setupLegacyLoginHarness(t, ctx)
+	queries, service, entity, user, app, _ := setupLegacyLoginHarness(t, ctx)
 	if err := createLegacyMapping(ctx, t, queries, entity.ID, app.ID, user.ID, "legacy-user", "legacy-pass"); err != nil {
 		t.Fatalf("create legacy mapping: %v", err)
 	}
@@ -118,6 +118,7 @@ func setupLegacyLoginHarness(t *testing.T, ctx context.Context) (
 	entity generated.BusinessEntity,
 	user generated.User,
 	app generated.Application,
+	pool *pgxpool.Pool,
 ) {
 	t.Helper()
 
@@ -145,7 +146,7 @@ func setupLegacyLoginHarness(t *testing.T, ctx context.Context) (
 	}
 	applyMigrations(ctx, t, conn)
 
-	pool, err := pgxpool.New(ctx, conn)
+	pool, err = pgxpool.New(ctx, conn)
 	if err != nil {
 		t.Fatalf("open pgx pool: %v", err)
 	}
@@ -168,19 +169,16 @@ func setupLegacyLoginHarness(t *testing.T, ctx context.Context) (
 func grantLegacyAppAccess(
 	ctx context.Context,
 	t *testing.T,
-	queries *generated.Queries,
+	pool *pgxpool.Pool,
 	entityID string,
 	appID string,
 	userID string,
 ) error {
 	t.Helper()
-	_, err := queries.CreateApplicationAssignment(ctx, generated.CreateApplicationAssignmentParams{
-		EntityID:      entityID,
-		ApplicationID: appID,
-		SubjectType:   "user",
-		SubjectID:     userID,
-		Effect:        "allow",
-	})
+	_, err := pool.Exec(ctx, `
+		INSERT INTO application_assignments (entity_id, application_id, subject_type, subject_id, effect)
+		VALUES ($1, $2, 'user', $3, 'allow')
+	`, entityID, appID, userID)
 	return err
 }
 

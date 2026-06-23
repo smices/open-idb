@@ -21,6 +21,7 @@
   const devEntries = [
     { href: '/auth/continue', title: 'login.mode.app' },
     { href: '/login', title: 'login.mode.user' },
+    { href: '/admin/login', title: 'Admin' },
   ];
 </script>
 
@@ -59,7 +60,7 @@
             {t('login.primaryCta')}
             <ArrowRight size={18} aria-hidden="true" />
           </a>
-          <a class="btn h-12 justify-center rounded-container border border-surface-300-700 bg-surface-50-950 px-5 text-base font-semibold text-surface-950-50 hover:border-primary-400" href="/dashboard">
+          <a class="btn h-12 justify-center rounded-container border border-surface-300-700 bg-surface-50-950 px-5 text-base font-semibold text-surface-950-50 hover:border-primary-400" href="/admin/login">
             {t('login.consoleCta')}
           </a>
         </div>

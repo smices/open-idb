@@ -42,23 +42,3 @@ SELECT id, entity_id, type, name, status, sync_enabled, created_at
 FROM identity_sources
 WHERE entity_id = $1 AND type = 'feishu' AND status = 'active'
 LIMIT 1;
-
--- name: ListMCPConnectors :many
-SELECT id, entity_id, name, endpoint_url, auth_type, status, description, config, created_at, updated_at
-FROM mcp_connectors
-WHERE entity_id = $1
-ORDER BY name;
-
--- name: CreateMCPConnector :one
-INSERT INTO mcp_connectors (
-    entity_id,
-    name,
-    endpoint_url,
-    auth_type,
-    status,
-    description,
-    config
-) VALUES (
-    $1, $2, $3, $4, $5, $6, '{}'::jsonb
-)
-RETURNING id, entity_id, name, endpoint_url, auth_type, status, description, config, created_at, updated_at;

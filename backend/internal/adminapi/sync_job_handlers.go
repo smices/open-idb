@@ -18,8 +18,7 @@ func NewSyncJobHandler(service userService) SyncJobHandler {
 }
 
 func (h SyncJobHandler) RegisterRoutes(r chi.Router) {
-	r.Get("/admin/v1/sync-jobs", h.listSyncJobs)
-	r.Get("/api/admin/v1/sync-jobs", h.listSyncJobs)
+	r.Get("/sapi/sync-jobs", h.listSyncJobs)
 }
 
 func (h SyncJobHandler) listSyncJobs(w http.ResponseWriter, r *http.Request) {

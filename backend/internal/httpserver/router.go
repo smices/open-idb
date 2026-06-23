@@ -24,20 +24,43 @@ func NewRouter(options ...Option) http.Handler {
 
 	r.Get("/", FrontendRouteHandler)
 	r.Get("/login", FrontendRouteHandler)
-	r.Get("/t/{entity}/admin/login", FrontendRouteHandler)
+	r.Get("/admin/login", FrontendRouteHandler)
 	r.Get("/auth/continue", FrontendRouteHandler)
-	r.Get("/dashboard", FrontendRouteHandler)
+	r.Get("/portal", FrontendRouteHandler)
+	r.Get("/portal/*", FrontendRouteHandler)
+	r.Get("/admin", FrontendRouteHandler)
+	r.Get("/admin/*", FrontendRouteHandler)
 	r.Get("/healthz", HealthHandler)
 	r.Get("/readyz", HealthHandler)
 	for _, option := range options {
 		option(r)
 	}
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		writeJSONError(w, http.StatusNotFound, "not_found", "The requested resource was not found.")
+	})
 	return r
 }
 
 func RequireAuthenticatedRequest(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/admin/v1/") || strings.HasPrefix(r.URL.Path, "/admin/v1/") {
+			writeJSONError(w, http.StatusNotFound, "not_found", "The requested resource was not found.")
+			return
+		}
 		if isPublicRoute(r.Method, r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if isAdminRoute(r.URL.Path) {
+			cookie, err := r.Cookie("idb_admin_session")
+			if err != nil || strings.TrimSpace(cookie.Value) == "" {
+				writeJSONError(w, http.StatusUnauthorized, "admin_session_required", "idb_admin_session cookie is required")
+				return
+			}
+			if _, err := auth.ResolveAdminSession(r.Context(), cookie.Value); err != nil {
+				writeJSONError(w, http.StatusUnauthorized, "invalid_admin_session", "idb_admin_session cookie is invalid")
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -54,13 +77,17 @@ func RequireAuthenticatedRequest(next http.Handler) http.Handler {
 	})
 }
 
+func isAdminRoute(path string) bool {
+	return path == "/admin" || strings.HasPrefix(path, "/admin/") || path == "/sapi" || strings.HasPrefix(path, "/sapi/")
+}
+
 func isPublicRoute(method string, path string) bool {
 	switch path {
 	case "/healthz", "/readyz":
 		return method == http.MethodGet
-	case "/api/admin/v1/auth/context", "/api/admin/v1/auth/providers":
+	case "/api/auth/context", "/api/auth/providers", "/sapi/auth/context":
 		return method == http.MethodGet
-	case "/api/login/account", "/auth/feishu/exchange", "/api/auth/feishu/exchange", "/login/legacy", "/api/admin/v1/login/legacy", "/admin/v1/login/legacy":
+	case "/api/login/account", "/sapi/login/account", "/auth/feishu/exchange", "/api/auth/feishu/exchange", "/api/login/legacy":
 		return method == http.MethodPost
 	case "/auth/feishu/login", "/auth/feishu/callback", "/api/auth/feishu/login", "/api/auth/feishu/callback":
 		return method == http.MethodGet

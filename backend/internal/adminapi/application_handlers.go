@@ -3,6 +3,7 @@
 package adminapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -14,21 +15,27 @@ type ApplicationHandler struct {
 	service userService
 }
 
+type applicationEntityResolver interface {
+	ResolveOrganizationTreeEntityID(ctx context.Context, candidate string) (string, error)
+}
+
 func NewApplicationHandler(service userService) ApplicationHandler {
 	return ApplicationHandler{service: service}
 }
 
 func (h ApplicationHandler) RegisterRoutes(r chi.Router) {
-	r.Get("/admin/v1/applications", h.listApplications)
-	r.Get("/api/admin/v1/applications", h.listApplications)
-	r.Get("/admin/v1/applications/{id}", h.getApplication)
-	r.Get("/api/admin/v1/applications/{id}", h.getApplication)
-	r.Post("/admin/v1/applications", h.createApplication)
-	r.Post("/api/admin/v1/applications", h.createApplication)
-	r.Put("/admin/v1/applications/{id}", h.updateApplication)
-	r.Put("/api/admin/v1/applications/{id}", h.updateApplication)
-	r.Delete("/admin/v1/applications/{id}", h.deleteApplication)
-	r.Delete("/api/admin/v1/applications/{id}", h.deleteApplication)
+	r.Get("/sapi/applications", h.listApplications)
+	r.Get("/sapi/applications/{id}", h.getApplication)
+	r.Post("/sapi/applications", h.createApplication)
+	r.Put("/sapi/applications/{id}", h.updateApplication)
+	r.Delete("/sapi/applications/{id}", h.deleteApplication)
+}
+
+func (h ApplicationHandler) resolveEntityID(ctx context.Context, candidate string) (string, error) {
+	if resolver, ok := h.service.(applicationEntityResolver); ok {
+		return resolver.ResolveOrganizationTreeEntityID(ctx, candidate)
+	}
+	return ulidValue(candidate)
 }
 
 func (h ApplicationHandler) listApplications(w http.ResponseWriter, r *http.Request) {
@@ -36,7 +43,7 @@ func (h ApplicationHandler) listApplications(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	entityID, err := ulidValue(session.EntityID)
+	entityID, err := h.resolveEntityID(r.Context(), session.EntityID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_entity_id", err.Error())
 		return
@@ -67,7 +74,7 @@ func (h ApplicationHandler) getApplication(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	entityID, err := ulidValue(session.EntityID)
+	entityID, err := h.resolveEntityID(r.Context(), session.EntityID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_entity_id", err.Error())
 		return
@@ -90,7 +97,7 @@ func (h ApplicationHandler) createApplication(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	entityID, err := ulidValue(session.EntityID)
+	entityID, err := h.resolveEntityID(r.Context(), session.EntityID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_entity_id", err.Error())
 		return
@@ -120,7 +127,7 @@ func (h ApplicationHandler) updateApplication(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	entityID, err := ulidValue(session.EntityID)
+	entityID, err := h.resolveEntityID(r.Context(), session.EntityID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_entity_id", err.Error())
 		return
@@ -154,7 +161,7 @@ func (h ApplicationHandler) deleteApplication(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	entityID, err := ulidValue(session.EntityID)
+	entityID, err := h.resolveEntityID(r.Context(), session.EntityID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_entity_id", err.Error())
 		return

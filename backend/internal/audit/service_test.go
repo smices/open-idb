@@ -18,7 +18,7 @@ type fakeQueries struct {
 	createErr    error
 
 	listParams generated.ListAuditLogsParams
-	listRows   []generated.AuditLog
+	listRows   []generated.ListAuditLogsRow
 	listErr    error
 
 	countParams generated.CountAuditLogsParams
@@ -48,7 +48,7 @@ func (f *fakeQueries) CreateAuditLog(_ context.Context, arg generated.CreateAudi
 	}, nil
 }
 
-func (f *fakeQueries) ListAuditLogs(_ context.Context, arg generated.ListAuditLogsParams) ([]generated.AuditLog, error) {
+func (f *fakeQueries) ListAuditLogs(_ context.Context, arg generated.ListAuditLogsParams) ([]generated.ListAuditLogsRow, error) {
 	f.listParams = arg
 	if f.listErr != nil {
 		return nil, f.listErr
@@ -183,7 +183,7 @@ func TestWriteWithNilStatesStoresNullBytes(t *testing.T) {
 func TestListPassesFiltersCorrectly(t *testing.T) {
 	fq := &fakeQueries{
 		countResult: 42,
-		listRows: []generated.AuditLog{
+		listRows: []generated.ListAuditLogsRow{
 			{
 				ID:           "01HZZZZZZZ0000000000000001",
 				EntityID:     "01HZZZZZZZ0000000000000002",
@@ -196,6 +196,7 @@ func TestListPassesFiltersCorrectly(t *testing.T) {
 				UserAgent:    "test-agent",
 				TraceID:      "trace-1",
 				CreatedAt:    pgtype.Timestamptz{Time: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true},
+				Outcome:      "succeeded",
 			},
 		},
 	}

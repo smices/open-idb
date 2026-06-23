@@ -35,20 +35,13 @@ func NewLegacyAppUserHandler(service legacyAppUserService) LegacyAppUserHandler 
 }
 
 func (h LegacyAppUserHandler) RegisterRoutes(r chi.Router) {
-	r.Get("/admin/v1/applications/{application_id}/legacy-users", h.listLegacyUsers)
-	r.Get("/api/admin/v1/applications/{application_id}/legacy-users", h.listLegacyUsers)
-	r.Get("/admin/v1/applications/{application_id}/legacy-users/{username}", h.getLegacyUser)
-	r.Get("/api/admin/v1/applications/{application_id}/legacy-users/{username}", h.getLegacyUser)
-	r.Post("/admin/v1/applications/{application_id}/legacy-users", h.createLegacyUser)
-	r.Post("/api/admin/v1/applications/{application_id}/legacy-users", h.createLegacyUser)
-	r.Put("/admin/v1/applications/{application_id}/legacy-users/{username}", h.updateLegacyUser)
-	r.Put("/api/admin/v1/applications/{application_id}/legacy-users/{username}", h.updateLegacyUser)
-	r.Delete("/admin/v1/applications/{application_id}/legacy-users/{username}", h.deleteLegacyUser)
-	r.Delete("/api/admin/v1/applications/{application_id}/legacy-users/{username}", h.deleteLegacyUser)
-	r.Post("/admin/v1/applications/{application_id}/legacy-users/{username}/enable", h.enableLegacyUser)
-	r.Post("/api/admin/v1/applications/{application_id}/legacy-users/{username}/enable", h.enableLegacyUser)
-	r.Post("/admin/v1/applications/{application_id}/legacy-users/{username}/disable", h.disableLegacyUser)
-	r.Post("/api/admin/v1/applications/{application_id}/legacy-users/{username}/disable", h.disableLegacyUser)
+	r.Get("/sapi/applications/{application_id}/legacy-users", h.listLegacyUsers)
+	r.Get("/sapi/applications/{application_id}/legacy-users/{username}", h.getLegacyUser)
+	r.Post("/sapi/applications/{application_id}/legacy-users", h.createLegacyUser)
+	r.Put("/sapi/applications/{application_id}/legacy-users/{username}", h.updateLegacyUser)
+	r.Delete("/sapi/applications/{application_id}/legacy-users/{username}", h.deleteLegacyUser)
+	r.Post("/sapi/applications/{application_id}/legacy-users/{username}/enable", h.enableLegacyUser)
+	r.Post("/sapi/applications/{application_id}/legacy-users/{username}/disable", h.disableLegacyUser)
 }
 
 func (h LegacyAppUserHandler) listLegacyUsers(w http.ResponseWriter, r *http.Request) {

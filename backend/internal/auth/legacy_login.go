@@ -315,9 +315,7 @@ func NewLegacyLoginHandler(service *LegacyLoginService, writers ...AuditEventWri
 
 // RegisterRoutes adds legacy login API routes.
 func (h LegacyLoginHandler) RegisterRoutes(r chi.Router) {
-	r.Post("/login/legacy", h.loginLegacy)
-	r.Post("/api/admin/v1/login/legacy", h.loginLegacy)
-	r.Post("/admin/v1/login/legacy", h.loginLegacy)
+	r.Post("/api/login/legacy", h.loginLegacy)
 }
 
 func (h LegacyLoginHandler) loginLegacy(w http.ResponseWriter, r *http.Request) {

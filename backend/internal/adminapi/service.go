@@ -5,6 +5,7 @@ package adminapi
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/smices/open-idb/internal/auth"
@@ -76,6 +77,35 @@ func (s *Service) CurrentUser(ctx context.Context, session auth.Session) (Curren
 		ConsoleScope:       consoleScope,
 		Capabilities:       capabilities,
 	}, nil
+}
+
+func (s *Service) UpdateProfile(ctx context.Context, input UpdateProfileInput) (CurrentUser, error) {
+	entityID, err := ulidValue(input.EntityID)
+	if err != nil {
+		return CurrentUser{}, err
+	}
+	userID, err := ulidValue(input.UserID)
+	if err != nil {
+		return CurrentUser{}, err
+	}
+	displayName := strings.TrimSpace(input.DisplayName)
+	if displayName == "" {
+		return CurrentUser{}, fmt.Errorf("display_name is required")
+	}
+	if _, err := s.queries.UpdateUser(ctx, generated.UpdateUserParams{
+		EntityID: entityID,
+		ID:       userID,
+		DisplayName: pgtype.Text{
+			String: displayName,
+			Valid:  true,
+		},
+	}); err != nil {
+		return CurrentUser{}, err
+	}
+	return s.CurrentUser(ctx, auth.Session{
+		EntityID: entityID,
+		UserID:   userID,
+	})
 }
 
 func consoleAccessForUser(username string, roles []string) (string, []string) {

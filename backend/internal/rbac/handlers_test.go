@@ -13,13 +13,10 @@ import (
 	"github.com/smices/open-idb/internal/auth"
 )
 
-// Note: Role, Permission, and Resource Scope CRUD tests are in adminapi package.
-// These tests cover RBAC-specific routes: permission check, user role assignment, etc.
-
 func TestHandler_CheckPermission_MissingSession(t *testing.T) {
 	handler := NewHandler(nil)
 
-	req := httptest.NewRequest("POST", "/admin/v1/permissions/check", strings.NewReader(`{"user_id":"user-1","permission":"read:users"}`))
+	req := httptest.NewRequest("POST", "/sapi/permissions/check", strings.NewReader(`{"user_id":"user-1","permission":"read:users"}`))
 	rec := httptest.NewRecorder()
 
 	r := chi.NewRouter()
@@ -34,12 +31,12 @@ func TestHandler_CheckPermission_MissingSession(t *testing.T) {
 
 func TestHandler_CheckPermission_MissingFields(t *testing.T) {
 	// Create a valid session
-	session := auth.Session{
-		UserID:   "user-1",
+	session := auth.AdminSession{
+		AdminID:  "admin-1",
 		EntityID: "entity-1",
 		Username: "testuser",
 	}
-	sessionValue, err := auth.EncodeSession(session)
+	sessionValue, err := auth.EncodeAdminSession(session)
 	if err != nil {
 		t.Fatalf("failed to encode session: %v", err)
 	}
@@ -47,8 +44,8 @@ func TestHandler_CheckPermission_MissingFields(t *testing.T) {
 	handler := NewHandler(nil)
 
 	// Create a test request with missing fields
-	req := httptest.NewRequest("POST", "/admin/v1/permissions/check", strings.NewReader(`{"user_id":"user-1"}`))
-	req.AddCookie(&http.Cookie{Name: "idb_session", Value: sessionValue})
+	req := httptest.NewRequest("POST", "/sapi/permissions/check", strings.NewReader(`{"user_id":"user-1"}`))
+	req.AddCookie(&http.Cookie{Name: "idb_admin_session", Value: sessionValue})
 	rec := httptest.NewRecorder()
 
 	r := chi.NewRouter()
@@ -73,7 +70,7 @@ func TestHandler_CheckPermission_MissingFields(t *testing.T) {
 func TestHandler_AssignRoleToUser_MissingSession(t *testing.T) {
 	handler := NewHandler(nil)
 
-	req := httptest.NewRequest("POST", "/admin/v1/users/user-1/roles", strings.NewReader(`{"role_id":"role-1"}`))
+	req := httptest.NewRequest("POST", "/sapi/users/user-1/roles", strings.NewReader(`{"role_id":"role-1"}`))
 	rec := httptest.NewRecorder()
 
 	r := chi.NewRouter()
@@ -87,10 +84,10 @@ func TestHandler_AssignRoleToUser_MissingSession(t *testing.T) {
 }
 
 func TestHandler_APIPrefix_CheckPermission(t *testing.T) {
-	// Test that /api/admin/v1/permissions/check route works
+	// Test that /sapi/permissions/check route works
 	handler := NewHandler(nil)
 
-	req := httptest.NewRequest("POST", "/api/admin/v1/permissions/check", strings.NewReader(`{"user_id":"user-1","permission":"read:users"}`))
+	req := httptest.NewRequest("POST", "/sapi/permissions/check", strings.NewReader(`{"user_id":"user-1","permission":"read:users"}`))
 	rec := httptest.NewRecorder()
 
 	r := chi.NewRouter()
@@ -107,23 +104,7 @@ func TestHandler_APIPrefix_CheckPermission(t *testing.T) {
 func TestHandler_AssignPermissionToRole_MissingSession(t *testing.T) {
 	handler := NewHandler(nil)
 
-	req := httptest.NewRequest("POST", "/admin/v1/roles/role-1/permissions", strings.NewReader(`{"permission_id":"perm-1"}`))
-	rec := httptest.NewRecorder()
-
-	r := chi.NewRouter()
-	handler.RegisterRoutes(r)
-
-	r.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
-	}
-}
-
-func TestHandler_ApplicationAssignment_MissingSession(t *testing.T) {
-	handler := NewHandler(nil)
-
-	req := httptest.NewRequest("POST", "/admin/v1/applications/app-1/assignments", strings.NewReader(`{"subject_type":"user","subject_id":"user-1","effect":"allow"}`))
+	req := httptest.NewRequest("POST", "/sapi/roles/role-1/permissions", strings.NewReader(`{"permission_id":"perm-1"}`))
 	rec := httptest.NewRecorder()
 
 	r := chi.NewRouter()

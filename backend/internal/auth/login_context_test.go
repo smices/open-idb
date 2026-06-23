@@ -24,7 +24,7 @@ func TestLoginContextEntityAdminRoute(t *testing.T) {
 		},
 	}).RegisterRoutes(router)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/v1/auth/context?path=/t/configured_entity/admin/login&return_to=/dashboard", nil)
+	req := httptest.NewRequest(http.MethodGet, "/sapi/auth/context?path=/admin/login&return_to=/admin", nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -40,12 +40,6 @@ func TestLoginContextEntityAdminRoute(t *testing.T) {
 	if ctx.Mode != LoginModeEntityAdmin {
 		t.Fatalf("mode = %q, want %q", ctx.Mode, LoginModeEntityAdmin)
 	}
-	if ctx.Entity == nil || ctx.Entity.Slug != "configured_entity" || ctx.Entity.Name != "Configured Entity" {
-		t.Fatalf("entity = %#v, want configured entity details", ctx.Entity)
-	}
-	if ctx.Entity.BrandName != "Configured Brand" || ctx.Entity.LogoURL == "" || ctx.Entity.LoginMessage == "" {
-		t.Fatalf("entity brand = %#v, want brand details", ctx.Entity)
-	}
 	if ctx.AllowEntitySelection {
 		t.Fatal("entity admin route must not allow entity selection")
 	}
@@ -55,7 +49,7 @@ func TestLoginContextDoesNotExposeSystemAdminRoute(t *testing.T) {
 	router := chi.NewRouter()
 	NewHandler(fakeLoginService{}).RegisterRoutes(router)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/v1/auth/context?path=/system/login", nil)
+	req := httptest.NewRequest(http.MethodGet, "/sapi/auth/context?path=/system/login", nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -93,7 +87,7 @@ func TestLoginContextDirectLoginUsesDefaultEnterpriseContext(t *testing.T) {
 		},
 	}).RegisterRoutes(router)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/v1/auth/context?path=/login", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/context?path=/login", nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
