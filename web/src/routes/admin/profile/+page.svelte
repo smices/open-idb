@@ -4,7 +4,7 @@
     import { api } from "$lib/api";
     import { t } from "$lib/i18n";
     import { authUser } from "$lib/stores";
-    import Toast from "$lib/components/ui/Toast.svelte";
+    import { notifySuccess } from "$lib/toast";
 
     let displayName = "";
     let currentPassword = "";
@@ -13,9 +13,7 @@
     let profileSubmitting = false;
     let passwordSubmitting = false;
     let profileError = "";
-    let profileSuccess = "";
     let passwordError = "";
-    let passwordSuccess = "";
     let profileLoadedFor = "";
 
     const maskedIdentifier = (value?: string): string => {
@@ -26,7 +24,6 @@
 
     const saveProfile = async () => {
         profileError = "";
-        profileSuccess = "";
         if (!displayName.trim()) {
             profileError = t("profile.displayNameRequired");
             return;
@@ -41,7 +38,7 @@
                     ? { ...current, display_name: next.display_name }
                     : current,
             );
-            profileSuccess = t("profile.profileUpdateSuccess");
+            notifySuccess(t("profile.profileUpdateSuccess"));
         } catch {
             profileError = t("profile.profileUpdateFailed");
         } finally {
@@ -51,7 +48,6 @@
 
     const savePassword = async () => {
         passwordError = "";
-        passwordSuccess = "";
         if (!currentPassword || !newPassword || !confirmPassword) {
             passwordError = t("profile.currentPasswordRequired");
             return;
@@ -70,7 +66,7 @@
                 current_password: currentPassword,
                 new_password: newPassword,
             });
-            passwordSuccess = t("profile.updateSuccess");
+            notifySuccess(t("profile.updateSuccess"));
             currentPassword = "";
             newPassword = "";
             confirmPassword = "";
@@ -93,7 +89,6 @@
 </svelte:head>
 
 <section class="grid gap-4 xl:grid-cols-2">
-    <Toast message={profileSuccess || passwordSuccess} />
     <form
         class="card bg-surface-50-950 border border-surface-200-800 p-4 space-y-3"
         on:submit|preventDefault={saveProfile}

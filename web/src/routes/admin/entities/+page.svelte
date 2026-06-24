@@ -4,7 +4,9 @@
   import { onMount } from 'svelte';
   import { t } from '$lib/i18n';
   import { api, type Entity } from '$lib/api';
-  import Toast from '$lib/components/ui/Toast.svelte';
+  import IdModal from '$lib/components/ui/IdModal.svelte';
+  import { notifySuccess } from '$lib/toast';
+  import { Pencil } from 'lucide-svelte';
 
   const localeOptions = ['en-US', 'zh-CN'];
   const statusOptions = ['active', 'disabled'];
@@ -21,7 +23,6 @@
   let formLogoUrl = '';
   let formLoginMessage = '';
   let saving = false;
-  let message = '';
   let error = '';
 
   const statusLabel = (value: string): string => t(`entities.status.${value}`, value);
@@ -49,7 +50,6 @@
     formBrandName = '';
     formLogoUrl = '';
     formLoginMessage = '';
-    message = '';
     error = '';
     formOpen = true;
   };
@@ -63,7 +63,6 @@
     formBrandName = entity.brand_name || '';
     formLogoUrl = entity.logo_url || '';
     formLoginMessage = entity.login_message || '';
-    message = '';
     error = '';
     formOpen = true;
   };
@@ -72,16 +71,9 @@
     formOpen = false;
   };
 
-  const handleDialogKeydown = (event: KeyboardEvent) => {
-    if (event.key === 'Escape' && formOpen) {
-      closeForm();
-    }
-  };
-
   const saveForm = async () => {
     saving = true;
     error = '';
-    message = '';
     try {
       if (editing) {
         await api.updateEntity(editing.id, {
@@ -103,7 +95,7 @@
         });
       }
 
-      message = t(editing ? 'common.updateSuccess' : 'common.createSuccess');
+      notifySuccess(t(editing ? 'common.updateSuccess' : 'common.createSuccess'));
       formOpen = false;
       await fetchEntities();
     } catch {
@@ -120,14 +112,11 @@
   <title>{t('entities.title')}</title>
 </svelte:head>
 
-<svelte:window on:keydown={handleDialogKeydown} />
-
 <section class="space-y-4">
   <div class="flex items-center justify-end gap-3">
     <button class="btn btn-sm preset-filled-primary-500" type="button" on:click={openCreate}>{t('entities.create')}</button>
   </div>
 
-  <Toast {message} />
   {#if error}
     <aside class="alert preset-tonal-error" role="alert"><p>{error}</p></aside>
   {/if}
@@ -164,7 +153,9 @@
                 <td>{localeLabel(entity.default_locale)}</td>
                 <td class="whitespace-nowrap">{new Date(entity.created_at).toLocaleString()}</td>
                 <td class="text-right">
-                  <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={() => openEdit(entity)}>{t('common.edit')}</button>
+                  <button class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0" type="button" on:click={() => openEdit(entity)} aria-label={t('common.edit')} title={t('common.edit')}>
+                    <Pencil class="size-4" aria-hidden="true" />
+                  </button>
                 </td>
               </tr>
             {/each}
@@ -175,22 +166,14 @@
   </section>
 </section>
 
-{#if formOpen}
-  <div class="fixed inset-0 z-40 bg-surface-950/55 backdrop-blur-sm" aria-hidden="true" on:click={closeForm}></div>
-  <div class="fixed inset-y-0 right-0 z-50 flex w-full justify-end" role="dialog" aria-modal="true" aria-labelledby="entity-form-title" tabindex="-1">
-    <form
-      class="flex h-full w-full max-w-xl flex-col border-l border-surface-200-800 bg-surface-50-950 text-surface-950-50 shadow-2xl"
-      on:submit|preventDefault={saveForm}
-    >
-      <header class="flex items-center justify-between gap-3 border-b border-surface-200-800 px-5 py-4">
-        <div>
-          <h2 id="entity-form-title" class="text-lg font-semibold">{editing ? t('entities.editTitle') : t('entities.createTitle')}</h2>
-          <p class="mt-1 text-sm text-surface-500">{editing ? formSlug : t('entities.slug')}</p>
-        </div>
-        <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={closeForm} aria-label={t('common.close')}>{t('common.close')}</button>
-      </header>
-
-      <div class="flex-1 space-y-4 overflow-y-auto px-5 py-5">
+<IdModal
+  open={formOpen}
+  title={editing ? t('entities.editTitle') : t('entities.createTitle')}
+  subtitle={editing ? formSlug : t('entities.slug')}
+  maxWidth="max-w-xl"
+  onClose={closeForm}
+>
+  <form id="entity-dialog-form" class="space-y-4" on:submit|preventDefault={saveForm}>
         <label class="block">
           <span class="text-sm text-surface-500">{t('entities.name')}</span>
           <input class="input w-full bg-surface-50-950" type="text" bind:value={formName} required />
@@ -240,12 +223,10 @@
           <span class="text-sm text-surface-500">{t('entities.loginMessage')}</span>
           <textarea class="textarea w-full bg-surface-50-950" rows="3" bind:value={formLoginMessage} placeholder={t('entities.loginMessagePlaceholder')}></textarea>
         </label>
-      </div>
+  </form>
 
-      <footer class="flex justify-end gap-2 border-t border-surface-200-800 bg-surface-100-900 px-5 py-4">
-        <button class="btn preset-outlined-surface-500" type="button" on:click={closeForm}>{t('common.cancel')}</button>
-        <button class="btn preset-filled-primary-500" type="submit" disabled={saving}>{saving ? t('common.loading') : t('common.save')}</button>
-      </footer>
-    </form>
-  </div>
-{/if}
+  {#snippet footer()}
+    <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={closeForm}>{t('common.cancel')}</button>
+    <button class="btn btn-sm preset-filled-primary-500" type="submit" form="entity-dialog-form" disabled={saving}>{saving ? t('common.loading') : t('common.save')}</button>
+  {/snippet}
+</IdModal>

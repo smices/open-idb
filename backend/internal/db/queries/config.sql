@@ -1,41 +1,58 @@
 -- SPDX-License-Identifier: MIT
 
--- name: ListIMProviderConfigs :many
-SELECT id, entity_id, provider, display_name, status, oauth_configured, bot_configured, sync_enabled, config, created_at, updated_at
-FROM im_provider_configs
-WHERE entity_id = $1
-ORDER BY provider;
+-- name: GetFeishuIdentitySourceConfig :one
+SELECT id,
+       entity_id,
+       type AS provider,
+       name AS display_name,
+       status,
+       (COALESCE(length(config_encrypted), 0) > 0)::boolean AS oauth_configured,
+       sync_enabled,
+       COALESCE(config_encrypted, '{}'::bytea) AS config,
+       created_at
+FROM identity_sources
+WHERE entity_id = $1 AND type = 'feishu'
+ORDER BY created_at DESC
+LIMIT 1;
 
--- name: UpsertIMProviderConfig :one
-INSERT INTO im_provider_configs (
-    entity_id,
-    provider,
-    display_name,
-    status,
-    oauth_configured,
-    bot_configured,
-    sync_enabled,
-    config
-) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8
+-- name: UpdateFeishuIdentitySourceConfig :one
+UPDATE identity_sources
+SET name = $2,
+    status = $3,
+    sync_enabled = $4,
+    config_encrypted = $5
+WHERE id = (
+    SELECT id
+    FROM identity_sources
+    WHERE entity_id = $1 AND type = 'feishu'
+    ORDER BY created_at DESC
+    LIMIT 1
 )
-ON CONFLICT (entity_id, provider)
-DO UPDATE SET
-    display_name = EXCLUDED.display_name,
-    status = EXCLUDED.status,
-    oauth_configured = EXCLUDED.oauth_configured,
-    bot_configured = EXCLUDED.bot_configured,
-    sync_enabled = EXCLUDED.sync_enabled,
-    config = EXCLUDED.config,
-    updated_at = now()
-RETURNING id, entity_id, provider, display_name, status, oauth_configured, bot_configured, sync_enabled, config, created_at, updated_at;
+RETURNING id,
+          entity_id,
+          type AS provider,
+          name AS display_name,
+          status,
+          (COALESCE(length(config_encrypted), 0) > 0)::boolean AS oauth_configured,
+          sync_enabled,
+          COALESCE(config_encrypted, '{}'::bytea) AS config,
+          created_at;
 
 -- name: ListLoginProviders :many
 SELECT provider, display_name, status, oauth_configured
      , config
-FROM im_provider_configs
-WHERE entity_id = $1 AND status = 'active' AND oauth_configured = true
-ORDER BY provider;
+FROM (
+    SELECT type AS provider,
+           name AS display_name,
+           status,
+           (COALESCE(length(config_encrypted), 0) > 0)::boolean AS oauth_configured,
+           COALESCE(config_encrypted, '{}'::bytea) AS config,
+           created_at
+    FROM identity_sources
+    WHERE entity_id = $1 AND type = 'feishu' AND status = 'active'
+) providers
+WHERE oauth_configured = true
+ORDER BY created_at DESC;
 
 -- name: GetFeishuSourceByEntity :one
 SELECT id, entity_id, type, name, status, sync_enabled, created_at

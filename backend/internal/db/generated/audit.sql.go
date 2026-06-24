@@ -122,14 +122,15 @@ SELECT
     a.user_agent,
     a.trace_id,
     a.created_at,
-    COALESCE(NULLIF(actor.display_name, ''), NULLIF(actor.username, ''), '') AS actor_display_name,
+    COALESCE(NULLIF(admin_actor.display_name, ''), NULLIF(admin_actor.username, ''), NULLIF(actor.display_name, ''), NULLIF(actor.username, ''), '') AS actor_display_name,
     COALESCE(
         NULLIF(resource_user.display_name, ''),
         NULLIF(resource_user.username, ''),
         NULLIF(directory_user.name, ''),
         NULLIF(application.name, ''),
         NULLIF(oidc_client.client_id, ''),
-        NULLIF(legacy_app_user.username, ''),
+        NULLIF(admin_resource.display_name, ''),
+        NULLIF(admin_resource.username, ''),
         NULLIF(role.name, ''),
         NULLIF(permission.name, ''),
         NULLIF(identity_source.name, ''),
@@ -151,6 +152,8 @@ SELECT
 FROM audit_logs a
 LEFT JOIN users actor
     ON actor.entity_id = a.entity_id AND actor.id = a.actor_user_id
+LEFT JOIN admin_users admin_actor
+    ON a.actor_type = 'admin' AND admin_actor.id = a.actor_user_id
 LEFT JOIN users resource_user
     ON a.resource_type = 'user' AND resource_user.entity_id = a.entity_id AND resource_user.id = a.resource_id
 LEFT JOIN directory_users directory_user
@@ -159,8 +162,8 @@ LEFT JOIN applications application
     ON a.resource_type = 'application' AND application.entity_id = a.entity_id AND application.id = a.resource_id
 LEFT JOIN oidc_clients oidc_client
     ON a.resource_type = 'oidc_client' AND oidc_client.entity_id = a.entity_id AND oidc_client.id = a.resource_id
-LEFT JOIN legacy_app_users legacy_app_user
-    ON a.resource_type = 'legacy_app_user' AND legacy_app_user.entity_id = a.entity_id AND legacy_app_user.id = a.resource_id
+LEFT JOIN admin_users admin_resource
+    ON a.resource_type = 'admin_user' AND admin_resource.id = a.resource_id
 LEFT JOIN roles role
     ON a.resource_type = 'role' AND role.entity_id = a.entity_id AND role.id = a.resource_id
 LEFT JOIN permissions permission

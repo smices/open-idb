@@ -120,8 +120,6 @@ type userService interface {
 	GetUserByID(ctx context.Context, entityID, id string) (UserResponse, error)
 	UpdateUserLifecycle(ctx context.Context, entityID, id string, status string) (UserResponse, error)
 	UpdateUser(ctx context.Context, entityID, id string, displayName, email, phone, locale pgtype.Text) (UserResponse, error)
-	ListDirectoryUsers(ctx context.Context, entityID, sourceID string, limit, offset int32) ([]DirectoryUserResponse, error)
-	CountDirectoryUsers(ctx context.Context, entityID, sourceID string) (int64, error)
 	GetDirectoryUserByID(ctx context.Context, entityID, id string) (DirectoryUserResponse, error)
 	ListApplications(ctx context.Context, entityID string, limit, offset int32) ([]ApplicationResponse, error)
 	CountApplications(ctx context.Context, entityID string) (int64, error)

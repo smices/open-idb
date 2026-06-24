@@ -173,6 +173,25 @@ func TestLoadAcceptsWebBaseURL(t *testing.T) {
 	if cfg.WebBaseURL != "http://localhost:5180" {
 		t.Fatalf("WebBaseURL = %q, want http://localhost:5180", cfg.WebBaseURL)
 	}
+	if cfg.FeishuRedirectURI != "http://localhost:5180/api/auth/feishu/callback" {
+		t.Fatalf("FeishuRedirectURI = %q, want frontend callback", cfg.FeishuRedirectURI)
+	}
+}
+
+func TestLoadAcceptsExplicitFeishuRedirectURI(t *testing.T) {
+	setConfigEnv(t, map[string]string{
+		"IDB_WEB_BASE_URL":        "http://localhost:5180",
+		"IDB_FEISHU_REDIRECT_URI": "https://idb.example.test/api/auth/feishu/callback",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.FeishuRedirectURI != "https://idb.example.test/api/auth/feishu/callback" {
+		t.Fatalf("FeishuRedirectURI = %q, want explicit value", cfg.FeishuRedirectURI)
+	}
 }
 
 func TestLoadAcceptsRedisURL(t *testing.T) {
@@ -263,6 +282,7 @@ func setConfigEnv(t *testing.T, values map[string]string) {
 		"IDB_OIDC_ISSUER",
 		"IDB_OIDC_KEY_ID",
 		"IDB_WEB_BASE_URL",
+		"IDB_FEISHU_REDIRECT_URI",
 		"IDB_REDIS_ENABLED",
 		"IDB_REDIS_URL",
 		"IDB_ACCESS_TOKEN_TTL_SECONDS",

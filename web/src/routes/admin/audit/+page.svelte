@@ -2,8 +2,10 @@
 
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { FileText, RotateCcw, Search, SlidersHorizontal, X } from 'lucide-svelte';
+  import { FileText, RotateCcw, Search, SlidersHorizontal } from 'lucide-svelte';
   import { api, type AuditLogEntry } from '$lib/api';
+  import IdModal from '$lib/components/ui/IdModal.svelte';
+  import IdPagination from '$lib/components/ui/IdPagination.svelte';
   import { t } from '$lib/i18n';
 
   let logs: AuditLogEntry[] = [];
@@ -91,18 +93,6 @@
     void loadLogs();
   };
 
-  const previousPage = () => {
-    if (offset === 0) return;
-    offset = Math.max(0, offset - limit);
-    void loadLogs();
-  };
-
-  const nextPage = () => {
-    if (offset + limit >= total) return;
-    offset += limit;
-    void loadLogs();
-  };
-
   const openDetails = (log: AuditLogEntry) => {
     selectedLog = log;
     detailOpen = true;
@@ -113,26 +103,16 @@
     selectedLog = null;
   };
 
-  const handleDialogKeydown = (event: KeyboardEvent) => {
-    if (event.key === 'Escape' && detailOpen) {
-      closeDetails();
-    }
-  };
-
   onMount(() => {
     void loadLogs();
   });
 
   $: filteredLogs = logs.filter((log) => matchesSearch(log, searchTerm));
-  $: pageStart = total === 0 ? 0 : offset + 1;
-  $: pageEnd = Math.min(offset + limit, total);
 </script>
 
 <svelte:head>
   <title>{t('audit.title')}</title>
 </svelte:head>
-
-<svelte:window on:keydown={handleDialogKeydown} />
 
 <section class="space-y-4">
   {#if error}
@@ -161,7 +141,9 @@
           <select class="input h-8 w-32 text-sm" bind:value={actorTypeFilter}>
             <option value="">{t('common.all')}</option>
             <option value="user">{t('audit.actorUser')}</option>
+            <option value="admin">{t('audit.actor.admin')}</option>
             <option value="system">{t('audit.actorSystem')}</option>
+            <option value="api_client">{t('audit.actor.apiClient')}</option>
           </select>
         </label>
         <button
@@ -244,30 +226,16 @@
 
     <div class="flex flex-wrap items-center justify-between gap-3 border-t border-surface-200-800 p-3">
       <span class="text-xs text-surface-500">{t('dashboard.total')}: {total}</span>
-      <div class="flex gap-2">
-        <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={previousPage} disabled={offset === 0}>{t('common.previous')}</button>
-        <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={nextPage} disabled={offset + limit >= total}>{t('common.next')}</button>
-      </div>
+      <IdPagination total={total} {offset} pageSize={limit} onPage={(nextOffset) => {
+        offset = nextOffset;
+        void loadLogs();
+      }} />
     </div>
   </section>
 </section>
 
-{#if detailOpen && selectedLog}
-  <div class="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="audit-dialog-title">
-    <div class="mx-auto mt-10 max-w-4xl rounded-container bg-surface-50-950 border border-surface-200-800 p-5 shadow-xl">
-      <div class="mb-4 flex items-center justify-between gap-3">
-        <h2 id="audit-dialog-title" class="font-semibold">{t('audit.details')}</h2>
-        <button
-          class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
-          type="button"
-          on:click={closeDetails}
-          aria-label={t('common.close')}
-          title={t('common.close')}
-        >
-          <X class="size-4" aria-hidden="true" />
-        </button>
-      </div>
-
+<IdModal open={detailOpen && Boolean(selectedLog)} title={t('audit.details')} maxWidth="max-w-4xl" onClose={closeDetails}>
+  {#if selectedLog}
       <dl class="grid gap-3 text-sm md:grid-cols-2">
         <div>
           <dt class="text-surface-500">{t('audit.time')}</dt>
@@ -318,6 +286,5 @@
           <pre class="card bg-surface-100-900 border border-surface-200-800 overflow-x-auto p-3 text-xs mt-2"><code>{formatJson(selectedLog.after)}</code></pre>
         </section>
       </div>
-    </div>
-  </div>
-{/if}
+  {/if}
+</IdModal>

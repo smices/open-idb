@@ -61,6 +61,9 @@ CREATE TABLE directory_users (
     external_union_id TEXT,
     external_open_id TEXT,
     name TEXT NOT NULL,
+    english_name TEXT NOT NULL DEFAULT '',
+    employee_no TEXT NOT NULL DEFAULT '',
+    job_title TEXT NOT NULL DEFAULT '',
     email TEXT,
     phone TEXT,
     avatar_url TEXT,
@@ -80,6 +83,9 @@ CREATE TABLE users (
     entity_id CHAR(26) NOT NULL CHECK (entity_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$') REFERENCES business_entities(id) ON DELETE CASCADE,
     username TEXT NOT NULL,
     display_name TEXT NOT NULL,
+    english_name TEXT NOT NULL DEFAULT '',
+    employee_no TEXT NOT NULL DEFAULT '',
+    job_title TEXT NOT NULL DEFAULT '',
     email TEXT,
     phone TEXT,
     avatar_url TEXT,
@@ -317,19 +323,52 @@ CREATE TABLE local_credentials (
     FOREIGN KEY (entity_id, user_id) REFERENCES users(entity_id, id) ON DELETE CASCADE
 );
 
+CREATE TABLE admin_users (
+    id CHAR(26) PRIMARY KEY DEFAULT idb_generate_ulid() CHECK (id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
+    entity_id CHAR(26) CHECK (entity_id IS NULL OR entity_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$') REFERENCES business_entities(id) ON DELETE CASCADE,
+    username TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    email TEXT,
+    status TEXT NOT NULL CHECK (status IN ('active', 'disabled', 'locked')),
+    role TEXT NOT NULL CHECK (role IN ('platform_admin', 'enterprise_admin')),
+    locale TEXT NOT NULL DEFAULT 'en-US' CHECK (locale IN ('en-US', 'zh-CN')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK ((role = 'platform_admin' AND entity_id IS NULL) OR (role = 'enterprise_admin' AND entity_id IS NOT NULL))
+);
+
+CREATE TABLE admin_credentials (
+    id CHAR(26) PRIMARY KEY DEFAULT idb_generate_ulid() CHECK (id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
+    admin_user_id CHAR(26) NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    password_hash TEXT NOT NULL,
+    must_change_password BOOLEAN NOT NULL DEFAULT false,
+    weak_password BOOLEAN NOT NULL DEFAULT false,
+    password_updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (admin_user_id)
+);
+
+CREATE TABLE admin_sessions (
+    id CHAR(26) PRIMARY KEY DEFAULT idb_generate_ulid() CHECK (id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
+    admin_user_id CHAR(26) NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    device_id TEXT,
+    ip TEXT,
+    user_agent TEXT,
+    login_method TEXT NOT NULL CHECK (login_method IN ('password', 'token')),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_admin_sessions_active ON admin_sessions(admin_user_id, expires_at) WHERE revoked_at IS NULL;
+
 WITH entity_row AS (
     INSERT INTO business_entities (name, slug, status, default_locale, brand_name, logo_url, login_message)
     VALUES ('Default Enterprise', 'default_enterprise', 'active', 'zh-CN', 'Default Enterprise', '', 'Enterprise identity access.')
     ON CONFLICT (slug) DO UPDATE SET
         status = EXCLUDED.status
     RETURNING id
-),
-source_row AS (
-    INSERT INTO identity_sources (entity_id, type, name, status, sync_enabled)
-    SELECT id, 'local', 'Local Accounts', 'active', false
-    FROM entity_row
-    ON CONFLICT (entity_id, type, name) DO UPDATE SET status = EXCLUDED.status
-    RETURNING id, entity_id
 ),
 user_row AS (
     INSERT INTO users (
@@ -343,15 +382,15 @@ user_row AS (
         locale
     )
     SELECT
-        entity_id,
+        id,
         'admin',
         'Administrator',
         'admin@idbridge.local',
         'active',
         'employee',
-        id,
+        NULL,
         'en-US'
-    FROM source_row
+    FROM entity_row
     ON CONFLICT (entity_id, username) DO UPDATE SET
         display_name = EXCLUDED.display_name,
         lifecycle_status = 'active'
@@ -362,20 +401,124 @@ SELECT entity_id, id, crypt('admin123', gen_salt('bf')), true, true
 FROM user_row
 ON CONFLICT (entity_id, user_id) DO NOTHING;
 
-CREATE TABLE im_provider_configs (
-    id CHAR(26) PRIMARY KEY DEFAULT idb_generate_ulid() CHECK (id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
-    entity_id CHAR(26) NOT NULL CHECK (entity_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$') REFERENCES business_entities(id) ON DELETE CASCADE,
-    provider TEXT NOT NULL CHECK (provider IN ('feishu', 'dingtalk', 'wecom')),
-    display_name TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('active', 'disabled')),
-    oauth_configured BOOLEAN NOT NULL DEFAULT false,
-    bot_configured BOOLEAN NOT NULL DEFAULT false,
-    sync_enabled BOOLEAN NOT NULL DEFAULT false,
-    config JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (entity_id, provider)
-);
+WITH admin_row AS (
+    INSERT INTO admin_users (username, display_name, email, status, role, locale)
+    VALUES ('admin', 'Administrator', 'admin@idbridge.local', 'active', 'platform_admin', 'en-US')
+    ON CONFLICT (username) DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        status = 'active',
+        role = 'platform_admin',
+        entity_id = NULL
+    RETURNING id
+)
+INSERT INTO admin_credentials (admin_user_id, password_hash, must_change_password, weak_password)
+SELECT id, crypt('admin123', gen_salt('bf')), true, true
+FROM admin_row
+ON CONFLICT (admin_user_id) DO NOTHING;
+
+WITH permission_seed(code, name, type) AS (
+    VALUES
+        ('entities:read', '查看公司', 'action'),
+        ('entities:manage', '管理公司', 'action'),
+        ('identity_sources:read', '查看身份源', 'action'),
+        ('identity_sources:manage', '管理身份源', 'action'),
+        ('organization:read', '查看组织架构', 'action'),
+        ('organization:sync', '同步组织架构', 'action'),
+        ('users:read', '查看账号', 'action'),
+        ('users:manage', '管理账号', 'action'),
+        ('applications:read', '查看应用', 'action'),
+        ('applications:manage', '管理应用', 'action'),
+        ('roles:read', '查看角色', 'action'),
+        ('roles:manage', '管理角色', 'action'),
+        ('audit:read', '查看审计日志', 'action'),
+        ('sync_jobs:read', '查看同步任务', 'action'),
+        ('sync_jobs:manage', '管理同步任务', 'action')
+)
+INSERT INTO permissions (entity_id, code, name, type)
+SELECT be.id, ps.code, ps.name, ps.type
+FROM business_entities be
+CROSS JOIN permission_seed ps
+ON CONFLICT (entity_id, code) DO UPDATE SET
+    name = EXCLUDED.name,
+    type = EXCLUDED.type,
+    updated_at = now();
+
+WITH role_seed(code, name, description) AS (
+    VALUES
+        ('system_admin', '系统管理员', '管理公司、身份源、组织、账号、应用、角色、同步任务和审计日志。'),
+        ('entity_admin', '公司管理员', '负责本公司身份源、组织架构、账号、应用和同步任务管理。'),
+        ('identity_admin', '身份管理员', '负责身份源、组织架构、账号和同步任务管理。'),
+        ('application_admin', '应用管理员', '负责应用接入配置和应用授权相关管理。'),
+        ('audit_viewer', '审计员', '只读查看审计日志和关键运行记录。'),
+        ('read_only', '只读查看员', '只读查看公司、组织、账号、应用、角色和同步任务。')
+)
+INSERT INTO roles (entity_id, code, name, description)
+SELECT be.id, rs.code, rs.name, rs.description
+FROM business_entities be
+CROSS JOIN role_seed rs
+ON CONFLICT (entity_id, code) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    updated_at = now();
+
+WITH role_permission_seed(role_code, permission_code) AS (
+    VALUES
+        ('system_admin', 'entities:read'),
+        ('system_admin', 'entities:manage'),
+        ('system_admin', 'identity_sources:read'),
+        ('system_admin', 'identity_sources:manage'),
+        ('system_admin', 'organization:read'),
+        ('system_admin', 'organization:sync'),
+        ('system_admin', 'users:read'),
+        ('system_admin', 'users:manage'),
+        ('system_admin', 'applications:read'),
+        ('system_admin', 'applications:manage'),
+        ('system_admin', 'roles:read'),
+        ('system_admin', 'roles:manage'),
+        ('system_admin', 'audit:read'),
+        ('system_admin', 'sync_jobs:read'),
+        ('system_admin', 'sync_jobs:manage'),
+        ('entity_admin', 'identity_sources:read'),
+        ('entity_admin', 'identity_sources:manage'),
+        ('entity_admin', 'organization:read'),
+        ('entity_admin', 'organization:sync'),
+        ('entity_admin', 'users:read'),
+        ('entity_admin', 'users:manage'),
+        ('entity_admin', 'applications:read'),
+        ('entity_admin', 'applications:manage'),
+        ('entity_admin', 'roles:read'),
+        ('entity_admin', 'audit:read'),
+        ('entity_admin', 'sync_jobs:read'),
+        ('entity_admin', 'sync_jobs:manage'),
+        ('identity_admin', 'identity_sources:read'),
+        ('identity_admin', 'identity_sources:manage'),
+        ('identity_admin', 'organization:read'),
+        ('identity_admin', 'organization:sync'),
+        ('identity_admin', 'users:read'),
+        ('identity_admin', 'users:manage'),
+        ('identity_admin', 'sync_jobs:read'),
+        ('identity_admin', 'sync_jobs:manage'),
+        ('application_admin', 'applications:read'),
+        ('application_admin', 'applications:manage'),
+        ('application_admin', 'users:read'),
+        ('application_admin', 'roles:read'),
+        ('audit_viewer', 'audit:read'),
+        ('audit_viewer', 'sync_jobs:read'),
+        ('read_only', 'entities:read'),
+        ('read_only', 'identity_sources:read'),
+        ('read_only', 'organization:read'),
+        ('read_only', 'users:read'),
+        ('read_only', 'applications:read'),
+        ('read_only', 'roles:read'),
+        ('read_only', 'audit:read'),
+        ('read_only', 'sync_jobs:read')
+)
+INSERT INTO role_permissions (entity_id, role_id, permission_id)
+SELECT r.entity_id, r.id, p.id
+FROM role_permission_seed rps
+JOIN roles r ON r.code = rps.role_code
+JOIN permissions p ON p.entity_id = r.entity_id AND p.code = rps.permission_code
+ON CONFLICT DO NOTHING;
 
 CREATE TABLE mcp_connectors (
     id CHAR(26) PRIMARY KEY DEFAULT idb_generate_ulid() CHECK (id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
@@ -391,14 +534,13 @@ CREATE TABLE mcp_connectors (
     UNIQUE (entity_id, name)
 );
 
-CREATE INDEX idx_im_provider_configs_entity ON im_provider_configs(entity_id);
 CREATE INDEX idx_mcp_connectors_entity_status ON mcp_connectors(entity_id, status);
 
 CREATE TABLE audit_logs (
     id CHAR(26) PRIMARY KEY DEFAULT idb_generate_ulid() CHECK (id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
     entity_id CHAR(26) NOT NULL CHECK (entity_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$') REFERENCES business_entities(id) ON DELETE CASCADE,
     actor_user_id CHAR(26) CHECK (actor_user_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
-    actor_type TEXT NOT NULL CHECK (actor_type IN ('user', 'system', 'sync_job', 'api_client')),
+    actor_type TEXT NOT NULL CHECK (actor_type IN ('user', 'admin', 'system', 'sync_job', 'api_client')),
     action TEXT NOT NULL,
     resource_type TEXT NOT NULL DEFAULT '',
     resource_id TEXT NOT NULL DEFAULT '',
@@ -493,57 +635,7 @@ ON departments (entity_id, source_id, external_department_id)
 WHERE source_id IS NOT NULL AND external_department_id IS NOT NULL;
 
 
-CREATE TABLE legacy_app_users (
-    id CHAR(26) PRIMARY KEY DEFAULT idb_generate_ulid() CHECK (id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
-    entity_id CHAR(26) NOT NULL CHECK (entity_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$') REFERENCES business_entities(id) ON DELETE CASCADE,
-    application_id CHAR(26) NOT NULL CHECK (application_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
-    user_id CHAR(26) NOT NULL CHECK (user_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
-    username TEXT NOT NULL,
-    legacy_user_identifier TEXT,
-    auth_scheme TEXT NOT NULL CHECK (auth_scheme IN ('local')),
-    credential_hash TEXT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT true,
-    last_used_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (entity_id, application_id, username),
-    UNIQUE (entity_id, application_id, legacy_user_identifier),
-    FOREIGN KEY (entity_id, application_id) REFERENCES applications(entity_id, id) ON DELETE CASCADE,
-    FOREIGN KEY (entity_id, user_id) REFERENCES users(entity_id, id) ON DELETE CASCADE
-);
-
-CREATE TABLE legacy_password_events (
-    id CHAR(26) PRIMARY KEY DEFAULT idb_generate_ulid() CHECK (id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
-    entity_id CHAR(26) NOT NULL CHECK (entity_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$') REFERENCES business_entities(id) ON DELETE CASCADE,
-    application_id CHAR(26) NOT NULL CHECK (application_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
-    user_id CHAR(26) CHECK (user_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
-    username TEXT,
-    event TEXT NOT NULL CHECK (event IN ('success', 'failed', 'locked', 'disabled', 'access_denied')),
-    client_ip TEXT,
-    user_agent TEXT,
-    trace_id TEXT,
-    reason TEXT,
-    occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    FOREIGN KEY (entity_id, application_id) REFERENCES applications(entity_id, id) ON DELETE CASCADE,
-    FOREIGN KEY (entity_id, user_id) REFERENCES users(entity_id, id) ON DELETE CASCADE
-);
-
-CREATE INDEX idx_legacy_app_users_entity_app ON legacy_app_users(entity_id, application_id);
-CREATE UNIQUE INDEX idx_legacy_app_users_entity_app_legacy_identifier ON legacy_app_users(entity_id, application_id, legacy_user_identifier)
-    WHERE legacy_user_identifier IS NOT NULL;
-CREATE INDEX idx_legacy_password_events_lookup
-    ON legacy_password_events(entity_id, application_id, username, occurred_at);
-CREATE INDEX idx_legacy_password_events_entity_app_user
-    ON legacy_password_events(entity_id, application_id, user_id, occurred_at);
-
 -- +goose Down
-DROP INDEX IF EXISTS idx_legacy_password_events_entity_app_user;
-DROP INDEX IF EXISTS idx_legacy_password_events_lookup;
-DROP INDEX IF EXISTS idx_legacy_app_users_entity_app_legacy_identifier;
-DROP INDEX IF EXISTS idx_legacy_app_users_entity_app;
-DROP TABLE IF EXISTS legacy_password_events;
-DROP TABLE IF EXISTS legacy_app_users;
-
 DROP INDEX IF EXISTS idx_departments_source_external;
 DROP TABLE IF EXISTS group_members;
 DROP TABLE IF EXISTS groups;
@@ -552,7 +644,9 @@ DROP TABLE IF EXISTS organizations;
 DROP TABLE IF EXISTS sessions;
 DROP TABLE IF EXISTS audit_logs;
 DROP TABLE IF EXISTS mcp_connectors;
-DROP TABLE IF EXISTS im_provider_configs;
+DROP TABLE IF EXISTS admin_sessions;
+DROP TABLE IF EXISTS admin_credentials;
+DROP TABLE IF EXISTS admin_users;
 DROP TABLE IF EXISTS local_credentials;
 DROP TABLE IF EXISTS application_assignments;
 DROP TABLE IF EXISTS role_resource_scopes;

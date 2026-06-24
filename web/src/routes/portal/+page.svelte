@@ -3,8 +3,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, type UserAccessSummary } from '$lib/api';
+  import { t, tf } from '$lib/i18n';
   import { authUser } from '$lib/stores';
-  import { AppWindow, ShieldCheck } from 'lucide-svelte';
 
   let access: UserAccessSummary | null = null;
   let loading = true;
@@ -16,7 +16,7 @@
         access = data;
       })
       .catch((e) => {
-        error = String(e || '加载应用失败');
+        error = e instanceof Error ? e.message : t('portal.fetchFailed');
       })
       .finally(() => {
         loading = false;
@@ -27,7 +27,7 @@
 </script>
 
 <svelte:head>
-  <title>用户门户</title>
+  <title>{t('portal.title')}</title>
 </svelte:head>
 
 {#if loading}
@@ -43,9 +43,9 @@
 {:else}
   <div class="space-y-6">
     <section>
-      <h1 class="text-2xl font-semibold tracking-normal text-surface-950-50">可访问应用</h1>
+      <h1 class="text-2xl font-semibold tracking-normal text-surface-950-50">{t('portal.title')}</h1>
       <p class="mt-3 max-w-2xl text-sm leading-6 text-surface-600-400">
-        {$authUser?.display_name || $authUser?.username} 当前可访问的应用会显示在这里。
+        {tf('portal.description', { name: $authUser?.display_name || $authUser?.username || '-' })}
       </p>
     </section>
 
@@ -54,27 +54,37 @@
     {/if}
 
     {#if apps.length}
-      <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {#each apps as app}
-          <article class="card bg-surface-50-950 border border-surface-200-800 p-4">
-            <div class="flex items-start justify-between gap-3">
-              <span class="inline-flex size-11 items-center justify-center rounded bg-surface-100-900 text-primary-600-400">
-                <AppWindow size={21} aria-hidden="true" />
-              </span>
-              <span class={`badge ${app.application_type === 'oidc_client' ? 'preset-tonal-primary' : 'preset-outlined-surface-500'}`}>{app.application_type}</span>
-            </div>
-            <h2 class="mt-4 text-lg font-semibold">{app.application_name}</h2>
-            <p class="mt-2 text-sm leading-6 text-surface-600-400">已授权访问，包含 {app.roles.length} 个角色上下文。</p>
-            <div class="mt-4 flex items-center gap-2 text-sm font-medium text-success-600-400">
-              <ShieldCheck size={16} aria-hidden="true" />
-              <span>可访问</span>
-            </div>
-          </article>
-        {/each}
+      <section class="card overflow-hidden border border-surface-200-800 bg-surface-50-950">
+        <table class="table min-w-full">
+          <thead>
+            <tr>
+              <th scope="col">{t('portal.application')}</th>
+              <th scope="col">{t('portal.type')}</th>
+              <th scope="col" class="w-28 !text-center">{t('portal.access')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each apps as app}
+              <tr>
+                <td>
+                  <p class="font-medium">{app.application_name}</p>
+                  <p class="text-xs text-surface-500">{tf('portal.roleCount', { count: String(app.roles.length) })}</p>
+                </td>
+                <td class="whitespace-nowrap text-sm text-surface-600-400">{app.application_type}</td>
+                <td class="w-28 !text-center">
+                  <span class="mx-auto inline-flex items-center justify-center gap-1.5 text-sm text-success-600-400">
+                    <span class="size-2 rounded-full bg-success-500" aria-hidden="true"></span>
+                    {t('portal.accessible')}
+                  </span>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
       </section>
     {:else}
       <section class="card bg-surface-50-950 border border-surface-200-800 p-6 text-center text-sm text-surface-500">
-        当前账号还没有可访问应用。
+        {t('portal.noApplications')}
       </section>
     {/if}
   </div>

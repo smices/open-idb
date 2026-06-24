@@ -28,7 +28,6 @@
     "vite": "^6.3.5"
   },
   "dependencies": {
-    "@keenmate/svelte-treeview": "^4.8.0",
     "open-avatar": "^0.1.1"
   }
 }

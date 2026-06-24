@@ -178,49 +178,6 @@ type IdentitySource struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
-type ImProviderConfig struct {
-	ID              string             `json:"id"`
-	EntityID        string             `json:"entity_id"`
-	Provider        string             `json:"provider"`
-	DisplayName     string             `json:"display_name"`
-	Status          string             `json:"status"`
-	OauthConfigured bool               `json:"oauth_configured"`
-	BotConfigured   bool               `json:"bot_configured"`
-	SyncEnabled     bool               `json:"sync_enabled"`
-	Config          []byte             `json:"config"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-}
-
-type LegacyAppUser struct {
-	ID                   string             `json:"id"`
-	EntityID             string             `json:"entity_id"`
-	ApplicationID        string             `json:"application_id"`
-	UserID               string             `json:"user_id"`
-	Username             string             `json:"username"`
-	LegacyUserIdentifier pgtype.Text        `json:"legacy_user_identifier"`
-	AuthScheme           string             `json:"auth_scheme"`
-	CredentialHash       string             `json:"credential_hash"`
-	IsActive             bool               `json:"is_active"`
-	LastUsedAt           pgtype.Timestamptz `json:"last_used_at"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-}
-
-type LegacyPasswordEvent struct {
-	ID            string             `json:"id"`
-	EntityID      string             `json:"entity_id"`
-	ApplicationID string             `json:"application_id"`
-	UserID        pgtype.Text        `json:"user_id"`
-	Username      pgtype.Text        `json:"username"`
-	Event         string             `json:"event"`
-	ClientIp      pgtype.Text        `json:"client_ip"`
-	UserAgent     pgtype.Text        `json:"user_agent"`
-	TraceID       pgtype.Text        `json:"trace_id"`
-	Reason        pgtype.Text        `json:"reason"`
-	OccurredAt    pgtype.Timestamptz `json:"occurred_at"`
-}
-
 type LocalCredential struct {
 	ID                 string             `json:"id"`
 	EntityID           string             `json:"entity_id"`

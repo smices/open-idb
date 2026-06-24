@@ -37,25 +37,6 @@ func (q *Queries) CountApplications(ctx context.Context, entityID string) (int64
 	return column_1, err
 }
 
-const countDirectoryUsers = `-- name: CountDirectoryUsers :one
-SELECT count(*)::bigint
-FROM directory_users
-WHERE entity_id = $1
-  AND ($2::text IS NULL OR source_id = $2::text)
-`
-
-type CountDirectoryUsersParams struct {
-	EntityID string      `json:"entity_id"`
-	SourceID pgtype.Text `json:"source_id"`
-}
-
-func (q *Queries) CountDirectoryUsers(ctx context.Context, arg CountDirectoryUsersParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countDirectoryUsers, arg.EntityID, arg.SourceID)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const countUsers = `-- name: CountUsers :one
 SELECT count(*)::bigint
 FROM users
@@ -269,68 +250,6 @@ func (q *Queries) ListApplications(ctx context.Context, arg ListApplicationsPara
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listDirectoryUsers = `-- name: ListDirectoryUsers :many
-
-SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
-FROM directory_users
-WHERE entity_id = $1
-  AND ($4::text IS NULL OR source_id = $4::text)
-ORDER BY created_at DESC
-LIMIT $2 OFFSET $3
-`
-
-type ListDirectoryUsersParams struct {
-	EntityID string      `json:"entity_id"`
-	Limit    int32       `json:"limit"`
-	Offset   int32       `json:"offset"`
-	SourceID pgtype.Text `json:"source_id"`
-}
-
-// === Directory Users ===
-func (q *Queries) ListDirectoryUsers(ctx context.Context, arg ListDirectoryUsersParams) ([]DirectoryUser, error) {
-	rows, err := q.db.Query(ctx, listDirectoryUsers,
-		arg.EntityID,
-		arg.Limit,
-		arg.Offset,
-		arg.SourceID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []DirectoryUser{}
-	for rows.Next() {
-		var i DirectoryUser
-		if err := rows.Scan(
-			&i.ID,
-			&i.EntityID,
-			&i.SourceID,
-			&i.ExternalUserID,
-			&i.ExternalUnionID,
-			&i.ExternalOpenID,
-			&i.Name,
-			&i.Email,
-			&i.Phone,
-			&i.AvatarUrl,
-			&i.Status,
-			&i.RawProfile,
-			&i.LastSyncedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.EnglishName,
-			&i.EmployeeNo,
-			&i.JobTitle,
 		); err != nil {
 			return nil, err
 		}

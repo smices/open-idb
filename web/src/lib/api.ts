@@ -108,6 +108,32 @@ export interface AdminCurrentUser {
   role: 'platform_admin' | 'enterprise_admin' | string;
 }
 
+export interface AdminUser {
+  id: string;
+  entity_id?: string;
+  entity_name?: string;
+  username: string;
+  display_name: string;
+  email?: string;
+  status: string;
+  role: 'platform_admin' | 'enterprise_admin' | string;
+  protected: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminRoleOption {
+  value: 'platform_admin' | 'enterprise_admin' | string;
+  label: string;
+  description: string;
+  requires_entity: boolean;
+}
+
+export interface AdminUserListResponse {
+  items: AdminUser[];
+  total: number;
+}
+
 export interface Entity {
   id: string;
   name: string;
@@ -199,13 +225,6 @@ export interface DirectoryUser {
   last_synced_at: string;
   created_at: string;
   updated_at: string;
-}
-
-export interface DirectoryUserListResponse {
-  items: DirectoryUser[];
-  total: number;
-  limit: number;
-  offset: number;
 }
 
 export interface Organization {
@@ -430,13 +449,14 @@ export interface OIDCClientCreateResponse {
   client_secret: string;
 }
 
-export interface IMProviderConfig {
+export interface FeishuIdentitySourceConfig {
   id?: string;
   provider: string;
   display_name: string;
   status: string;
   oauth_configured: boolean;
   sync_enabled: boolean;
+  redirect_uri?: string;
   config: Record<string, string>;
 }
 
@@ -534,14 +554,6 @@ export const api = {
     const suffix = queryString({ limit: params?.limit, offset: params?.offset });
     return apiRequest<SyncJobListResponse>(`/sapi/sync-jobs${suffix}`);
   },
-  listDirectoryUsers: (params?: { source_id?: string; limit?: number; offset?: number }) => {
-    const suffix = queryString({
-      source_id: params?.source_id,
-      limit: params?.limit,
-      offset: params?.offset,
-    });
-    return apiRequest<DirectoryUserListResponse>(`/sapi/directory-users${suffix}`);
-  },
   getDirectoryUser: (id: string) =>
     apiRequest<DirectoryUser>(`/sapi/directory-users/${encodeURIComponent(id)}`),
   getOrganizationTreeRoot: (params?: { limit?: number; offset?: number }) => {
@@ -574,6 +586,33 @@ export const api = {
     apiRequest<void>('/api/me/password', { method: 'POST', body: payload }),
   updateAdminPassword: (payload: { current_password: string; new_password: string }) =>
     apiRequest<void>('/sapi/me/password', { method: 'POST', body: payload }),
+  listAdminUsers: () => apiRequest<AdminUserListResponse>('/sapi/admin-users'),
+  listAdminRoles: () => apiRequest<AdminRoleOption[]>('/sapi/admin-users/roles'),
+  createAdminUser: (payload: {
+    username: string;
+    display_name: string;
+    email?: string;
+    role: string;
+    entity_id?: string;
+    password: string;
+  }) => apiRequest<AdminUser>('/sapi/admin-users', { method: 'POST', body: payload }),
+  updateAdminUser: (
+    id: string,
+    payload: {
+      display_name: string;
+      email?: string;
+      role: string;
+      entity_id?: string;
+      status: string;
+    },
+  ) => apiRequest<AdminUser>(`/sapi/admin-users/${encodeURIComponent(id)}`, { method: 'PUT', body: payload }),
+  deleteAdminUser: (id: string) =>
+    apiRequest<void>(`/sapi/admin-users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  setAdminUserPassword: (id: string, password: string) =>
+    apiRequest<void>(`/sapi/admin-users/${encodeURIComponent(id)}/password`, {
+      method: 'POST',
+      body: { password },
+    }),
 
   listUsers: (params?: { status?: string; limit?: number; offset?: number }) => {
     const suffix = queryString({
@@ -714,12 +753,13 @@ export const api = {
       { method: 'POST' },
     ),
 
-  listIMProviderConfigs: () => apiRequest<IMProviderConfig[]>('/sapi/integrations/im'),
-  upsertIMProviderConfig: (provider: string, payload: Partial<IMProviderConfig>) =>
-    apiRequest<IMProviderConfig>(`/sapi/integrations/im/${encodeURIComponent(provider)}`, {
+  getFeishuIdentitySourceConfig: () =>
+    apiRequest<FeishuIdentitySourceConfig>('/sapi/identity-sources/feishu/config'),
+  upsertFeishuIdentitySourceConfig: (payload: Partial<FeishuIdentitySourceConfig>) =>
+    apiRequest<FeishuIdentitySourceConfig>('/sapi/identity-sources/feishu/config', {
       method: 'PUT',
       body: {
-        provider,
+        provider: 'feishu',
         ...payload,
         config: payload.config || {},
       },

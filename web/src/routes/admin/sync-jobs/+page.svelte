@@ -3,8 +3,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, type SyncJob } from '$lib/api';
+  import IdModal from '$lib/components/ui/IdModal.svelte';
+  import IdPagination from '$lib/components/ui/IdPagination.svelte';
   import { t } from '$lib/i18n';
-  import { FileText, RotateCcw, Search, X } from 'lucide-svelte';
+  import { FileText, RotateCcw, Search } from 'lucide-svelte';
 
   let jobs: SyncJob[] = [];
   let offset = 0;
@@ -65,16 +67,6 @@
     }
   };
 
-  const previousPage = () => {
-    if (offset === 0) return;
-    offset = Math.max(0, offset - pageSize);
-  };
-
-  const nextPage = () => {
-    if (offset + pageSize >= filteredLogJobs.length) return;
-    offset += pageSize;
-  };
-
   const openDetails = (job: SyncJob) => {
     selectedJob = job;
     detailOpen = true;
@@ -88,12 +80,6 @@
   const resetFilters = () => {
     searchTerm = '';
     offset = 0;
-  };
-
-  const handleDialogKeydown = (event: KeyboardEvent) => {
-    if (event.key === 'Escape' && detailOpen) {
-      closeDetails();
-    }
   };
 
   onMount(() => {
@@ -112,8 +98,6 @@
 <svelte:head>
   <title>{t('syncJobs.title')}</title>
 </svelte:head>
-
-<svelte:window on:keydown={handleDialogKeydown} />
 
 <section class="space-y-4">
   <form
@@ -263,30 +247,13 @@
     {/if}
     <div class="flex flex-wrap items-center justify-between gap-3 border-t border-surface-200-800 p-3">
       <span class="text-xs text-surface-500">{t('dashboard.total')}: {filteredLogJobs.length}</span>
-      <div class="flex gap-2">
-        <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={previousPage} disabled={offset === 0}>{t('common.previous')}</button>
-        <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={nextPage} disabled={offset + pageSize >= filteredLogJobs.length}>{t('common.next')}</button>
-      </div>
+      <IdPagination total={filteredLogJobs.length} {offset} {pageSize} onPage={(nextOffset) => (offset = nextOffset)} />
     </div>
   </section>
 </section>
 
-{#if detailOpen && selectedJob}
-  <div class="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="sync-job-dialog-title">
-    <div class="mx-auto mt-10 max-w-3xl rounded-container bg-surface-50-950 border border-surface-200-800 p-5 shadow-xl">
-      <div class="mb-4 flex items-center justify-between gap-3">
-        <h2 id="sync-job-dialog-title" class="font-semibold">{t('syncJobs.details')}</h2>
-        <button
-          class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
-          type="button"
-          on:click={closeDetails}
-          aria-label={t('common.close')}
-          title={t('common.close')}
-        >
-          <X class="size-4" aria-hidden="true" />
-        </button>
-      </div>
-
+<IdModal open={detailOpen && Boolean(selectedJob)} title={t('syncJobs.details')} onClose={closeDetails}>
+  {#if selectedJob}
       <dl class="grid gap-3 text-sm md:grid-cols-2">
         <div>
           <dt class="text-surface-500">{t('syncJobs.provider')}</dt>
@@ -337,6 +304,5 @@
           </dl>
         {/if}
       </div>
-    </div>
-  </div>
-{/if}
+  {/if}
+</IdModal>

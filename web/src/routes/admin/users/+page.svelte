@@ -4,8 +4,10 @@
   import { onMount } from 'svelte';
   import { t } from '$lib/i18n';
   import { api, type User, type UserListResponse } from '$lib/api';
-  import { Check, Power, RotateCcw, Search, Settings, X } from 'lucide-svelte';
-  import Toast from '$lib/components/ui/Toast.svelte';
+  import { Power, RotateCcw, Search, Settings } from 'lucide-svelte';
+  import IdConfirmDialog from '$lib/components/ui/IdConfirmDialog.svelte';
+  import IdPagination from '$lib/components/ui/IdPagination.svelte';
+  import { notifySuccess } from '$lib/toast';
 
   let users: User[] = [];
   let total = 0;
@@ -17,9 +19,7 @@
   let searchTerm = '';
   let loading = true;
   let error = '';
-  let message = '';
   let pendingStatusUserId = '';
-  let messageTimer: ReturnType<typeof setTimeout> | undefined;
 
   const statusOptions = ['', 'active', 'disabled', 'locked'];
   const userTypeOptions = ['all', 'human', 'service_account', 'external'];
@@ -68,47 +68,21 @@
     void loadUsers();
   };
 
-  const onPrevPage = () => {
-    if (offset === 0) return;
-    offset = Math.max(0, offset - limit);
-    void loadUsers();
-  };
-
-  const onNextPage = () => {
-    if (offset + limit >= total) return;
-    offset += limit;
-    void loadUsers();
-  };
-
-  const showToast = (value: string) => {
-    message = value;
-    if (messageTimer) clearTimeout(messageTimer);
-    messageTimer = setTimeout(() => {
-      message = '';
-      messageTimer = undefined;
-    }, 2200);
-  };
-
   const toggleUserStatus = async (user: User) => {
     error = '';
-    message = '';
     try {
       if (user.lifecycle_status === 'active') {
         await api.disableUser(user.id);
-        showToast(t('users.disableSuccess'));
+        notifySuccess(t('users.disableSuccess'));
       } else {
         await api.enableUser(user.id);
-        showToast(t('users.enableSuccess'));
+        notifySuccess(t('users.enableSuccess'));
       }
       await loadUsers();
       pendingStatusUserId = '';
     } catch {
       error = t('common.fetchFailed');
     }
-  };
-
-  const requestStatusToggle = (user: User) => {
-    pendingStatusUserId = pendingStatusUserId === user.id ? '' : user.id;
   };
 
   onMount(() => {
@@ -219,33 +193,18 @@
                 <a class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0" href={`/admin/users/${user.id}`} aria-label={t('users.manage')} title={t('users.manage')}>
                   <Settings class="size-4" aria-hidden="true" />
                 </a>
-                <div class="relative inline-flex items-center">
-                  <button
-                    class={`btn btn-xs inline-grid size-7 min-h-0 min-w-0 place-items-center p-0 ${user.lifecycle_status === 'active' ? 'preset-outlined-surface-500' : 'preset-filled-success-500'}`}
-                    type="button"
-                    on:click={() => requestStatusToggle(user)}
-                    aria-label={user.lifecycle_status === 'active' ? t('users.disable') : t('users.enable')}
-                    title={user.lifecycle_status === 'active' ? t('users.disable') : t('users.enable')}
-                  >
+                <IdConfirmDialog
+                  open={pendingStatusUserId === user.id}
+                  triggerLabel={user.lifecycle_status === 'active' ? t('users.disable') : t('users.enable')}
+                  triggerClass={`btn btn-xs inline-grid size-7 min-h-0 min-w-0 place-items-center p-0 ${user.lifecycle_status === 'active' ? 'preset-outlined-surface-500' : 'preset-filled-success-500'}`}
+                  confirmClass={user.lifecycle_status === 'active' ? 'preset-filled-error-500' : 'preset-filled-success-500'}
+                  onOpenChange={(open) => (pendingStatusUserId = open ? user.id : '')}
+                  onConfirm={() => void toggleUserStatus(user)}
+                >
+                  {#snippet trigger()}
                     <Power class="size-4" aria-hidden="true" />
-                  </button>
-                  {#if pendingStatusUserId === user.id}
-                    <div class="absolute right-full top-1/2 z-10 mr-1 flex -translate-y-1/2 items-center gap-1 rounded-container border border-surface-200-800 bg-surface-50-950 p-1 shadow-lg">
-                      <button
-                        class={`btn btn-xs inline-grid size-7 min-h-0 min-w-0 place-items-center p-0 ${user.lifecycle_status === 'active' ? 'preset-filled-error-500' : 'preset-filled-success-500'}`}
-                        type="button"
-                        on:click={() => void toggleUserStatus(user)}
-                        aria-label={user.lifecycle_status === 'active' ? t('users.disable') : t('users.enable')}
-                        title={user.lifecycle_status === 'active' ? t('users.disable') : t('users.enable')}
-                      >
-                        <Check class="size-4" aria-hidden="true" />
-                      </button>
-                      <button class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0" type="button" on:click={() => (pendingStatusUserId = '')} aria-label={t('common.cancel')} title={t('common.cancel')}>
-                        <X class="size-4" aria-hidden="true" />
-                      </button>
-                    </div>
-                  {/if}
-                </div>
+                  {/snippet}
+                </IdConfirmDialog>
               </div>
             </td>
           </tr>
@@ -256,13 +215,11 @@
     {/if}
 
     <div class="flex flex-wrap items-center justify-between gap-3 border-t border-surface-200-800 p-3">
-      <span class="text-xs text-surface-500">{t('dashboard.total')}: {total} · {t('directory.withEmail')}: {withEmailCount}</span>
-      <div class="flex gap-2">
-        <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={onPrevPage} disabled={offset === 0}>{t('common.previous')}</button>
-        <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={onNextPage} disabled={offset + limit >= total}>{t('common.next')}</button>
-      </div>
+      <span class="text-xs text-surface-500">{t('dashboard.total')}: {total} · {t('users.withEmail')}: {withEmailCount}</span>
+      <IdPagination total={total} {offset} pageSize={limit} onPage={(nextOffset) => {
+        offset = nextOffset;
+        void loadUsers();
+      }} />
     </div>
   </section>
 </section>
-
-<Toast {message} />

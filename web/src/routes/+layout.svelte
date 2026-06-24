@@ -15,6 +15,7 @@
   import { onMount } from 'svelte';
   import { t, initThemeFromStorage } from '$lib/i18n';
   import UserMenu from '$lib/components/layout/UserMenu.svelte';
+  import IdToastProvider from '$lib/components/ui/IdToastProvider.svelte';
   import { redirectToPath } from '$lib/session';
   import {
     AppWindow,
@@ -27,6 +28,7 @@
     Network,
     RefreshCw,
     ShieldCheck,
+    UserCog,
     UserRound,
     UsersRound,
   } from 'lucide-svelte';
@@ -36,46 +38,47 @@
   let hasIdentitySource = $state(false);
 
   const portalItems = [
-    { id: 'portal', path: '/portal', label: '应用', title: '用户门户', icon: AppWindow },
-    { id: 'profile', path: '/portal/profile', label: '资料', title: '个人资料', icon: UserRound },
+    { id: 'portal', path: '/portal', label: t('nav.portal.apps'), title: t('portal.title'), icon: AppWindow },
+    { id: 'profile', path: '/portal/profile', label: t('nav.portal.profile'), title: t('profile.title'), icon: UserRound },
   ];
 
   const adminGroups = [
     {
       id: 'overview',
-      label: '总览',
-      items: [{ id: 'dashboard', path: '/admin', label: '概览', title: '管理概览', description: '查看身份接入、账号、应用授权和同步任务的整体状态。', icon: Gauge }],
+      label: t('nav.admin.overview'),
+      items: [{ id: 'dashboard', path: '/admin', label: t('nav.admin.dashboard'), title: t('nav.admin.dashboardTitle'), description: t('nav.admin.dashboardDescription'), icon: Gauge }],
     },
     {
       id: 'identity',
-      label: '身份接入',
+      label: t('nav.admin.identity'),
       items: [
-        { id: 'sources', path: '/admin/identity-sources', label: '身份源接入', title: '身份源接入', description: '配置企业的主身份目录，例如飞书；通讯录和组织架构都从这里同步。', icon: GitBranch },
-        { id: 'syncJobs', path: '/admin/sync-jobs', label: '同步任务', title: '同步任务', description: '查看身份源同步、增量更新和失败重试记录。', icon: RefreshCw },
+        { id: 'sources', path: '/admin/identity-sources', label: t('identitySources.title'), title: t('identitySources.title'), description: t('nav.admin.identitySourcesDescription'), icon: GitBranch },
+        { id: 'syncJobs', path: '/admin/sync-jobs', label: t('syncJobs.title'), title: t('syncJobs.title'), description: t('nav.admin.syncJobsDescription'), icon: RefreshCw },
       ],
     },
     {
       id: 'governance',
-      label: '身份治理',
+      label: t('nav.admin.governance'),
       items: [
-        { id: 'organization', path: '/admin/organization', label: '组织架构', title: '组织架构', description: '基于已接入身份源生成公司、部门和用户分组；未配置身份源前不应维护组织架构。', icon: Network },
-        { id: 'users', path: '/admin/users', label: '账号管理', title: '账号管理', description: '维护系统内可登录、可授权、可分配角色和应用权限的账号。', icon: UsersRound },
-        { id: 'applications', path: '/admin/applications', label: '应用', title: '应用管理', description: '管理接入 IdBridge 的业务应用，维护 OIDC 接入配置和客户端凭据。', icon: AppWindow },
-        { id: 'roles', path: '/admin/roles', label: '角色权限', title: '角色权限', description: '定义角色、权限和资源范围，并分配给账号或组织对象。', icon: ShieldCheck },
+        { id: 'organization', path: '/admin/organization', label: t('organization.title'), title: t('organization.title'), description: t('nav.admin.organizationDescription'), icon: Network },
+        { id: 'users', path: '/admin/users', label: t('users.accountManagement'), title: t('users.accountManagement'), description: t('nav.admin.usersDescription'), icon: UsersRound },
+        { id: 'applications', path: '/admin/applications', label: t('applications.title'), title: t('applications.title'), description: t('nav.admin.applicationsDescription'), icon: AppWindow },
+        { id: 'roles', path: '/admin/roles', label: t('roles.title'), title: t('roles.title'), description: t('nav.admin.rolesDescription'), icon: ShieldCheck },
       ],
     },
     {
       id: 'system',
-      label: '系统管理',
+      label: t('nav.admin.system'),
       items: [
-        { id: 'entities', path: '/admin/entities', label: '公司管理', title: '公司管理', description: '维护平台下的公司、登录品牌和默认语言。', icon: Building2 },
-        { id: 'audit', path: '/admin/audit', label: '审计日志', title: '审计日志', description: '追踪登录、同步、授权和管理员操作记录。', icon: FileSearch },
+        { id: 'entities', path: '/admin/entities', label: t('entities.title'), title: t('entities.title'), description: t('nav.admin.entitiesDescription'), icon: Building2 },
+        { id: 'adminUsers', path: '/admin/admin-users', label: t('adminUsers.title'), title: t('adminUsers.title'), description: t('nav.admin.adminUsersDescription'), icon: UserCog },
+        { id: 'audit', path: '/admin/audit', label: t('audit.title'), title: t('audit.title'), description: t('nav.admin.auditDescription'), icon: FileSearch },
       ],
     },
   ];
   const adminItems = [
     ...adminGroups.flatMap((group) => group.items),
-    { id: 'profile', path: '/admin/profile', label: '个人资料', title: '个人资料', description: '维护当前管理员账号资料和登录密码。', icon: UserRound },
+    { id: 'profile', path: '/admin/profile', label: t('profile.title'), title: t('profile.title'), description: t('nav.admin.profileDescription'), icon: UserRound },
   ];
 
   const isLoginPath = (pathname: string) =>
@@ -93,6 +96,14 @@
 
   const activePortalItem = $derived(findActiveItem(portalItems, page.url.pathname, portalItems[0]));
   const activeAdminItem = $derived(findActiveItem(adminItems, page.url.pathname, adminItems[0]));
+  const visibleAdminGroups = $derived(
+    adminGroups
+      .map((group) => ({
+        ...group,
+        items: group.items.filter((item) => item.id !== 'adminUsers' || $authUser?.capabilities?.includes('system')),
+      }))
+      .filter((group) => group.items.length > 0),
+  );
   const isLoginPage = $derived(isLoginPath(page.url.pathname));
   const isAdminShell = $derived(isAdminPath(page.url.pathname) && page.url.pathname !== '/admin/login');
   const isPortalShell = $derived(isPortalPath(page.url.pathname));
@@ -215,7 +226,7 @@
         </div>
 
         <nav class="nav-list">
-          {#each adminGroups as group}
+          {#each visibleAdminGroups as group}
             <div class="nav-section">
               {#if !$sidebarCollapsed}
                 <div class="nav-section-label">{group.label}</div>
@@ -226,7 +237,7 @@
                   href={lockedByIdentitySource ? '/admin/identity-sources' : item.path}
                   class="nav-item {activeAdminItem.id === item.id ? 'active' : ''} {lockedByIdentitySource ? 'muted' : ''} {$sidebarCollapsed ? 'collapsed' : ''}"
                   aria-label={item.label}
-                  title={lockedByIdentitySource ? '请先配置身份源' : $sidebarCollapsed ? item.label : undefined}
+                  title={lockedByIdentitySource ? t('nav.admin.identitySourceRequired') : $sidebarCollapsed ? item.label : undefined}
                   aria-current={activeAdminItem.id === item.id ? 'page' : undefined}
                 >
                   <item.icon size={18} aria-hidden="true" />
@@ -274,3 +285,4 @@
     </div>
   {/if}
 </div>
+<IdToastProvider />

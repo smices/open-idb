@@ -4,6 +4,7 @@
   import { t } from '$lib/i18n';
   import { api, type CurrentUser } from '$lib/api';
   import { authUser } from '$lib/stores';
+  import { notifySuccess } from '$lib/toast';
 
   let currentPassword = '';
   let newPassword = '';
@@ -14,9 +15,7 @@
   let profileSubmitting = false;
 
   let error = '';
-  let success = '';
   let profileError = '';
-  let profileSuccess = '';
   let profileLoadedFor = '';
 
   const localeLabel = (value: string): string => (value === 'zh-CN' ? t('layout.chinese') : t('layout.english'));
@@ -28,8 +27,6 @@
 
   const savePassword = async () => {
     error = '';
-    success = '';
-
     if (!currentPassword) {
       error = t('profile.currentPasswordRequired');
       return;
@@ -58,7 +55,7 @@
     submitting = true;
     try {
       await api.updatePassword({ current_password: currentPassword, new_password: newPassword });
-      success = t('profile.updateSuccess');
+      notifySuccess(t('profile.updateSuccess'));
       currentPassword = '';
       newPassword = '';
       confirmPassword = '';
@@ -71,7 +68,6 @@
 
   const saveProfile = async () => {
     profileError = '';
-    profileSuccess = '';
     if (!displayName.trim()) {
       profileError = t('profile.displayNameRequired');
       return;
@@ -80,7 +76,7 @@
     try {
       const next = await api.updateMe({ display_name: displayName.trim() });
       authUser.set(next);
-      profileSuccess = t('profile.profileUpdateSuccess');
+      notifySuccess(t('profile.profileUpdateSuccess'));
     } catch {
       profileError = t('profile.profileUpdateFailed');
     } finally {
@@ -110,12 +106,9 @@
         {#if profileError}
           <aside class="alert preset-tonal-error" role="alert"><p>{profileError}</p></aside>
         {/if}
-        {#if profileSuccess}
-          <aside class="alert preset-tonal-primary" role="status"><p>{profileSuccess}</p></aside>
-        {/if}
         <label class="block">
-          <span class="text-sm text-surface-500">{t('users.displayName')}</span>
-          <input class="input w-full" type="text" bind:value={displayName} required />
+          <span class="text-xs text-surface-500">{t('users.displayName')}</span>
+          <input class="input h-8 w-full bg-surface-50-950 text-sm" type="text" bind:value={displayName} required />
         </label>
         <dl class="grid gap-3 text-sm">
           <div class="flex items-center justify-between gap-4 border-b border-surface-200-800 pb-2">
@@ -143,7 +136,7 @@
             <dd class="font-medium">{localeLabel(user.locale)}</dd>
           </div>
         </dl>
-        <button class="btn preset-filled-primary-500" type="submit" disabled={profileSubmitting}>
+        <button class="btn btn-sm preset-filled-primary-500" type="submit" disabled={profileSubmitting}>
           {profileSubmitting ? t('common.loading') : t('profile.saveProfile')}
         </button>
       {:else}
@@ -160,24 +153,20 @@
       {#if error}
         <aside class="alert preset-tonal-error" role="alert"><p>{error}</p></aside>
       {/if}
-      {#if success}
-        <aside class="alert preset-tonal-primary" role="status"><p>{success}</p></aside>
-      {/if}
-
       <label class="block">
-        <span class="text-sm text-surface-500">{t('profile.currentPassword')}</span>
-        <input class="input w-full" type="password" bind:value={currentPassword} autocomplete="current-password" required />
+        <span class="text-xs text-surface-500">{t('profile.currentPassword')}</span>
+        <input class="input h-8 w-full bg-surface-50-950 text-sm" type="password" bind:value={currentPassword} autocomplete="current-password" required />
       </label>
       <label class="block">
-        <span class="text-sm text-surface-500">{t('profile.newPassword')}</span>
-        <input class="input w-full" type="password" bind:value={newPassword} autocomplete="new-password" required />
+        <span class="text-xs text-surface-500">{t('profile.newPassword')}</span>
+        <input class="input h-8 w-full bg-surface-50-950 text-sm" type="password" bind:value={newPassword} autocomplete="new-password" required />
       </label>
       <label class="block">
-        <span class="text-sm text-surface-500">{t('profile.confirmPassword')}</span>
-        <input class="input w-full" type="password" bind:value={confirmPassword} autocomplete="new-password" required />
+        <span class="text-xs text-surface-500">{t('profile.confirmPassword')}</span>
+        <input class="input h-8 w-full bg-surface-50-950 text-sm" type="password" bind:value={confirmPassword} autocomplete="new-password" required />
       </label>
 
-      <button class="btn preset-filled-primary-500" type="submit" disabled={submitting}>
+      <button class="btn btn-sm preset-filled-primary-500" type="submit" disabled={submitting}>
         {submitting ? t('common.loading') : t('profile.updatePassword')}
       </button>
     </form>

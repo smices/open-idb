@@ -8,6 +8,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/go-cmp v0.6.0
 	github.com/jackc/pgx/v5 v5.7.1
+	github.com/mozillazg/go-pinyin v0.21.0
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/ory/fosite v0.49.0
 	github.com/pressly/goose/v3 v3.22.1
@@ -16,7 +17,6 @@ require (
 	github.com/testcontainers/testcontainers-go v0.33.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.32.0
 	go.uber.org/zap v1.27.0
-	golang.org/x/crypto v0.31.0
 )
 
 require (
@@ -98,7 +98,6 @@ require (
 	github.com/moby/term v0.5.0 // indirect
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
 	github.com/morikuni/aec v1.0.0 // indirect
-	github.com/mozillazg/go-pinyin v0.21.0 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.0 // indirect
@@ -163,6 +162,7 @@ require (
 	go.opentelemetry.io/proto/otlp v1.0.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
+	golang.org/x/crypto v0.31.0 // indirect
 	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842 // indirect
 	golang.org/x/mod v0.17.0 // indirect
 	golang.org/x/net v0.28.0 // indirect

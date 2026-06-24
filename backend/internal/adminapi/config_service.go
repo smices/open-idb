@@ -8,89 +8,108 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/smices/open-idb/internal/auth"
 	"github.com/smices/open-idb/internal/db/generated"
 )
 
 type ConfigDBService struct {
-	queries *generated.Queries
+	queries     *generated.Queries
+	redirectURI string
 }
 
-func NewConfigService(queries *generated.Queries) (*ConfigDBService, error) {
+func NewConfigService(queries *generated.Queries, redirectURI string) (*ConfigDBService, error) {
 	if queries == nil {
 		return nil, fmt.Errorf("queries are required")
 	}
-	return &ConfigDBService{queries: queries}, nil
+	return &ConfigDBService{queries: queries, redirectURI: strings.TrimSpace(redirectURI)}, nil
 }
 
-func (s *ConfigDBService) ListIMProviderConfigs(ctx context.Context, session auth.Session) ([]IMProviderConfig, error) {
+func (s *ConfigDBService) GetFeishuConfig(ctx context.Context, session auth.Session) (FeishuIdentitySourceConfig, error) {
 	entityID, err := ulidValue(session.EntityID)
 	if err != nil {
-		return nil, err
+		return FeishuIdentitySourceConfig{}, err
 	}
-	rows, err := s.queries.ListIMProviderConfigs(ctx, entityID)
-	if err != nil {
-		return nil, err
+	row, err := s.queries.GetFeishuIdentitySourceConfig(ctx, entityID)
+	if err == nil {
+		return s.feishuIdentitySourceConfigFromGetRow(row), nil
 	}
-	providers := make([]IMProviderConfig, 0, len(rows))
-	for _, row := range rows {
-		providers = append(providers, imProviderConfigFromRow(row))
+	if err != pgx.ErrNoRows {
+		return FeishuIdentitySourceConfig{}, err
 	}
-	return providers, nil
+	return FeishuIdentitySourceConfig{
+		Provider:    "feishu",
+		DisplayName: "Feishu",
+		Status:      "disabled",
+		RedirectURI: s.redirectURI,
+		Config:      json.RawMessage("{}"),
+	}, nil
 }
 
-func (s *ConfigDBService) UpsertIMProviderConfig(ctx context.Context, session auth.Session, input UpsertIMProviderConfigInput) (IMProviderConfig, error) {
-	if err := validateIMProviderInput(input); err != nil {
-		return IMProviderConfig{}, err
+func (s *ConfigDBService) UpsertFeishuConfig(ctx context.Context, session auth.Session, input UpsertFeishuIdentitySourceConfigInput) (FeishuIdentitySourceConfig, error) {
+	input.Provider = "feishu"
+	if err := validateFeishuIdentitySourceInput(input); err != nil {
+		return FeishuIdentitySourceConfig{}, err
 	}
 	entityID, err := ulidValue(session.EntityID)
 	if err != nil {
-		return IMProviderConfig{}, err
+		return FeishuIdentitySourceConfig{}, err
 	}
-	row, err := s.queries.UpsertIMProviderConfig(ctx, generated.UpsertIMProviderConfigParams{
-		EntityID:        entityID,
-		Provider:        input.Provider,
-		DisplayName:     input.DisplayName,
-		Status:          input.Status,
-		OauthConfigured: input.OAuthConfigured,
-		BotConfigured:   false,
-		SyncEnabled:     input.SyncEnabled,
-		Config:          normalizeIMProviderConfig(input.Config),
+	row, err := s.queries.UpdateFeishuIdentitySourceConfig(ctx, generated.UpdateFeishuIdentitySourceConfigParams{
+		EntityID:    entityID,
+		DisplayName: input.DisplayName,
+		Status:      input.Status,
+		SyncEnabled: input.SyncEnabled,
+		Config:      normalizeFeishuIdentitySourceConfig(input.Config),
 	})
 	if err != nil {
-		return IMProviderConfig{}, err
+		return FeishuIdentitySourceConfig{}, err
 	}
-	return imProviderConfigFromRow(row), nil
+	return s.feishuIdentitySourceConfigFromUpdateRow(row), nil
 }
 
-func imProviderConfigFromRow(row generated.ImProviderConfig) IMProviderConfig {
-	return IMProviderConfig{
+func (s *ConfigDBService) feishuIdentitySourceConfigFromGetRow(row generated.GetFeishuIdentitySourceConfigRow) FeishuIdentitySourceConfig {
+	return FeishuIdentitySourceConfig{
 		ID:              ulidString(row.ID),
 		Provider:        row.Provider,
 		DisplayName:     row.DisplayName,
 		Status:          row.Status,
 		OAuthConfigured: row.OauthConfigured,
 		SyncEnabled:     row.SyncEnabled,
+		RedirectURI:     s.redirectURI,
 		Config:          row.Config,
 	}
 }
 
-func validateIMProviderInput(input UpsertIMProviderConfigInput) error {
-	if input.Provider != "feishu" && input.Provider != "dingtalk" && input.Provider != "wecom" {
-		return fmt.Errorf("unsupported im provider")
+func (s *ConfigDBService) feishuIdentitySourceConfigFromUpdateRow(row generated.UpdateFeishuIdentitySourceConfigRow) FeishuIdentitySourceConfig {
+	return FeishuIdentitySourceConfig{
+		ID:              ulidString(row.ID),
+		Provider:        row.Provider,
+		DisplayName:     row.DisplayName,
+		Status:          row.Status,
+		OAuthConfigured: row.OauthConfigured,
+		SyncEnabled:     row.SyncEnabled,
+		RedirectURI:     s.redirectURI,
+		Config:          row.Config,
+	}
+}
+
+func validateFeishuIdentitySourceInput(input UpsertFeishuIdentitySourceConfigInput) error {
+	if input.Provider != "feishu" {
+		return fmt.Errorf("unsupported identity source provider")
 	}
 	if input.DisplayName == "" {
 		return fmt.Errorf("display_name is required")
 	}
 
-	if err := validateIMProviderConfig(input.Provider, input.OAuthConfigured, input.Config); err != nil {
+	if err := validateFeishuIdentitySourceConfig(input.OAuthConfigured, input.Config); err != nil {
 		return err
 	}
 
 	return validateStatus(input.Status)
 }
 
-func validateIMProviderConfig(provider string, oauthConfigured bool, rawConfig json.RawMessage) error {
+func validateFeishuIdentitySourceConfig(oauthConfigured bool, rawConfig json.RawMessage) error {
 	if !oauthConfigured {
 		return nil
 	}
@@ -100,28 +119,16 @@ func validateIMProviderConfig(provider string, oauthConfigured bool, rawConfig j
 		return fmt.Errorf("invalid config json: %w", err)
 	}
 
-	if provider == "feishu" {
-		if oauthConfigured {
-			if strings.TrimSpace(config.AppID) == "" {
-				return fmt.Errorf("app_id is required when oauth_configured is true")
-			}
-			if strings.TrimSpace(config.AppSecret) == "" {
-				return fmt.Errorf("app_secret is required when oauth_configured is true")
-			}
-		}
-		return nil
+	if strings.TrimSpace(config.AppID) == "" {
+		return fmt.Errorf("app_id is required when oauth_configured is true")
 	}
-
-	if rawConfig != nil {
-		// provider type is not feishu; keep config as optional for compatibility, but verify JSON is valid when provided.
-		if !json.Valid(rawConfig) {
-			return fmt.Errorf("invalid config json")
-		}
+	if strings.TrimSpace(config.AppSecret) == "" {
+		return fmt.Errorf("app_secret is required when oauth_configured is true")
 	}
 	return nil
 }
 
-func normalizeIMProviderConfig(rawConfig json.RawMessage) json.RawMessage {
+func normalizeFeishuIdentitySourceConfig(rawConfig json.RawMessage) json.RawMessage {
 	if len(strings.TrimSpace(string(rawConfig))) == 0 {
 		return json.RawMessage("{}")
 	}

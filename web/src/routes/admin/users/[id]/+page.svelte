@@ -3,10 +3,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
+  import { Switch, Tabs } from '@skeletonlabs/skeleton-svelte';
   import { t } from '$lib/i18n';
   import { api, type User, type Role, type UserSession, type AccountBinding } from '$lib/api';
-  import { Check, Plus, Search, Trash2, X } from 'lucide-svelte';
-  import Toast from '$lib/components/ui/Toast.svelte';
+  import { Check, Plus, Power, Search, Trash2, X } from 'lucide-svelte';
+  import IdConfirmDialog from '$lib/components/ui/IdConfirmDialog.svelte';
+  import { notifySuccess } from '$lib/toast';
 
   let userId = '';
   let user: User | null = null;
@@ -39,10 +41,9 @@
 
   let selectedRoleId = '';
   let pendingRoleDeleteId = '';
+  let pendingStatusChange = false;
 
   let error = '';
-  let message = '';
-
   $: userId = $page.params.id ?? '';
 
   const normalizeLocale = () => {
@@ -118,16 +119,16 @@
   const changeStatus = async () => {
     if (!user) return;
     error = '';
-    message = '';
     try {
       if (user.lifecycle_status === 'active') {
         user = await api.disableUser(user.id);
-        message = t('users.disableSuccess');
+        notifySuccess(t('users.disableSuccess'));
       } else {
         user = await api.enableUser(user.id);
-        message = t('users.enableSuccess');
+        notifySuccess(t('users.enableSuccess'));
       }
       await refreshUser();
+      pendingStatusChange = false;
     } catch {
       error = t('users.saveFailed');
     }
@@ -136,12 +137,11 @@
   const onAssignRole = async () => {
     if (!user || !selectedRoleId) return;
     error = '';
-    message = '';
 
     try {
       await api.assignRoleToUser(user.id, selectedRoleId);
       selectedRoleId = '';
-      message = t('users.roleAssigned');
+      notifySuccess(t('users.roleAssigned'));
       await loadRoles();
     } catch {
       error = t('users.saveFailed');
@@ -151,11 +151,10 @@
   const onRemoveRole = async (roleId: string) => {
     if (!user) return;
     error = '';
-    message = '';
     try {
       await api.removeRoleFromUser(user.id, roleId);
       pendingRoleDeleteId = '';
-      message = t('users.roleRemoved');
+      notifySuccess(t('users.roleRemoved'));
       await loadRoles();
     } catch {
       error = t('users.saveFailed');
@@ -163,16 +162,11 @@
   };
 
   const revokeSession = async (session: UserSession) => {
-    if (pendingSessionRevokeId !== session.id) {
-      pendingSessionRevokeId = session.id;
-      return;
-    }
     error = '';
-    message = '';
     try {
       await api.revokeSession(session.id);
       pendingSessionRevokeId = '';
-      message = t('users.sessionRevoked');
+      notifySuccess(t('users.sessionRevoked'));
       await loadSessions();
     } catch {
       error = t('users.sessionRevokeFailed');
@@ -183,7 +177,6 @@
     if (!user) return;
     bindingSaving = true;
     error = '';
-    message = '';
     try {
       await api.createUserBinding(user.id, {
         source_id: bindingSourceId,
@@ -198,7 +191,7 @@
       bindingProviderUnionId = '';
       bindingIsPrimary = false;
       bindingFormOpen = false;
-      message = t('users.bindingCreated');
+      notifySuccess(t('users.bindingCreated'));
       await loadBindings();
     } catch {
       error = t('users.bindingCreateFailed');
@@ -218,16 +211,11 @@
 
   const deleteBinding = async (binding: AccountBinding) => {
     if (!user) return;
-    if (pendingBindingDeleteId !== binding.id) {
-      pendingBindingDeleteId = binding.id;
-      return;
-    }
     error = '';
-    message = '';
     try {
       await api.deleteUserBinding(user.id, binding.id);
       pendingBindingDeleteId = '';
-      message = t('users.bindingDeleted');
+      notifySuccess(t('users.bindingDeleted'));
       await loadBindings();
     } catch {
       error = t('users.bindingDeleteFailed');
@@ -261,6 +249,13 @@
     ].some((value) => includesQuery(value, query));
   };
 
+  const changeTab = (value: string) => {
+    activeTab = value as typeof activeTab;
+    if (activeTab === 'roles') void loadRoles();
+    if (activeTab === 'sessions') void loadSessions();
+    if (activeTab === 'bindings') void loadBindings();
+  };
+
   $: availableRoles = allRoles.filter((item) => !userRoles.find((r) => r.id === item.id));
   $: filteredUserRoles = userRoles.filter((role) => matchesRole(role, roleSearch));
   $: filteredSessions = sessions.filter((session) => matchesSession(session, sessionSearch));
@@ -286,60 +281,40 @@
       <h1 class="text-2xl font-semibold">{user.display_name || user.username}</h1>
       <div class="flex flex-wrap gap-2">
         <a class="btn btn-sm preset-outlined-surface-500 inline-flex" href="/admin/users">{t('common.back')}</a>
-        <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={() => void changeStatus()}>
-          {user.lifecycle_status === 'active' ? t('users.disable') : t('users.enable')}
-        </button>
+        <IdConfirmDialog
+          open={pendingStatusChange}
+          triggerLabel={user.lifecycle_status === 'active' ? t('users.disable') : t('users.enable')}
+          triggerClass={`btn btn-xs inline-grid size-8 min-h-0 min-w-0 place-items-center p-0 ${user.lifecycle_status === 'active' ? 'preset-outlined-surface-500' : 'preset-filled-success-500'}`}
+          confirmClass={user.lifecycle_status === 'active' ? 'preset-filled-error-500' : 'preset-filled-success-500'}
+          onOpenChange={(open) => (pendingStatusChange = open)}
+          onConfirm={() => void changeStatus()}
+        >
+          {#snippet trigger()}
+            <Power class="size-4" aria-hidden="true" />
+          {/snippet}
+        </IdConfirmDialog>
       </div>
     </header>
 
     {#if error}
       <aside class="alert preset-tonal-error" role="alert"><p>{error}</p></aside>
     {/if}
-    <Toast {message} />
-
-    <div class="flex flex-wrap gap-2" aria-label={t('users.info')}>
-      <button
-        class={`btn btn-sm ${activeTab === 'info' ? 'preset-filled-primary-500' : 'preset-outlined-surface-500'}`}
-        type="button"
-        aria-pressed={activeTab === 'info'}
-        on:click={() => (activeTab = 'info')}
-      >
-        {t('users.info')}
-      </button>
-      <button
-        class={`btn btn-sm ${activeTab === 'roles' ? 'preset-filled-primary-500' : 'preset-outlined-surface-500'}`}
-        type="button"
-        aria-pressed={activeTab === 'roles'}
-        on:click={() => {
-          activeTab = 'roles';
-          void loadRoles();
-        }}
-      >
-        {t('users.roles')}
-      </button>
-      <button
-        class={`btn btn-sm ${activeTab === 'sessions' ? 'preset-filled-primary-500' : 'preset-outlined-surface-500'}`}
-        type="button"
-        aria-pressed={activeTab === 'sessions'}
-        on:click={() => {
-          activeTab = 'sessions';
-          void loadSessions();
-        }}
-      >
-        {t('users.sessions')}
-      </button>
-      <button
-        class={`btn btn-sm ${activeTab === 'bindings' ? 'preset-filled-primary-500' : 'preset-outlined-surface-500'}`}
-        type="button"
-        aria-pressed={activeTab === 'bindings'}
-        on:click={() => {
-          activeTab = 'bindings';
-          void loadBindings();
-        }}
-      >
-        {t('users.bindings')}
-      </button>
-    </div>
+    <Tabs value={activeTab} onValueChange={(details) => changeTab(details.value)} class="w-full">
+      <Tabs.List class="inline-flex flex-wrap gap-2" aria-label={t('users.info')}>
+        <Tabs.Trigger class={`btn btn-sm ${activeTab === 'info' ? 'preset-filled-primary-500' : 'preset-outlined-surface-500'}`} value="info">
+          {t('users.info')}
+        </Tabs.Trigger>
+        <Tabs.Trigger class={`btn btn-sm ${activeTab === 'roles' ? 'preset-filled-primary-500' : 'preset-outlined-surface-500'}`} value="roles">
+          {t('users.roles')}
+        </Tabs.Trigger>
+        <Tabs.Trigger class={`btn btn-sm ${activeTab === 'sessions' ? 'preset-filled-primary-500' : 'preset-outlined-surface-500'}`} value="sessions">
+          {t('users.sessions')}
+        </Tabs.Trigger>
+        <Tabs.Trigger class={`btn btn-sm ${activeTab === 'bindings' ? 'preset-filled-primary-500' : 'preset-outlined-surface-500'}`} value="bindings">
+          {t('users.bindings')}
+        </Tabs.Trigger>
+      </Tabs.List>
+    </Tabs>
 
     {#if activeTab === 'info'}
       <div class="card bg-surface-50-950 border border-surface-200-800 p-4">
@@ -439,13 +414,17 @@
                       <div class="font-medium">{role.name}</div>
                       <div class="truncate text-xs text-surface-500">{role.code} · {role.description || role.id}</div>
                     </div>
-                    <button
-                      class="btn preset-tonal-error btn-xs"
-                      type="button"
-                      on:click={() => (pendingRoleDeleteId === role.id ? void onRemoveRole(role.id) : (pendingRoleDeleteId = role.id))}
+                    <IdConfirmDialog
+                      open={pendingRoleDeleteId === role.id}
+                      triggerLabel={t('common.delete')}
+                      triggerClass="btn preset-tonal-error btn-xs"
+                      onOpenChange={(open) => (pendingRoleDeleteId = open ? role.id : '')}
+                      onConfirm={() => void onRemoveRole(role.id)}
                     >
-                      {pendingRoleDeleteId === role.id ? t('common.confirmDelete') : t('common.delete')}
-                    </button>
+                      {#snippet trigger()}
+                        {t('common.delete')}
+                      {/snippet}
+                    </IdConfirmDialog>
                   </div>
                 </article>
               {/each}
@@ -506,9 +485,17 @@
                     <td class="whitespace-nowrap">{formatDateTime(session.created_at)}</td>
                     <td class="whitespace-nowrap">{formatDateTime(session.expires_at)}</td>
                     <td>
-                      <button class="btn preset-tonal-error btn-xs" type="button" on:click={() => void revokeSession(session)}>
-                        {pendingSessionRevokeId === session.id ? t('users.confirmRevokeSession') : t('users.revokeSession')}
-                      </button>
+                      <IdConfirmDialog
+                        open={pendingSessionRevokeId === session.id}
+                        triggerLabel={t('users.revokeSession')}
+                        triggerClass="btn preset-tonal-error btn-xs"
+                        onOpenChange={(open) => (pendingSessionRevokeId = open ? session.id : '')}
+                        onConfirm={() => void revokeSession(session)}
+                      >
+                        {#snippet trigger()}
+                          {t('users.revokeSession')}
+                        {/snippet}
+                      </IdConfirmDialog>
                     </td>
                   </tr>
                 {/each}
@@ -559,10 +546,13 @@
                 <input class="input h-8 w-full text-sm" type="text" bind:value={bindingProviderUnionId} />
               </label>
               <div class="flex items-center justify-end gap-2">
-                <label class="flex items-center gap-2 text-sm">
-                  <input class="checkbox" type="checkbox" bind:checked={bindingIsPrimary} />
-                  <span>{t('users.primaryBinding')}</span>
-                </label>
+                <Switch checked={bindingIsPrimary} onCheckedChange={(details) => (bindingIsPrimary = details.checked)} class="inline-flex items-center gap-2 text-sm">
+                  <Switch.HiddenInput />
+                  <Switch.Control class="relative inline-flex h-5 w-9 items-center rounded-full bg-surface-300-700 transition-colors data-[state=checked]:bg-primary-500">
+                    <Switch.Thumb class="block size-4 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-4" />
+                  </Switch.Control>
+                  <Switch.Label>{t('users.primaryBinding')}</Switch.Label>
+                </Switch>
                 <button
                   class="btn btn-xs preset-filled-primary-500 inline-grid size-8 min-h-0 min-w-0 place-items-center p-0"
                   type="submit"
@@ -619,39 +609,18 @@
                       <td>{binding.is_primary ? t('common.yes') : t('common.no')}</td>
                       <td class="whitespace-nowrap">{formatDateTime(binding.bound_at)}</td>
                       <td>
-                        <div class="relative inline-flex">
-                          <button
-                            class="btn btn-xs preset-outlined-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
-                            type="button"
-                            on:click={() => (pendingBindingDeleteId = binding.id)}
-                            aria-label={t('common.delete')}
-                            title={t('common.delete')}
-                          >
+                        <IdConfirmDialog
+                          open={pendingBindingDeleteId === binding.id}
+                          triggerLabel={t('common.delete')}
+                          confirmLabel={t('common.confirmDelete')}
+                          triggerClass="btn btn-xs preset-outlined-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
+                          onOpenChange={(open) => (pendingBindingDeleteId = open ? binding.id : '')}
+                          onConfirm={() => void deleteBinding(binding)}
+                        >
+                          {#snippet trigger()}
                             <Trash2 class="size-4" aria-hidden="true" />
-                          </button>
-                          {#if pendingBindingDeleteId === binding.id}
-                            <div class="absolute right-full top-1/2 z-10 mr-1 flex -translate-y-1/2 items-center gap-1 rounded-container border border-surface-200-800 bg-surface-50-950 p-1 shadow-lg">
-                              <button
-                                class="btn btn-xs preset-filled-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
-                                type="button"
-                                on:click={() => void deleteBinding(binding)}
-                                aria-label={t('common.confirmDelete')}
-                                title={t('common.confirmDelete')}
-                              >
-                                <Check class="size-4" aria-hidden="true" />
-                              </button>
-                              <button
-                                class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
-                                type="button"
-                                on:click={() => (pendingBindingDeleteId = '')}
-                                aria-label={t('common.cancel')}
-                                title={t('common.cancel')}
-                              >
-                                <X class="size-4" aria-hidden="true" />
-                              </button>
-                            </div>
-                          {/if}
-                        </div>
+                          {/snippet}
+                        </IdConfirmDialog>
                       </td>
                     </tr>
                   {/each}

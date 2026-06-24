@@ -55,12 +55,6 @@ func (m *mockUserService) UpdateUser(ctx context.Context, entityID, id string, d
 	}
 	return UserResponse{}, nil
 }
-func (m *mockUserService) ListDirectoryUsers(_ context.Context, _, _ string, _, _ int32) ([]DirectoryUserResponse, error) {
-	return nil, nil
-}
-func (m *mockUserService) CountDirectoryUsers(_ context.Context, _, _ string) (int64, error) {
-	return 0, nil
-}
 func (m *mockUserService) GetDirectoryUserByID(_ context.Context, _, _ string) (DirectoryUserResponse, error) {
 	return DirectoryUserResponse{}, nil
 }

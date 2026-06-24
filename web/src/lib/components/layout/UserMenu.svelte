@@ -6,6 +6,7 @@
   import { getLocale, setTheme, themeMode } from '$lib/stores';
   import { setCurrentLocale, t, type ThemeMode } from '$lib/i18n';
   import { redirectToCurrentPath } from '$lib/session';
+  import { Menu, SegmentedControl } from '@skeletonlabs/skeleton-svelte';
   import { AutoAvatar } from 'open-avatar';
   import { KeyRound, LogOut, Moon, Sun, UserRound } from 'lucide-svelte';
 
@@ -23,7 +24,6 @@
   const profileHref = $derived(isAdmin ? '/admin/profile' : '/portal/profile');
   const securityHref = $derived(isAdmin ? '/admin/profile#password' : '/portal/profile#password');
   let currentLocale = $state(getLocale());
-  let menuOpen = $state(false);
 
   const modeOptions = [
     { value: 'light' as ThemeMode, labelKey: 'layout.lightTheme', icon: Sun },
@@ -48,45 +48,18 @@
     redirectToCurrentPath($page.url.pathname, $page.url.search);
   };
 
-  const closeMenu = () => {
-    menuOpen = false;
-  };
-
-  const handleWindowClick = () => {
-    if (menuOpen) closeMenu();
-  };
 </script>
 
-<svelte:window on:click={handleWindowClick} on:keydown={(event) => event.key === 'Escape' && closeMenu()} />
-
-<div class="relative">
-  <button
-    class="avatar-menu-trigger"
-    type="button"
-    aria-label={t('layout.profile')}
-    aria-haspopup="menu"
-    aria-expanded={menuOpen}
-    title={displayName}
-    onclick={(event) => {
-      event.stopPropagation();
-      menuOpen = !menuOpen;
-    }}
-  >
+<Menu positioning={{ placement: 'bottom-end', gutter: 8 }}>
+  <Menu.Trigger class="avatar-menu-trigger" aria-label={t('layout.profile')} title={displayName}>
     <span class="user-avatar">
       <img src={avatarSrc} alt={avatarAlt} />
       <span>{displayName.slice(0, 1).toUpperCase()}</span>
     </span>
-  </button>
+  </Menu.Trigger>
 
-  {#if menuOpen}
-    <div
-      class="card absolute right-0 top-full z-50 mt-2 w-72 bg-surface-50-950 border border-surface-200-800 p-2 shadow-xl"
-      role="menu"
-      tabindex="-1"
-      aria-label={t('layout.profile')}
-      onclick={(event) => event.stopPropagation()}
-      onkeydown={(event) => event.stopPropagation()}
-    >
+  <Menu.Positioner class="z-50">
+    <Menu.Content class="card w-72 bg-surface-50-950 border border-surface-200-800 p-2 shadow-xl">
       <div class="border-b border-surface-200-800 pb-3">
         <strong class="block truncate text-sm">{displayName}</strong>
         {#if user}
@@ -95,35 +68,43 @@
       </div>
 
       <section class="border-b border-surface-200-800 py-2" aria-label={`${t('layout.theme')} / ${t('layout.language')}`}>
-        <div class="compact-pill-row">
-          {#each modeOptions as option}
-            <button
-              class="compact-pill {$themeMode === option.value ? 'active' : ''}"
-              type="button"
-              onclick={() => changeThemeMode(option.value)}
-              aria-pressed={$themeMode === option.value}
-              title={t(option.labelKey)}
-            >
-              <option.icon size={13} aria-hidden="true" />
-              <span>{t(option.labelKey)}</span>
-            </button>
-          {/each}
-          <button
-            class="compact-pill {currentLocale === 'en-US' ? 'active' : ''}"
-            type="button"
-            onclick={() => changeLanguage('en-US')}
-            aria-pressed={currentLocale === 'en-US'}
+        <div class="grid gap-2">
+          <SegmentedControl
+            class="compact-segmented-control"
+            value={$themeMode}
+            onValueChange={(details) => changeThemeMode(details.value as ThemeMode)}
+            aria-label={t('layout.theme')}
           >
-            EN
-          </button>
-          <button
-            class="compact-pill {currentLocale === 'zh-CN' ? 'active' : ''}"
-            type="button"
-            onclick={() => changeLanguage('zh-CN')}
-            aria-pressed={currentLocale === 'zh-CN'}
+            <SegmentedControl.Control class="compact-segmented-control-track">
+              {#each modeOptions as option}
+                <SegmentedControl.Item class="compact-segmented-control-item" value={option.value} title={t(option.labelKey)}>
+                  <SegmentedControl.ItemHiddenInput />
+                  <SegmentedControl.ItemText class="inline-flex items-center gap-1.5">
+                    <option.icon size={13} aria-hidden="true" />
+                    <span>{t(option.labelKey)}</span>
+                  </SegmentedControl.ItemText>
+                </SegmentedControl.Item>
+              {/each}
+            </SegmentedControl.Control>
+          </SegmentedControl>
+
+          <SegmentedControl
+            class="compact-segmented-control"
+            value={currentLocale}
+            onValueChange={(details) => changeLanguage(details.value as 'en-US' | 'zh-CN')}
+            aria-label={t('layout.language')}
           >
-            中
-          </button>
+            <SegmentedControl.Control class="compact-segmented-control-track">
+              <SegmentedControl.Item class="compact-segmented-control-item" value="en-US">
+                <SegmentedControl.ItemHiddenInput />
+                <SegmentedControl.ItemText>{t('layout.languageShort.en')}</SegmentedControl.ItemText>
+              </SegmentedControl.Item>
+              <SegmentedControl.Item class="compact-segmented-control-item" value="zh-CN">
+                <SegmentedControl.ItemHiddenInput />
+                <SegmentedControl.ItemText>{t('layout.languageShort.zh')}</SegmentedControl.ItemText>
+              </SegmentedControl.Item>
+            </SegmentedControl.Control>
+          </SegmentedControl>
         </div>
       </section>
 
@@ -142,6 +123,6 @@
         <LogOut size={16} aria-hidden="true" />
         <span>{t('layout.logout')}</span>
       </button>
-    </div>
-  {/if}
-</div>
+    </Menu.Content>
+  </Menu.Positioner>
+</Menu>

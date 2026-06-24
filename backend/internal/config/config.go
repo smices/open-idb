@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -86,6 +87,12 @@ func Load() (Config, error) {
 		if err := validateAbsoluteURL("IDB_WEB_BASE_URL", cfg.WebBaseURL); err != nil {
 			return Config{}, err
 		}
+		if os.Getenv("IDB_FEISHU_REDIRECT_URI") == "" {
+			cfg.FeishuRedirectURI = strings.TrimRight(cfg.WebBaseURL, "/") + "/api/auth/feishu/callback"
+		}
+	}
+	if err := validateAbsoluteURL("IDB_FEISHU_REDIRECT_URI", cfg.FeishuRedirectURI); err != nil {
+		return Config{}, err
 	}
 	if cfg.RedisURL != "" {
 		cfg.RedisEnabled = true

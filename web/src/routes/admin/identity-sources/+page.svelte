@@ -3,23 +3,25 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { t } from '$lib/i18n';
-  import { api, type IMProviderConfig, type IdentitySource } from '$lib/api';
-  import { Check, Trash2, X } from 'lucide-svelte';
-  import Toast from '$lib/components/ui/Toast.svelte';
+  import { api, type FeishuIdentitySourceConfig, type IdentitySource } from '$lib/api';
+  import { Trash2 } from 'lucide-svelte';
+  import { Switch } from '@skeletonlabs/skeleton-svelte';
+  import IdConfirmDialog from '$lib/components/ui/IdConfirmDialog.svelte';
+  import { notifyError, notifySuccess } from '$lib/toast';
 
   let sources: IdentitySource[] = [];
-  let config: IMProviderConfig | null = null;
+  let config: FeishuIdentitySourceConfig | null = null;
   let providerSource: IdentitySource | null = null;
   let loading = true;
   let configSaving = false;
   let creatingSource = false;
   let providerSyncing: 'full' | 'incremental' | null = null;
   let pendingDeleteId = '';
-  let message = '';
   let error = '';
   let appId = '';
   let appSecret = '';
   let enableSync = false;
+  let oauthRedirectUri = '';
 
   const identitySourceStatusLabel = (value: string): string => t(`identitySources.status.${value}`, value);
 
@@ -27,18 +29,28 @@
     loading = true;
     error = '';
     try {
-      const [data, providerList] = await Promise.all([
-        api.listIdentitySources({ limit: 200 }),
-        api.listIMProviderConfigs(),
-      ]);
+      const data = await api.listIdentitySources({ limit: 200 });
       sources = data.items || data.sources || [];
-      config = providerList.find((item) => item.provider === 'feishu') || null;
       providerSource = sources.find((item) => item.type === 'feishu') || null;
+    } catch {
+      notifyError(t('identitySources.fetchFailed'));
+      sources = [];
+      providerSource = null;
+    }
+
+    try {
+      config = await api.getFeishuIdentitySourceConfig();
       appId = (config?.config?.app_id as string) || '';
       appSecret = (config?.config?.app_secret as string) || '';
       enableSync = config?.sync_enabled ?? providerSource?.sync_enabled ?? false;
+      oauthRedirectUri = config?.redirect_uri || '';
     } catch {
-      error = t('identitySources.fetchFailed');
+      config = null;
+      appId = '';
+      appSecret = '';
+      enableSync = providerSource?.sync_enabled ?? false;
+      oauthRedirectUri = '';
+      notifyError(t('identitySources.configFetchFailed'));
     } finally {
       loading = false;
     }
@@ -48,17 +60,16 @@
     if (providerSource || creatingSource) return;
     creatingSource = true;
     error = '';
-    message = '';
     try {
       await api.createIdentitySource({
         type: 'feishu',
         name: t('identitySources.feishuSourceName'),
         sync_enabled: false,
       });
-      message = t('common.createSuccess');
+      notifySuccess(t('common.createSuccess'));
       await fetchSources();
     } catch {
-      error = t('identitySources.saveFailed');
+      notifyError(t('identitySources.saveFailed'));
     } finally {
       creatingSource = false;
     }
@@ -80,18 +91,17 @@
   const saveFeishuConfig = async () => {
     configSaving = true;
     error = '';
-    message = '';
     const hasOAuthInput = appId.trim() !== '' || appSecret.trim() !== '';
     const oauthAlreadyConfigured = config?.oauth_configured ?? false;
 
     if (!providerSource) {
-      error = t('identitySources.feishuSourceRequired');
+      notifyError(t('identitySources.feishuSourceRequired'));
       configSaving = false;
       return;
     }
 
     if (hasOAuthInput && (!appId.trim() || (!appSecret.trim() && !oauthAlreadyConfigured))) {
-      error = t('integrations.feishuConfigIncomplete');
+      notifyError(t('identitySources.feishuConfigIncomplete'));
       configSaving = false;
       return;
     }
@@ -104,7 +114,7 @@
         ...(appSecret.trim() ? { app_secret: appSecret.trim() } : {}),
       };
 
-      config = await api.upsertIMProviderConfig('feishu', {
+      config = await api.upsertFeishuIdentitySourceConfig({
         provider: 'feishu',
         display_name: t('identitySources.type.feishu'),
         status: enableSync ? 'active' : 'disabled',
@@ -113,10 +123,10 @@
         config: nextConfig,
       });
       await ensureFeishuSource();
-      message = t('integrations.saveSuccess');
+      notifySuccess(t('identitySources.configSaveSuccess'));
       await fetchSources();
     } catch {
-      error = t('integrations.saveFailed');
+      notifyError(t('identitySources.configSaveFailed'));
     } finally {
       configSaving = false;
     }
@@ -125,13 +135,12 @@
   const runProviderSync = async (mode: 'full' | 'incremental') => {
     providerSyncing = mode;
     error = '';
-    message = '';
     try {
       const currentSource = await ensureFeishuSource();
       await api.triggerSourceSync(currentSource.id, mode);
-      message = mode === 'full' ? t('integrations.fullSyncStarted') : t('integrations.incrementalSyncStarted');
+      notifySuccess(mode === 'full' ? t('identitySources.fullSyncStarted') : t('identitySources.incrementalSyncStarted'));
     } catch {
-      error = t('integrations.syncFailed');
+      notifyError(t('identitySources.syncFailed'));
     } finally {
       providerSyncing = null;
     }
@@ -139,23 +148,19 @@
 
   const removeSource = async (id: string) => {
     error = '';
-    message = '';
     try {
       await api.deleteIdentitySource(id);
       pendingDeleteId = '';
-      message = t('common.deleteSuccess');
+      notifySuccess(t('common.deleteSuccess'));
       await fetchSources();
     } catch {
-      error = t('common.deleteFailed');
+      notifyError(t('common.deleteFailed'));
     }
   };
 
-  const confirmRemoveCurrentSource = () => {
-    if (!providerSource) return;
-    pendingDeleteId = providerSource.id;
-  };
-
-  onMount(fetchSources);
+  onMount(() => {
+    void fetchSources();
+  });
 
   $: oauthConfigured = config?.oauth_configured ?? false;
 </script>
@@ -165,11 +170,6 @@
 </svelte:head>
 
 <section class="space-y-4">
-  <Toast {message} />
-  {#if error}
-    <aside class="alert preset-tonal-error" role="alert"><p>{error}</p></aside>
-  {/if}
-
   {#if loading}
     <section class="card bg-surface-50-950 border border-surface-200-800 p-6 text-center text-sm text-surface-500">{t('common.loading')}</section>
   {:else if providerSource}
@@ -187,34 +187,37 @@
 
         <div class="grid gap-3 md:grid-cols-2">
           <label class="block">
-            <span class="text-sm text-surface-500">{t('integrations.appId')}</span>
-            <input class="input w-full" type="text" bind:value={appId} placeholder={t('integrations.appIdPlaceholder')} />
+            <span class="text-sm text-surface-500">{t('identitySources.appId')}</span>
+            <input class="input w-full" type="text" bind:value={appId} placeholder={t('identitySources.appIdPlaceholder')} />
           </label>
           <label class="block">
-            <span class="text-sm text-surface-500">{t('integrations.appSecret')}</span>
-            <input class="input w-full" type="text" bind:value={appSecret} placeholder={t('integrations.appSecretPlaceholder')} autocomplete="off" />
+            <span class="text-sm text-surface-500">{t('identitySources.appSecret')}</span>
+            <input class="input w-full" type="text" bind:value={appSecret} placeholder={t('identitySources.appSecretPlaceholder')} autocomplete="off" />
           </label>
         </div>
 
         <label class="block">
-          <span class="text-sm text-surface-500">{t('integrations.oauthRedirectUri')}</span>
-          <input class="input w-full" type="url" value={''} disabled placeholder={t('integrations.oauthRedirectUriPlaceholder')} />
+          <span class="text-sm text-surface-500">{t('identitySources.oauthRedirectUri')}</span>
+          <input class="input w-full font-mono text-sm" type="url" value={oauthRedirectUri} readonly />
         </label>
 
-        <label class="flex items-center gap-2">
-          <input type="checkbox" bind:checked={enableSync} />
-          <span class="text-sm">{t('integrations.enableSync')}</span>
-        </label>
+        <Switch checked={enableSync} onCheckedChange={(details) => (enableSync = details.checked)} class="inline-flex items-center gap-2">
+          <Switch.HiddenInput />
+          <Switch.Control class="relative inline-flex h-5 w-9 items-center rounded-full bg-surface-300-700 transition-colors data-[state=checked]:bg-primary-500">
+            <Switch.Thumb class="block size-4 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-4" />
+          </Switch.Control>
+          <Switch.Label class="text-sm">{t('identitySources.enableSync')}</Switch.Label>
+        </Switch>
 
         <div class="flex flex-wrap gap-2">
           <button class="btn btn-sm preset-filled-primary-500" disabled={configSaving} type="submit">
             {configSaving ? t('common.loading') : t('identitySources.saveFeishuConfig')}
           </button>
           <button class="btn btn-sm preset-outlined-surface-500" type="button" disabled={providerSyncing !== null || configSaving} on:click={() => void runProviderSync('full')}>
-            {providerSyncing === 'full' ? t('common.loading') : t('integrations.fullSync')}
+            {providerSyncing === 'full' ? t('common.loading') : t('identitySources.fullSync')}
           </button>
           <button class="btn btn-sm preset-outlined-surface-500" type="button" disabled={providerSyncing !== null || configSaving} on:click={() => void runProviderSync('incremental')}>
-            {providerSyncing === 'incremental' ? t('common.loading') : t('integrations.incrementalSync')}
+            {providerSyncing === 'incremental' ? t('common.loading') : t('identitySources.incrementalSync')}
           </button>
         </div>
       </form>
@@ -225,38 +228,21 @@
             <h2 class="text-sm font-semibold text-surface-950-50">{t('identitySources.configBoundaryTitle')}</h2>
             <p class="mt-1 text-xs leading-5 text-surface-600-400">{t('identitySources.configBoundaryDescription')}</p>
           </div>
-          <div class="relative shrink-0">
-            <button
-              class="btn btn-xs preset-outlined-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
-              type="button"
-              on:click={confirmRemoveCurrentSource}
-              aria-label={t('common.delete')}
+          <div class="shrink-0">
+            <IdConfirmDialog
+              open={pendingDeleteId === providerSource.id}
+              triggerLabel={t('common.delete')}
               title={t('common.delete')}
+              message={t('identitySources.deleteConfirm')}
+              confirmLabel={t('common.confirmDelete')}
+              triggerClass="btn btn-xs preset-outlined-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
+              onOpenChange={(open) => (pendingDeleteId = open ? providerSource?.id || '' : '')}
+              onConfirm={() => providerSource && void removeSource(providerSource.id)}
             >
-              <Trash2 class="size-4" aria-hidden="true" />
-            </button>
-            {#if pendingDeleteId === providerSource.id}
-              <div class="absolute right-full top-1/2 z-10 mr-1 flex -translate-y-1/2 items-center gap-1 rounded-container border border-surface-200-800 bg-surface-50-950 p-1 shadow-lg">
-                <button
-                  class="btn btn-xs preset-filled-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
-                  type="button"
-                  on:click={() => providerSource && void removeSource(providerSource.id)}
-                  aria-label={t('common.confirmDelete')}
-                  title={t('common.confirmDelete')}
-                >
-                  <Check class="size-4" aria-hidden="true" />
-                </button>
-                <button
-                  class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
-                  type="button"
-                  on:click={() => (pendingDeleteId = '')}
-                  aria-label={t('common.cancel')}
-                  title={t('common.cancel')}
-                >
-                  <X class="size-4" aria-hidden="true" />
-                </button>
-              </div>
-            {/if}
+              {#snippet trigger()}
+                <Trash2 class="size-4" aria-hidden="true" />
+              {/snippet}
+            </IdConfirmDialog>
           </div>
         </div>
         <dl class="mt-3 grid gap-2 text-xs">

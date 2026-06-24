@@ -103,7 +103,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		authHandler.SetEphemeralStore(ephemeralStore)
 		routerOptions = append(routerOptions, authHandler.RegisterRoutes)
 
-		adminAuthHandler := auth.NewAdminHandler(auth.NewAdminService(pool))
+		adminAuthHandler := auth.NewAdminHandler(auth.NewAdminService(pool), auditService)
 		adminAuthHandler.SetSessionTTL(cfg.SessionTTL)
 		adminAuthHandler.SetEphemeralStore(ephemeralStore)
 		routerOptions = append(routerOptions, adminAuthHandler.RegisterRoutes)
@@ -118,7 +118,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		routerOptions = append(routerOptions, adminHandler.RegisterRoutes)
 
 		// Config service (IM providers)
-		configService, err := adminapi.NewConfigService(queries)
+		configService, err := adminapi.NewConfigService(queries, cfg.FeishuRedirectURI)
 		if err != nil {
 			closeFn()
 			return nil, err

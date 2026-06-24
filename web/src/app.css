@@ -1,7 +1,6 @@
 @import 'tailwindcss';
 @import '@skeletonlabs/skeleton';
 @import '@skeletonlabs/skeleton/themes/concord';
-@import '@keenmate/svelte-treeview/styles.css';
 
 /* Dark mode variant: [data-mode="dark"] on <html> */
 @custom-variant dark (&:where([data-mode="dark"] *));
@@ -699,31 +698,48 @@ p { color: var(--color-surface-500); text-wrap: pretty; font-size: 0.875rem; lin
 	gap: 8px;
 }
 
-.compact-pill-row {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
+.compact-segmented-control-track {
+	display: inline-flex;
+	width: fit-content;
+	max-width: 100%;
+	align-items: center;
+	gap: 3px;
+	border: 1px solid var(--color-surface-200-800);
+	border-radius: 999px;
+	background: var(--color-surface-100-900);
+	padding: 3px;
 }
 
-.compact-pill {
+.compact-segmented-control-item {
 	display: inline-flex;
-	height: 26px;
+	height: 24px;
+	min-width: 32px;
 	align-items: center;
 	justify-content: center;
 	gap: 4px;
-	border: 1px solid var(--color-surface-200-800);
 	border-radius: 999px;
-	padding: 0 9px;
-	background: transparent;
+	padding: 0 8px;
 	color: var(--color-surface-700-300);
 	font-size: 0.72rem;
+	font-weight: 600;
 	line-height: 1;
+	cursor: pointer;
+	transition:
+		background-color 0.15s ease,
+		color 0.15s ease;
 }
 
-.compact-pill.active {
-	border-color: color-mix(in srgb, var(--idb-accent) 44%, transparent);
-	background: color-mix(in srgb, var(--idb-accent) 12%, transparent);
+.compact-segmented-control-item:hover,
+.compact-segmented-control-item:focus-visible {
+	color: var(--color-surface-950-50);
+	outline: none;
+}
+
+.compact-segmented-control-item[data-state='checked'],
+.compact-segmented-control-item[data-checked] {
+	background: var(--color-surface-50-950);
 	color: var(--idb-accent-strong);
+	box-shadow: var(--idb-shadow-card);
 }
 
 .preset-filled-primary-500 {
@@ -766,6 +782,49 @@ p { color: var(--color-surface-500); text-wrap: pretty; font-size: 0.875rem; lin
 
 .card.overflow-hidden > .card {
 	margin: 1rem;
+}
+
+.organization-tree {
+	--org-tree-row-text: var(--color-surface-800);
+	--org-tree-row-muted: var(--color-surface-500);
+	--org-tree-row-hover-bg: color-mix(in srgb, var(--idb-accent) 7%, var(--idb-panel-bg));
+	--org-tree-row-active-bg: color-mix(in srgb, var(--idb-accent) 11%, var(--idb-panel-bg));
+	--org-tree-row-active-text: var(--color-surface-950);
+	--org-tree-line: color-mix(in srgb, var(--idb-border) 78%, transparent);
+}
+
+:root[data-mode='dark'] .organization-tree {
+	--org-tree-row-text: var(--color-surface-200);
+	--org-tree-row-muted: var(--color-surface-400);
+	--org-tree-row-hover-bg: color-mix(in srgb, var(--idb-accent) 12%, var(--idb-panel-bg));
+	--org-tree-row-active-bg: color-mix(in srgb, var(--idb-accent) 18%, var(--idb-panel-bg));
+	--org-tree-row-active-text: var(--color-surface-50);
+	--org-tree-line: color-mix(in srgb, var(--idb-border) 82%, transparent);
+}
+
+.organization-tree .organization-tree-row {
+	color: var(--org-tree-row-text);
+}
+
+.organization-tree .organization-tree-muted {
+	color: var(--org-tree-row-muted);
+}
+
+.organization-tree .organization-tree-line {
+	border-color: var(--org-tree-line);
+}
+
+.organization-tree .organization-tree-row:hover,
+.organization-tree .organization-tree-row[aria-expanded='true'],
+.organization-tree .organization-tree-row[data-selected],
+.organization-tree .organization-tree-row[data-state='open'],
+.organization-tree .organization-tree-row[data-state='selected'] {
+	background: var(--org-tree-row-active-bg);
+	color: var(--org-tree-row-active-text);
+}
+
+.organization-tree .organization-tree-row:hover {
+	background: var(--org-tree-row-hover-bg);
 }
 
 @media (max-width: 920px) {

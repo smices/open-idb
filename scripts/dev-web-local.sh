@@ -249,6 +249,7 @@ start_backend() {
     export IDB_HTTP_ADDR=':${BACKEND_PORT}'
     export IDB_OIDC_ISSUER='http://localhost:${BACKEND_PORT}'
     export IDB_WEB_BASE_URL='http://localhost:${WEB_PORT}'
+    export IDB_FEISHU_REDIRECT_URI='http://localhost:${WEB_PORT}/api/auth/feishu/callback'
     go run ./cmd/idbridge
   " >"$BACKEND_LOG" 2>&1 &
   echo $! >"$BACKEND_PID"

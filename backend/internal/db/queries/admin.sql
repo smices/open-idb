@@ -39,20 +39,6 @@ RETURNING id, entity_id, username, display_name, email, phone, avatar_url, lifec
 
 -- === Directory Users ===
 
--- name: ListDirectoryUsers :many
-SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
-FROM directory_users
-WHERE entity_id = $1
-  AND (sqlc.narg('source_id')::text IS NULL OR source_id = sqlc.narg('source_id')::text)
-ORDER BY created_at DESC
-LIMIT $2 OFFSET $3;
-
--- name: CountDirectoryUsers :one
-SELECT count(*)::bigint
-FROM directory_users
-WHERE entity_id = $1
-  AND (sqlc.narg('source_id')::text IS NULL OR source_id = sqlc.narg('source_id')::text);
-
 -- name: GetDirectoryUserByID :one
 SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
 FROM directory_users

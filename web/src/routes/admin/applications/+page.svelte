@@ -2,14 +2,15 @@
 
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Check, Copy, KeyRound, Plus, Settings, Trash2, X } from 'lucide-svelte';
+  import { Copy, KeyRound, Plus, Settings, Trash2 } from 'lucide-svelte';
   import { t } from '$lib/i18n';
   import { api, type Application, type OIDCClient } from '$lib/api';
-  import Toast from '$lib/components/ui/Toast.svelte';
+  import IdConfirmDialog from '$lib/components/ui/IdConfirmDialog.svelte';
+  import IdModal from '$lib/components/ui/IdModal.svelte';
+  import { notifySuccess } from '$lib/toast';
 
   let apps: Application[] = [];
   let loading = true;
-  let message = '';
   let error = '';
   let pendingDeleteKey = '';
 
@@ -17,7 +18,7 @@
   let appType = 'oidc_client';
   let appStatus = 'active';
   let appEditingId = '';
-  let drawerOpen = false;
+  let dialogOpen = false;
   let saving = false;
   let oidcClient: OIDCClient | null = null;
   let oidcLoading = false;
@@ -104,8 +105,7 @@
     appStatus = 'active';
     resetOIDCForm();
     error = '';
-    message = '';
-    drawerOpen = true;
+    dialogOpen = true;
   };
 
   const openEditApp = async (item: Application) => {
@@ -116,22 +116,15 @@
     appStatus = item.status;
     resetOIDCForm();
     error = '';
-    message = '';
-    drawerOpen = true;
+    dialogOpen = true;
     if (item.type === 'oidc_client') {
       await loadOIDCConfig(item.id);
     }
   };
 
-  const closeDrawer = () => {
-    drawerOpen = false;
+  const closeDialog = () => {
+    dialogOpen = false;
     appEditingId = '';
-  };
-
-  const handleDialogKeydown = (event: KeyboardEvent) => {
-    if (event.key === 'Escape' && drawerOpen) {
-      closeDrawer();
-    }
   };
 
   const copyText = async (value?: string) => {
@@ -155,7 +148,6 @@
 
     saving = true;
     error = '';
-    message = '';
 
     try {
       let savedApp: Application;
@@ -193,12 +185,12 @@
           oidcStatus = result.client.status || 'active';
         }
       }
-      message = t('applications.saveSuccess');
+      notifySuccess(t('applications.saveSuccess'));
       if (shouldSaveOIDC) {
         appEditingId = savedApp.id;
         appStatus = savedApp.status;
       } else {
-        drawerOpen = false;
+        dialogOpen = false;
       }
       await loadApplications();
     } catch {
@@ -212,7 +204,7 @@
     try {
       await api.deleteApplication(id);
       pendingDeleteKey = '';
-      message = t('applications.deleteSuccess');
+      notifySuccess(t('applications.deleteSuccess'));
       await loadApplications();
     } catch {
       error = t('applications.deleteFailed');
@@ -223,12 +215,11 @@
     if (!oidcClient) return;
     saving = true;
     error = '';
-    message = '';
     try {
       const result = await api.rotateOIDCClientSecret(oidcClient.id);
       oidcClient = result.client;
       oidcClientSecret = result.client.client_secret || result.client_secret || '';
-      message = t('applications.secretRotated');
+      notifySuccess(t('applications.secretRotated'));
     } catch {
       error = t('applications.saveFailed');
     } finally {
@@ -245,8 +236,6 @@
   <title>{t('applications.title')}</title>
 </svelte:head>
 
-<svelte:window on:keydown={handleDialogKeydown} />
-
 <section class="space-y-4">
   <div class="flex items-center justify-end">
     <button class="btn btn-sm preset-filled-primary-500 gap-1.5" type="button" on:click={openCreateApp}>
@@ -255,7 +244,6 @@
     </button>
   </div>
 
-  <Toast {message} />
   {#if error}
     <aside class="alert preset-tonal-error" role="alert"><p>{error}</p></aside>
   {/if}
@@ -303,37 +291,18 @@
                     >
                       <Settings class="size-4" aria-hidden="true" />
                     </button>
-                    <button
-                      class="btn btn-xs preset-outlined-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
-                      type="button"
-                      on:click={() => (pendingDeleteKey = `application:${app.id}`)}
-                      aria-label={t('common.delete')}
-                      title={t('common.delete')}
+                    <IdConfirmDialog
+                      open={pendingDeleteKey === `application:${app.id}`}
+                      triggerLabel={t('common.delete')}
+                      confirmLabel={t('common.confirmDelete')}
+                      triggerClass="btn btn-xs preset-outlined-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
+                      onOpenChange={(open) => (pendingDeleteKey = open ? `application:${app.id}` : '')}
+                      onConfirm={() => void deleteApplication(app.id)}
                     >
-                      <Trash2 class="size-4" aria-hidden="true" />
-                    </button>
-                    {#if pendingDeleteKey === `application:${app.id}`}
-                      <div class="absolute right-full top-1/2 z-10 mr-1 flex -translate-y-1/2 items-center gap-1 rounded-container border border-surface-200-800 bg-surface-50-950 p-1 shadow-lg">
-                        <button
-                          class="btn btn-xs preset-filled-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
-                          type="button"
-                          on:click={() => void deleteApplication(app.id)}
-                          aria-label={t('common.confirmDelete')}
-                          title={t('common.confirmDelete')}
-                        >
-                          <Check class="size-4" aria-hidden="true" />
-                        </button>
-                        <button
-                          class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
-                          type="button"
-                          on:click={() => (pendingDeleteKey = '')}
-                          aria-label={t('common.cancel')}
-                          title={t('common.cancel')}
-                        >
-                          <X class="size-4" aria-hidden="true" />
-                        </button>
-                      </div>
-                    {/if}
+                      {#snippet trigger()}
+                        <Trash2 class="size-4" aria-hidden="true" />
+                      {/snippet}
+                    </IdConfirmDialog>
                   </div>
                 </td>
               </tr>
@@ -345,32 +314,14 @@
   </section>
 </section>
 
-{#if drawerOpen}
-  <div class="fixed inset-0 z-40 bg-surface-950/55 backdrop-blur-sm" aria-hidden="true" on:click={closeDrawer}></div>
-  <div class="fixed inset-y-0 right-0 z-50 flex w-full justify-end" role="dialog" aria-modal="true" aria-labelledby="application-drawer-title" tabindex="-1">
-    <form
-      class="flex h-full w-full max-w-lg flex-col border-l border-surface-200-800 bg-surface-50-950 text-surface-950-50 shadow-2xl"
-      on:submit|preventDefault={saveApplication}
-    >
-      <header class="flex items-center justify-between gap-3 border-b border-surface-200-800 px-5 py-4">
-        <div>
-          <h2 id="application-drawer-title" class="text-base font-semibold">{appEditingId ? t('applications.editTitle') : t('applications.createTitle')}</h2>
-          {#if appEditingId}
-            <p class="mt-1 max-w-72 truncate text-xs text-surface-500">{appEditingId}</p>
-          {/if}
-        </div>
-        <button
-          class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
-          type="button"
-          on:click={closeDrawer}
-          aria-label={t('common.close')}
-          title={t('common.close')}
-        >
-          <X class="size-4" aria-hidden="true" />
-        </button>
-      </header>
-
-      <div class="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+<IdModal
+  open={dialogOpen}
+  title={appEditingId ? t('applications.editTitle') : t('applications.createTitle')}
+  subtitle={appEditingId}
+  maxWidth="max-w-3xl"
+  onClose={closeDialog}
+>
+  <form id="application-dialog-form" class="space-y-4" on:submit|preventDefault={saveApplication}>
         <section class="grid gap-3 sm:grid-cols-2">
           <label class="block sm:col-span-2">
             <span class="text-xs text-surface-500">{t('applications.name')}</span>
@@ -503,14 +454,12 @@
             {/if}
           </section>
         {/if}
-      </div>
+  </form>
 
-      <footer class="flex justify-end gap-2 border-t border-surface-200-800 bg-surface-100-900 px-5 py-4">
-        <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={closeDrawer}>{t('common.cancel')}</button>
-        <button class="btn btn-sm preset-filled-primary-500" type="submit" disabled={saving || oidcLoading || appName.trim() === ''}>
-          {saving ? t('common.loading') : t('common.save')}
-        </button>
-      </footer>
-    </form>
-  </div>
-{/if}
+  {#snippet footer()}
+    <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={closeDialog}>{t('common.cancel')}</button>
+    <button class="btn btn-sm preset-filled-primary-500" type="submit" form="application-dialog-form" disabled={saving || oidcLoading || appName.trim() === ''}>
+      {saving ? t('common.loading') : t('common.save')}
+    </button>
+  {/snippet}
+</IdModal>
