@@ -235,7 +235,7 @@
               title={t('common.delete')}
               message={t('identitySources.deleteConfirm')}
               confirmLabel={t('common.confirmDelete')}
-              triggerClass="btn btn-xs preset-outlined-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
+              triggerClass="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
               onOpenChange={(open) => (pendingDeleteId = open ? providerSource?.id || '' : '')}
               onConfirm={() => providerSource && void removeSource(providerSource.id)}
             >

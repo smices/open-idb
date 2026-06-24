@@ -21,6 +21,7 @@
         if (value.length <= 8) return value;
         return `${value.slice(0, 4)}...${value.slice(-4)}`;
     };
+    const isValidPassword = (value: string): boolean => value.length >= 6 && /[A-Za-z]/.test(value) && /\d/.test(value);
 
     const saveProfile = async () => {
         profileError = "";
@@ -52,7 +53,7 @@
             passwordError = t("profile.currentPasswordRequired");
             return;
         }
-        if (newPassword.length < 12) {
+        if (!isValidPassword(newPassword)) {
             passwordError = t("profile.passwordTooShort");
             return;
         }

@@ -6,7 +6,7 @@
   import { t } from '$lib/i18n';
   import IdConfirmDialog from '$lib/components/ui/IdConfirmDialog.svelte';
   import IdModal from '$lib/components/ui/IdModal.svelte';
-  import { notifySuccess } from '$lib/toast';
+  import { notifyError, notifySuccess } from '$lib/toast';
   import { KeyRound, Pencil, Plus, Trash2 } from 'lucide-svelte';
 
   type DialogMode = 'create' | 'edit' | 'password';
@@ -36,6 +36,15 @@
   const statusLabel = (value: string) => {
     return t(`adminUsers.status.${value}`, value);
   };
+  const actionErrorMessage = (err: unknown, fallback: string): string => {
+    const message = err instanceof Error ? err.message : '';
+    if (message.includes('password does not meet minimum strength requirements')) {
+      return t('adminUsers.passwordTooWeak');
+    }
+    return message || fallback;
+  };
+  const isStrongPassword = (value: string): boolean =>
+    value.length >= 6 && /[A-Za-z]/.test(value) && /\d/.test(value);
 
   const loadData = async () => {
     loading = true;
@@ -105,6 +114,11 @@
   };
 
   const saveAdmin = async () => {
+    if ((dialogMode === 'create' || dialogMode === 'password') && !isStrongPassword(formPassword)) {
+      notifyError(t('adminUsers.passwordTooWeak'));
+      return;
+    }
+
     saving = true;
     error = '';
     try {
@@ -137,7 +151,7 @@
       closeDialog();
       await loadData();
     } catch (err) {
-      error = err instanceof Error ? err.message : t('adminUsers.saveFailed');
+      notifyError(actionErrorMessage(err, t('adminUsers.saveFailed')));
     } finally {
       saving = false;
     }
@@ -153,7 +167,7 @@
       notifySuccess(t('adminUsers.deleted'));
       await loadData();
     } catch (err) {
-      error = err instanceof Error ? err.message : t('adminUsers.deleteFailed');
+      notifyError(actionErrorMessage(err, t('adminUsers.deleteFailed')));
     } finally {
       saving = false;
     }
@@ -168,7 +182,7 @@
 
 <section class="space-y-4">
   <div class="flex justify-end">
-    <button class="btn btn-sm preset-filled-primary-500 gap-1.5" type="button" on:click={openCreate}>
+    <button class="btn btn-sm preset-filled-primary-500 gap-1.5" type="button" onclick={openCreate}>
       <Plus class="size-4" aria-hidden="true" />
       {t('common.add')}
     </button>
@@ -206,7 +220,6 @@
                     {#if admin.email}
                       <span>{admin.email}</span>
                     {/if}
-                    <span class="font-mono">{admin.id}</span>
                   </div>
                 </td>
                 <td>{roleLabel(admin.role)}</td>
@@ -220,18 +233,18 @@
                 <td class="whitespace-nowrap text-sm">{new Date(admin.updated_at).toLocaleString()}</td>
                 <td class="text-right">
                   <div class="relative inline-flex items-center justify-end gap-1">
-                    <button class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0" type="button" on:click={() => openPassword(admin)} aria-label={t('adminUsers.changePassword')} title={t('adminUsers.changePassword')}>
+                    <button class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0" type="button" onclick={() => openPassword(admin)} aria-label={t('adminUsers.changePassword')} title={t('adminUsers.changePassword')}>
                       <KeyRound class="size-4" aria-hidden="true" />
                     </button>
                     {#if !admin.protected}
-                      <button class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0" type="button" on:click={() => openEdit(admin)} aria-label={t('common.edit')} title={t('common.edit')}>
+                      <button class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0" type="button" onclick={() => openEdit(admin)} aria-label={t('common.edit')} title={t('common.edit')}>
                         <Pencil class="size-4" aria-hidden="true" />
                       </button>
                       <IdConfirmDialog
                         open={confirmDeleteId === admin.id}
                         triggerLabel={t('common.delete')}
                         confirmLabel={t('common.confirmDelete')}
-                        triggerClass="btn btn-xs preset-outlined-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
+                        triggerClass="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
                         disabled={saving}
                         onOpenChange={(open) => (confirmDeleteId = open ? admin.id : '')}
                         onConfirm={() => deleteAdmin(admin)}
@@ -258,7 +271,14 @@
   subtitle={editing?.username || t('adminUsers.loginAccount')}
   onClose={closeDialog}
 >
-  <form id="admin-user-dialog-form" class="space-y-4" on:submit|preventDefault={saveAdmin}>
+  <form
+    id="admin-user-dialog-form"
+    class="space-y-4"
+    onsubmit={(event) => {
+      event.preventDefault();
+      saveAdmin();
+    }}
+  >
     {#if dialogMode !== 'password'}
       <label class="block">
         <span class="text-sm text-surface-500">{t('adminUsers.loginAccount')}</span>
@@ -310,14 +330,14 @@
     {#if dialogMode === 'create' || dialogMode === 'password'}
       <label class="block">
         <span class="text-sm text-surface-500">{t('adminUsers.newPassword')}</span>
-        <input class="input h-9 w-full bg-surface-50-950" type="password" bind:value={formPassword} required minlength="12" autocomplete="new-password" />
+        <input class="input h-9 w-full bg-surface-50-950" type="password" bind:value={formPassword} required autocomplete="new-password" />
       </label>
       <p class="text-xs text-surface-500">{t('adminUsers.passwordHelp')}</p>
     {/if}
   </form>
 
   {#snippet footer()}
-    <button class="btn btn-sm preset-outlined-surface-500" type="button" on:click={closeDialog}>{t('common.cancel')}</button>
-    <button class="btn btn-sm preset-filled-primary-500" type="submit" form="admin-user-dialog-form" disabled={saving}>{saving ? t('common.loading') : t('common.save')}</button>
+    <button class="btn btn-sm preset-outlined-surface-500" type="button" onclick={closeDialog}>{t('common.cancel')}</button>
+    <button class="btn btn-sm preset-filled-primary-500" type="button" disabled={saving} onclick={saveAdmin}>{saving ? t('common.loading') : t('common.save')}</button>
   {/snippet}
 </IdModal>

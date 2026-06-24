@@ -8,7 +8,7 @@
   import { api, type User, type Role, type UserSession, type AccountBinding } from '$lib/api';
   import { Check, Plus, Power, Search, Trash2, X } from 'lucide-svelte';
   import IdConfirmDialog from '$lib/components/ui/IdConfirmDialog.svelte';
-  import { notifySuccess } from '$lib/toast';
+  import { notifyError, notifySuccess } from '$lib/toast';
 
   let userId = '';
   let user: User | null = null;
@@ -130,7 +130,7 @@
       await refreshUser();
       pendingStatusChange = false;
     } catch {
-      error = t('users.saveFailed');
+      notifyError(t('users.saveFailed'));
     }
   };
 
@@ -144,7 +144,7 @@
       notifySuccess(t('users.roleAssigned'));
       await loadRoles();
     } catch {
-      error = t('users.saveFailed');
+      notifyError(t('users.saveFailed'));
     }
   };
 
@@ -157,7 +157,7 @@
       notifySuccess(t('users.roleRemoved'));
       await loadRoles();
     } catch {
-      error = t('users.saveFailed');
+      notifyError(t('users.saveFailed'));
     }
   };
 
@@ -169,7 +169,7 @@
       notifySuccess(t('users.sessionRevoked'));
       await loadSessions();
     } catch {
-      error = t('users.sessionRevokeFailed');
+      notifyError(t('users.sessionRevokeFailed'));
     }
   };
 
@@ -194,7 +194,7 @@
       notifySuccess(t('users.bindingCreated'));
       await loadBindings();
     } catch {
-      error = t('users.bindingCreateFailed');
+      notifyError(t('users.bindingCreateFailed'));
     } finally {
       bindingSaving = false;
     }
@@ -218,7 +218,7 @@
       notifySuccess(t('users.bindingDeleted'));
       await loadBindings();
     } catch {
-      error = t('users.bindingDeleteFailed');
+      notifyError(t('users.bindingDeleteFailed'));
     }
   };
 
@@ -364,10 +364,6 @@
             <dd class="font-medium">{localeLabel(normalizeLocale())}</dd>
           </div>
           <div>
-            <dt class="text-surface-500">{t('users.primarySourceId')}</dt>
-            <dd class="break-all font-mono text-xs">{user.primary_source_id || '-'}</dd>
-          </div>
-          <div>
             <dt class="text-surface-500">{t('users.avatar')}</dt>
             <dd class="break-all">{user.avatar_url || '-'}</dd>
           </div>
@@ -412,12 +408,12 @@
                   <div class="flex justify-between items-center">
                     <div class="min-w-0">
                       <div class="font-medium">{role.name}</div>
-                      <div class="truncate text-xs text-surface-500">{role.code} · {role.description || role.id}</div>
+                      <div class="truncate text-xs text-surface-500">{role.description ? `${role.code} · ${role.description}` : role.code}</div>
                     </div>
                     <IdConfirmDialog
                       open={pendingRoleDeleteId === role.id}
                       triggerLabel={t('common.delete')}
-                      triggerClass="btn preset-tonal-error btn-xs"
+                      triggerClass="btn btn-xs preset-outlined-surface-500"
                       onOpenChange={(open) => (pendingRoleDeleteId = open ? role.id : '')}
                       onConfirm={() => void onRemoveRole(role.id)}
                     >
@@ -488,7 +484,7 @@
                       <IdConfirmDialog
                         open={pendingSessionRevokeId === session.id}
                         triggerLabel={t('users.revokeSession')}
-                        triggerClass="btn preset-tonal-error btn-xs"
+                        triggerClass="btn btn-xs preset-outlined-surface-500"
                         onOpenChange={(open) => (pendingSessionRevokeId = open ? session.id : '')}
                         onConfirm={() => void revokeSession(session)}
                       >
@@ -594,10 +590,7 @@
                   {#each filteredBindings as binding (binding.id)}
                     <tr>
                       <td>
-                        <div class="space-y-1">
-                          <div class="font-medium">{binding.source_name || binding.source_type || '-'}</div>
-                          <div class="max-w-48 truncate text-xs text-surface-500">{binding.source_id}</div>
-                        </div>
+                        <div class="font-medium">{binding.source_name || binding.source_type || '-'}</div>
                       </td>
                       <td class="max-w-64 truncate text-xs text-surface-500">{binding.directory_user_id}</td>
                       <td>
@@ -613,7 +606,7 @@
                           open={pendingBindingDeleteId === binding.id}
                           triggerLabel={t('common.delete')}
                           confirmLabel={t('common.confirmDelete')}
-                          triggerClass="btn btn-xs preset-outlined-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
+                          triggerClass="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
                           onOpenChange={(open) => (pendingBindingDeleteId = open ? binding.id : '')}
                           onConfirm={() => void deleteBinding(binding)}
                         >

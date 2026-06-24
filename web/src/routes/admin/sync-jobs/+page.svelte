@@ -2,13 +2,14 @@
 
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, type SyncJob } from '$lib/api';
+  import { api, type IdentitySource, type SyncJob } from '$lib/api';
   import IdModal from '$lib/components/ui/IdModal.svelte';
   import IdPagination from '$lib/components/ui/IdPagination.svelte';
   import { t } from '$lib/i18n';
   import { FileText, RotateCcw, Search } from 'lucide-svelte';
 
   let jobs: SyncJob[] = [];
+  let identitySources: IdentitySource[] = [];
   let offset = 0;
   let searchTerm = '';
   let loading = true;
@@ -46,10 +47,14 @@
     if (value === null || value === undefined) return '-';
     return JSON.stringify(value);
   };
+  const identitySourceName = (job: SyncJob): string => {
+    const source = identitySources.find((item) => item.id === job.source_id);
+    return source?.name || job.provider || '-';
+  };
   const matchesSearch = (job: SyncJob, query: string): boolean => {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return true;
-    return [job.provider, job.type, job.status, job.source_id, job.trace_id, job.error_message, job.id]
+    return [identitySourceName(job), job.provider, job.type, job.status, job.source_id, job.trace_id, job.error_message, job.id]
       .filter(Boolean)
       .some((value) => String(value).toLowerCase().includes(normalized));
   };
@@ -58,8 +63,13 @@
     loading = true;
     error = '';
     try {
-      const data = await api.listSyncJobs({ limit: 2000, offset: 0 });
-      jobs = data.items || [];
+      const [jobResult, sourceResult] = await Promise.allSettled([
+        api.listSyncJobs({ limit: 2000, offset: 0 }),
+        api.listIdentitySources({ limit: 200 }),
+      ]);
+      if (jobResult.status === 'rejected') throw jobResult.reason;
+      jobs = jobResult.value.items || [];
+      identitySources = sourceResult.status === 'fulfilled' ? (sourceResult.value.items || sourceResult.value.sources || []) : [];
     } catch {
       error = t('syncJobs.fetchFailed');
     } finally {
@@ -139,9 +149,9 @@
             <tr>
               <th>{t('syncJobs.startedAt')}</th>
               <th>{t('syncJobs.provider')}</th>
+              <th>{t('syncJobs.sourceName')}</th>
               <th>{t('syncJobs.type')}</th>
               <th>{t('syncJobs.status')}</th>
-              <th>{t('syncJobs.sourceId')}</th>
               <th>{t('syncJobs.finishedAt')}</th>
               <th>{t('syncJobs.traceId')}</th>
               <th>{t('syncJobs.error')}</th>
@@ -155,11 +165,11 @@
                   <time datetime={item.started_at}>{formatDateTime(item.started_at)}</time>
                 </td>
                 <td>{item.provider || '-'}</td>
+                <td>{identitySourceName(item)}</td>
                 <td>{item.type || '-'}</td>
                 <td>
                   <span class={`badge ${item.status === 'success' ? 'preset-tonal-success' : item.status === 'failed' ? 'preset-tonal-error' : item.status === 'running' ? 'preset-tonal-warning' : 'preset-outlined-surface-500'}`}>{item.status || '-'}</span>
                 </td>
-                <td class="max-w-48 truncate">{item.source_id || '-'}</td>
                 <td class="whitespace-nowrap">
                   <time datetime={item.finished_at || ''}>{formatDateTime(item.finished_at)}</time>
                 </td>
@@ -202,9 +212,9 @@
             <tr>
               <th>{t('syncJobs.startedAt')}</th>
               <th>{t('syncJobs.provider')}</th>
+              <th>{t('syncJobs.sourceName')}</th>
               <th>{t('syncJobs.type')}</th>
               <th>{t('syncJobs.status')}</th>
-              <th>{t('syncJobs.sourceId')}</th>
               <th>{t('syncJobs.finishedAt')}</th>
               <th>{t('syncJobs.traceId')}</th>
               <th>{t('syncJobs.error')}</th>
@@ -218,11 +228,11 @@
                   <time datetime={item.started_at}>{formatDateTime(item.started_at)}</time>
                 </td>
                 <td>{item.provider || '-'}</td>
+                <td>{identitySourceName(item)}</td>
                 <td>{item.type || '-'}</td>
                 <td>
                   <span class={`badge ${item.status === 'success' || item.status === 'succeeded' ? 'preset-tonal-success' : item.status === 'failed' ? 'preset-tonal-error' : 'preset-outlined-surface-500'}`}>{item.status || '-'}</span>
                 </td>
-                <td class="max-w-48 truncate">{item.source_id || '-'}</td>
                 <td class="whitespace-nowrap">
                   <time datetime={item.finished_at || ''}>{formatDateTime(item.finished_at)}</time>
                 </td>

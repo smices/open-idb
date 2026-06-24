@@ -7,7 +7,7 @@
   import { api, type Permission, type Role } from '$lib/api';
   import IdConfirmDialog from '$lib/components/ui/IdConfirmDialog.svelte';
   import IdModal from '$lib/components/ui/IdModal.svelte';
-  import { notifySuccess } from '$lib/toast';
+  import { notifyError, notifySuccess } from '$lib/toast';
 
   let roles: Role[] = [];
   let permissions: Permission[] = [];
@@ -70,7 +70,7 @@
       const assigned = await api.listRolePermissions(role.id);
       rolePermissions = (assigned || []).map((permission) => permission.id);
     } catch {
-      error = t('roles.permissionFetchFailed');
+      notifyError(t('roles.permissionFetchFailed'));
     } finally {
       permissionLoading = false;
     }
@@ -106,7 +106,7 @@
       editingRole = null;
       await loadRoles();
     } catch {
-      error = t(editingRole ? 'roles.updateFailed' : 'roles.createFailed');
+      notifyError(t(editingRole ? 'roles.updateFailed' : 'roles.createFailed'));
     } finally {
       saving = false;
     }
@@ -120,7 +120,7 @@
       notifySuccess(t('roles.deleteSuccess'));
       await loadRoles();
     } catch {
-      error = t('roles.deleteFailed');
+      notifyError(t('roles.deleteFailed'));
     }
   };
 
@@ -137,7 +137,7 @@
       }
       notifySuccess(t('roles.permissionSaveSuccess'));
     } catch {
-      error = t('roles.assignFailed');
+      notifyError(t('roles.assignFailed'));
     }
   };
 
@@ -184,7 +184,6 @@
               <tr>
                 <td>
                   <p class="font-medium">{role.name}</p>
-                  <p class="max-w-64 truncate text-xs text-surface-500">{role.id}</p>
                 </td>
                 <td class="whitespace-nowrap font-mono text-xs text-surface-700-300">{role.code}</td>
                 <td class="max-w-md truncate text-sm text-surface-600-400">{role.description || '-'}</td>
@@ -203,7 +202,7 @@
                       open={pendingDeleteKey === `role:${role.id}`}
                       triggerLabel={t('common.delete')}
                       confirmLabel={t('common.confirmDelete')}
-                      triggerClass="btn btn-xs preset-outlined-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
+                      triggerClass="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
                       onOpenChange={(open) => (pendingDeleteKey = open ? `role:${role.id}` : '')}
                       onConfirm={() => void deleteRole(role)}
                     >

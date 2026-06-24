@@ -7,7 +7,7 @@
   import { api, type Application, type OIDCClient } from '$lib/api';
   import IdConfirmDialog from '$lib/components/ui/IdConfirmDialog.svelte';
   import IdModal from '$lib/components/ui/IdModal.svelte';
-  import { notifySuccess } from '$lib/toast';
+  import { notifyError, notifySuccess } from '$lib/toast';
 
   let apps: Application[] = [];
   let loading = true;
@@ -78,7 +78,7 @@
         oidcStatus = detail.status || 'active';
       }
     } catch {
-      error = t('applications.fetchOidcFailed');
+      notifyError(t('applications.fetchOidcFailed'));
     } finally {
       oidcLoading = false;
     }
@@ -142,7 +142,7 @@
     const shouldSaveOIDC = appType === 'oidc_client';
     const redirectUris = parseListField(oidcRedirectUris);
     if (shouldSaveOIDC && redirectUris.length === 0) {
-      error = t('applications.redirectUrisRequired');
+      notifyError(t('applications.redirectUrisRequired'));
       return;
     }
 
@@ -194,7 +194,7 @@
       }
       await loadApplications();
     } catch {
-      error = t('applications.saveFailed');
+      notifyError(t('applications.saveFailed'));
     } finally {
       saving = false;
     }
@@ -207,7 +207,7 @@
       notifySuccess(t('applications.deleteSuccess'));
       await loadApplications();
     } catch {
-      error = t('applications.deleteFailed');
+      notifyError(t('applications.deleteFailed'));
     }
   };
 
@@ -221,7 +221,7 @@
       oidcClientSecret = result.client.client_secret || result.client_secret || '';
       notifySuccess(t('applications.secretRotated'));
     } catch {
-      error = t('applications.saveFailed');
+      notifyError(t('applications.saveFailed'));
     } finally {
       saving = false;
     }
@@ -270,7 +270,6 @@
               <tr>
                 <td>
                   <p class="font-medium">{app.name}</p>
-                  <p class="max-w-64 truncate text-xs text-surface-500">{app.id}</p>
                 </td>
                 <td class="whitespace-nowrap text-sm">{applicationTypeLabel(app.type)}</td>
                 <td class="w-20 !text-center">
@@ -295,7 +294,7 @@
                       open={pendingDeleteKey === `application:${app.id}`}
                       triggerLabel={t('common.delete')}
                       confirmLabel={t('common.confirmDelete')}
-                      triggerClass="btn btn-xs preset-outlined-error-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
+                      triggerClass="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
                       onOpenChange={(open) => (pendingDeleteKey = open ? `application:${app.id}` : '')}
                       onConfirm={() => void deleteApplication(app.id)}
                     >

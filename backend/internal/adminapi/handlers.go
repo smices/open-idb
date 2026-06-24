@@ -345,14 +345,12 @@ func readUserSession(w http.ResponseWriter, r *http.Request) (auth.Session, bool
 }
 
 func isWeakPassword(password string) bool {
-	if len(password) < 12 {
+	if len(password) < 6 {
 		return true
 	}
-	hasLower := strings.ContainsAny(password, "abcdefghijklmnopqrstuvwxyz")
-	hasUpper := strings.ContainsAny(password, "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	hasLetter := strings.ContainsAny(password, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 	hasDigit := strings.ContainsAny(password, "0123456789")
-	hasSymbol := strings.ContainsAny(password, "!@#$%^&*()-_=+[]{};:,.<>/?")
-	return !(hasLower && hasUpper && hasDigit && hasSymbol)
+	return !(hasLetter && hasDigit)
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload interface{}) {

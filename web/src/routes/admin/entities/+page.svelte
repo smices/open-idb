@@ -5,7 +5,7 @@
   import { t } from '$lib/i18n';
   import { api, type Entity } from '$lib/api';
   import IdModal from '$lib/components/ui/IdModal.svelte';
-  import { notifySuccess } from '$lib/toast';
+  import { notifyError, notifySuccess } from '$lib/toast';
   import { Pencil } from 'lucide-svelte';
 
   const localeOptions = ['en-US', 'zh-CN'];
@@ -99,7 +99,7 @@
       formOpen = false;
       await fetchEntities();
     } catch {
-      error = t('entities.saveFailed');
+      notifyError(t('entities.saveFailed'));
     } finally {
       saving = false;
     }
@@ -144,7 +144,6 @@
               <tr>
                 <td>
                   <p class="font-medium">{entity.name}</p>
-                  <p class="text-xs text-surface-500 break-all">{entity.id}</p>
                 </td>
                 <td class="font-mono text-sm">{entity.slug}</td>
                 <td>

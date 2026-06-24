@@ -7,7 +7,7 @@
   import { Power, RotateCcw, Search, Settings } from 'lucide-svelte';
   import IdConfirmDialog from '$lib/components/ui/IdConfirmDialog.svelte';
   import IdPagination from '$lib/components/ui/IdPagination.svelte';
-  import { notifySuccess } from '$lib/toast';
+  import { notifyError, notifySuccess } from '$lib/toast';
 
   let users: User[] = [];
   let total = 0;
@@ -81,7 +81,7 @@
       await loadUsers();
       pendingStatusUserId = '';
     } catch {
-      error = t('common.fetchFailed');
+      notifyError(t('common.fetchFailed'));
     }
   };
 
@@ -173,10 +173,7 @@
         {#each filteredUsers as user}
           <tr>
             <td>
-              <div class="space-y-1">
-                <div class="font-medium">{user.username || '-'}</div>
-                <div class="max-w-44 truncate font-mono text-[0.68rem] leading-4 text-surface-500">{user.id}</div>
-              </div>
+              <div class="font-medium">{user.username || '-'}</div>
             </td>
             <td>{user.display_name || '-'}</td>
             <td>{userTypeLabel(user.user_type)}</td>
