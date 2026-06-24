@@ -134,7 +134,6 @@ func (s *AdminService) GetOrganizationTreeRoot(ctx context.Context, entityID str
 		displayName := root.Name
 		var children []OrganizationTreeNode
 		if orgErr == nil {
-			root.ID = rootOrg.ID
 			root.Name = displayName
 			root.OrganizationID = rootOrg.ID
 			root.UpdatedAt = rootOrg.UpdatedAt.Time
@@ -180,15 +179,18 @@ func (s *AdminService) ListOrganizationTreeChildren(ctx context.Context, entityI
 }
 
 func (s *AdminService) listCompanyTreeChildren(ctx context.Context, entityID string, companyID string, limit, offset int32) ([]OrganizationTreeNode, error) {
-	if companyID != "" {
-		if _, err := s.queries.GetOrganizationByID(ctx, generated.GetOrganizationByIDParams{
-			EntityID: entityID,
-			ID:       companyID,
-		}); err == nil {
-			return s.listOrganizationRootDepartments(ctx, entityID, companyID, limit, offset)
-		} else if !errors.Is(err, pgx.ErrNoRows) {
+	if companyID == entityID {
+		rootOrg, err := s.queries.GetFirstOrganization(ctx, entityID)
+		if err == nil {
+			return s.listOrganizationRootDepartments(ctx, entityID, rootOrg.ID, limit, offset)
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
+		return s.listRootTreeChildren(ctx, entityID, limit, offset)
+	}
+	if companyID != "" {
+		return s.listOrganizationRootDepartments(ctx, entityID, companyID, limit, offset)
 	}
 	return s.listRootTreeChildren(ctx, entityID, limit, offset)
 }
