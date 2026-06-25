@@ -28,8 +28,8 @@
     fail?: (error: unknown) => void;
   };
 
-  let account = import.meta.env.DEV ? 'admin' : '';
-  let password = import.meta.env.DEV ? 'admin123' : '';
+  let account = '';
+  let password = '';
   let context: LoginContext | null = null;
   let providers: LoginProvider[] = [];
   let loadingContext = true;

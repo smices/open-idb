@@ -83,7 +83,6 @@ func (h Handler) jwks(w http.ResponseWriter, r *http.Request) {
 func (h Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	subject, err := h.resolveSubject(r)
 	if err != nil {
-		// No valid session or dev headers — redirect to login page
 		loginRedirect := h.buildLoginRedirectURL(r)
 		http.Redirect(w, r, loginRedirect, http.StatusFound)
 		return

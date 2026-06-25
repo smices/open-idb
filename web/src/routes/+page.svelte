@@ -4,8 +4,6 @@
   import { t } from '$lib/i18n';
   import { ArrowRight, Building2, FileCheck2, KeyRound, ShieldCheck } from 'lucide-svelte';
 
-  const showDevEntrances = import.meta.env.DEV;
-
   const metrics = [
     { value: 'SSO', label: 'login.metric.sso' },
     { value: 'RBAC', label: 'login.metric.access' },
@@ -16,12 +14,6 @@
     { icon: ShieldCheck, title: 'login.assurance.sso', description: 'login.assurance.ssoDescription' },
     { icon: KeyRound, title: 'login.assurance.access', description: 'login.assurance.accessDescription' },
     { icon: FileCheck2, title: 'login.assurance.audit', description: 'login.assurance.auditDescription' },
-  ];
-
-  const devEntries = [
-    { href: '/auth/continue', title: 'login.mode.app' },
-    { href: '/login', title: 'login.mode.user' },
-    { href: '/admin/login', title: 'Admin' },
   ];
 </script>
 
@@ -38,15 +30,6 @@
         </span>
         <span class="text-sm font-semibold tracking-wide">{t('app.title')}</span>
       </a>
-
-      {#if showDevEntrances}
-        <nav class="preset-glass-surface-soft flex flex-wrap items-center gap-1 rounded-full p-1" aria-label={t('login.devEntrances')}>
-          <span class="px-3 text-xs font-medium text-white/48">{t('login.devEntrances')}</span>
-          {#each devEntries as entry}
-            <a class="btn btn-sm preset-outlined-surface-500 rounded-full px-3 text-xs" href={entry.href}>{t(entry.title)}</a>
-          {/each}
-        </nav>
-      {/if}
     </header>
 
     <div class="grid flex-1 items-center gap-10 lg:grid-cols-[minmax(0,1fr)_27rem]">
