@@ -157,6 +157,51 @@ func TestLoginContextResolvesOIDCApplicationReturnTo(t *testing.T) {
 	}
 }
 
+func TestLoginContextResolvesAuthContinueOIDCApplicationReturnTo(t *testing.T) {
+	router := chi.NewRouter()
+	NewHandler(fakeLoginService{
+		appClientID: "demo-app",
+		appContext: LoginContext{
+			Mode: LoginModeApp,
+			Entity: &LoginContextEntity{
+				ID:   "entity-1",
+				Slug: "configured_entity",
+				Name: "Configured Entity",
+			},
+			Application: &LoginContextApplication{
+				ID:   "app-1",
+				Name: "Demo App",
+			},
+			Methods:              []string{"password", "feishu"},
+			AllowEntitySelection: false,
+			Reason:               "application",
+		},
+	}).RegisterRoutes(router)
+
+	returnTo := "/api/oauth2/authorize?response_type=code&client_id=demo-app&redirect_uri=https%3A%2F%2Fdemo-app.local.test%2Fauth%2Foidc%2Fcallback&workplace=feishu&idp=feishu"
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/context?path=/auth/continue&return_to="+url.QueryEscape(returnTo), nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var ctx LoginContext
+	if err := json.NewDecoder(rec.Body).Decode(&ctx); err != nil {
+		t.Fatalf("decode context: %v", err)
+	}
+	if ctx.Entity == nil || ctx.Entity.ID != "entity-1" {
+		t.Fatalf("entity = %#v, want entity-1", ctx.Entity)
+	}
+	if ctx.Application == nil || ctx.Application.Name != "Demo App" {
+		t.Fatalf("application = %#v, want Demo App", ctx.Application)
+	}
+	if ctx.PreferredProvider != "feishu" {
+		t.Fatalf("preferred_provider = %q, want feishu", ctx.PreferredProvider)
+	}
+}
+
 func TestLoginContextBuildsFeishuAutoRedirectForOIDCReturnTo(t *testing.T) {
 	router := chi.NewRouter()
 	NewHandler(fakeLoginService{

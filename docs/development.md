@@ -84,7 +84,9 @@ Current local domain:
 https://idbridge.local.test/
 ```
 
-The k8s ingress points `/` at the `web/` frontend service. The frontend Caddy container only proxies `/api*` to the backend; everything else is served by the frontend.
+The k8s ingress points `/` at the `web/` frontend service. The frontend Caddy container proxies `/api*` and `/sapi*` to the backend; everything else is served by the frontend.
+
+For production or IDC deployment details, read [deployment.md](deployment.md).
 
 ## Troubleshooting
 

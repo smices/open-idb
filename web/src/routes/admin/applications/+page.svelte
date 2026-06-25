@@ -31,6 +31,7 @@
   let oidcStatus = 'active';
   let oidcClientSecret = '';
   let copiedValue = '';
+  let idbridgeOrigin = '';
 
   const applicationTypes = ['oidc_client', 'api_client', 'internal_app'];
   const applicationStatuses = ['active', 'disabled'];
@@ -40,12 +41,48 @@
 
   const formatDate = (value?: string): string => (value ? new Date(value).toLocaleString() : '-');
   const copyIconLabel = (value?: string): string => (copiedValue === value ? t('common.copied') : t('common.copy'));
+  const endpointUrl = (path: string): string => `${idbridgeOrigin}${path}`;
   const parseListField = (value: string): string[] =>
     value
       .split('\n')
       .flatMap((line) => line.split(','))
       .map((item) => item.trim())
       .filter(Boolean);
+  const hasInvalidRedirectURI = (values: string[]): boolean =>
+    values.some((value) => {
+      try {
+        const url = new URL(value);
+        return url.protocol !== 'http:' && url.protocol !== 'https:';
+      } catch {
+        return true;
+      }
+    });
+  const firstRedirectURI = (): string => parseListField(oidcRedirectUris)[0] || '{redirect_uri}';
+  const oidcScopeValue = (): string => parseListField(oidcScopes).join(' ') || 'openid profile email';
+  const authorizeTemplate = (workplace = false): string => {
+    if (!oidcClientId) return t('applications.generatedAfterSave');
+    const params = [
+      ['client_id', oidcClientId],
+      ['response_type', 'code'],
+      ['scope', oidcScopeValue()],
+      ['redirect_uri', firstRedirectURI()],
+      ['code_challenge', '{code_challenge}'],
+      ['code_challenge_method', 'S256'],
+      ['idp', 'feishu'],
+    ];
+    if (workplace) params.push(['workplace', 'feishu']);
+    const query = params.map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join('&');
+    return `${endpointUrl('/api/oauth2/authorize')}?${query}`;
+  };
+
+  const oidcIntegrationRows = () => [
+    { label: t('applications.discoveryEndpoint'), value: endpointUrl('/api/.well-known/openid-configuration') },
+    { label: t('applications.authorizationEndpoint'), value: endpointUrl('/api/oauth2/authorize') },
+    { label: t('applications.tokenEndpoint'), value: endpointUrl('/api/oauth2/token') },
+    { label: t('applications.userinfoEndpoint'), value: endpointUrl('/api/oauth2/userinfo') },
+    { label: t('applications.feishuAuthorizeUrl'), value: authorizeTemplate(false) },
+    { label: t('applications.feishuWorkplaceAuthorizeUrl'), value: authorizeTemplate(true) },
+  ];
 
   const resetOIDCForm = () => {
     oidcClient = null;
@@ -145,6 +182,10 @@
       notifyError(t('applications.redirectUrisRequired'));
       return;
     }
+    if (shouldSaveOIDC && hasInvalidRedirectURI(redirectUris)) {
+      notifyError(t('applications.redirectUrisInvalid'));
+      return;
+    }
 
     saving = true;
     error = '';
@@ -228,6 +269,12 @@
   };
 
   onMount(() => {
+    const apiTarget = import.meta.env.PUBLIC_API_TARGET || '';
+    if (apiTarget.startsWith('http://') || apiTarget.startsWith('https://')) {
+      idbridgeOrigin = apiTarget.replace(/\/$/, '');
+    } else if (typeof window !== 'undefined') {
+      idbridgeOrigin = `${window.location.origin}${apiTarget}`.replace(/\/$/, '');
+    }
     void loadApplications();
   });
 </script>
@@ -438,6 +485,37 @@
                 <span class="text-xs text-surface-500">{t('applications.redirectUris')}</span>
                 <textarea class="textarea w-full bg-surface-50-950 font-mono text-sm" rows="2" bind:value={oidcRedirectUris}></textarea>
               </label>
+
+              {#if oidcClient}
+                <section class="space-y-2">
+                  <h4 class="text-xs font-medium text-surface-500">{t('applications.integrationInfo')}</h4>
+                  <div class="overflow-hidden rounded-container border border-surface-200-800 bg-surface-100-900">
+                    <table class="w-full table-fixed text-xs">
+                      <tbody class="divide-y divide-surface-200-800">
+                        {#each oidcIntegrationRows() as row}
+                          <tr>
+                            <th class="w-32 px-3 py-2 text-left align-top font-medium text-surface-500" scope="row">{row.label}</th>
+                            <td class="px-3 py-2 align-top">
+                              <code class="block break-all font-mono">{row.value}</code>
+                            </td>
+                            <td class="w-10 px-2 py-2 text-right align-top">
+                              <button
+                                class="btn btn-xs preset-outlined-surface-500 inline-grid size-7 min-h-0 min-w-0 place-items-center p-0"
+                                type="button"
+                                on:click={() => void copyText(row.value)}
+                                aria-label={copyIconLabel(row.value)}
+                                title={copyIconLabel(row.value)}
+                              >
+                                <Copy class="size-3" aria-hidden="true" />
+                              </button>
+                            </td>
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              {/if}
 
               {#if oidcClient}
                 <label class="block">

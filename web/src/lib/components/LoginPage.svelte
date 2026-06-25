@@ -8,6 +8,26 @@
   import { AppWindow, Building2, KeyRound, ShieldCheck } from 'lucide-svelte';
   import { onMount } from 'svelte';
 
+  type FeishuBridgeWindow = Window & {
+    h5sdk?: {
+      ready?: (callback: () => void) => void;
+      error?: (callback: (error: unknown) => void) => void;
+      requestAuthCode?: (options: FeishuAuthCodeRequest) => void;
+      getAuthCode?: (options: FeishuAuthCodeRequest) => void;
+      biz?: { auth?: { getAuthCode?: (options: FeishuAuthCodeRequest) => void } };
+    };
+    tt?: {
+      requestAuthCode?: (options: FeishuAuthCodeRequest) => void;
+      getAuthCode?: (options: FeishuAuthCodeRequest) => void;
+    };
+  };
+
+  type FeishuAuthCodeRequest = {
+    appId: string;
+    success?: (response: Record<string, string>) => void;
+    fail?: (error: unknown) => void;
+  };
+
   let account = import.meta.env.DEV ? 'admin' : '';
   let password = import.meta.env.DEV ? 'admin123' : '';
   let context: LoginContext | null = null;
@@ -17,10 +37,20 @@
   let providersLoaded = false;
   let busyError = '';
   let autoRedirecting = false;
+  let workplaceAttempted = false;
 
   $: query = $page.url.searchParams;
   $: isAdminLogin = $page.url.pathname === '/admin/login';
   $: returnTo = query.get('return_to') || (isAdminLogin ? '/admin' : '/portal');
+  $: workplaceProvider = normalizeWorkplaceProvider(
+    query.get('workplace') ||
+      query.get('workplace_provider') ||
+      query.get('sso_provider') ||
+      returnToParam(returnTo, 'workplace') ||
+      returnToParam(returnTo, 'workplace_provider') ||
+      returnToParam(returnTo, 'sso_provider'),
+  );
+  $: isWorkplaceLogin = workplaceProvider === 'feishu';
   $: loginAction = isAdminLogin ? '/sapi/login/account' : '/api/login/account';
   $: loginErrorKey = query.get('login_error');
   $: mode = context?.mode || modeFromPath($page.url.pathname);
@@ -32,7 +62,7 @@
   $: entityLogoUrl = context?.entity?.logo_url || '';
   $: entityLoginMessage = context?.entity?.login_message || '';
   $: canLoadProviders = Boolean(entityRef && context?.methods.includes('feishu'));
-  $: feishuProvider = providers.find((provider) => provider.provider === 'feishu' && provider.oauth_url);
+  $: feishuProvider = providers.find((provider) => provider.provider === 'feishu' && (provider.oauth_url || provider.workplace_exchange_url));
   $: isEnterpriseEntrance = mode === 'app' || Boolean(entityRef);
   $: applicationName = context?.application?.name || (mode === 'app' ? 'Demo App' : 'IdBridge');
   $: identityLogoUrl = entityLogoUrl || '/logo.svg';
@@ -85,6 +115,25 @@
       .join(' ');
   }
 
+  function normalizeWorkplaceProvider(provider: string | null): string {
+    provider = (provider || '').trim().toLowerCase();
+    if (provider === 'lark') return 'feishu';
+    return provider === 'feishu' ? provider : '';
+  }
+
+  function returnToParam(returnToValue: string, name: string): string {
+    try {
+      const url = new URL(returnToValue, 'http://idbridge.local');
+      return url.searchParams.get(name) || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function queryAuthCode(): string {
+    return query.get('auth_code') || query.get('feishu_auth_code') || (isWorkplaceLogin ? query.get('code') || '' : '');
+  }
+
   const loginErrorText = (key: string | null): string => {
     if (!key) return '';
     const map: Record<string, string> = {
@@ -106,6 +155,77 @@
   };
 
   const getProviderLoginUrl = (): string => context?.auto_redirect_url || getFeishuLoginUrl();
+
+  const feishuAuthCodeFromBridge = async (appId: string): Promise<string> => {
+    const bridgeWindow = window as FeishuBridgeWindow;
+    const requestCode = (): Promise<string> =>
+      new Promise((resolve, reject) => {
+        const handler =
+          bridgeWindow.tt?.requestAuthCode ||
+          bridgeWindow.tt?.getAuthCode ||
+          bridgeWindow.h5sdk?.requestAuthCode ||
+          bridgeWindow.h5sdk?.getAuthCode ||
+          bridgeWindow.h5sdk?.biz?.auth?.getAuthCode;
+
+        if (!handler) {
+          reject(new Error('feishu bridge is unavailable'));
+          return;
+        }
+
+        handler({
+          appId,
+          success: (response) => {
+            const code = response.code || response.auth_code || response.authCode || '';
+            if (code) resolve(code);
+            else reject(new Error('feishu auth_code is empty'));
+          },
+          fail: reject,
+        });
+      });
+
+    if (bridgeWindow.h5sdk?.ready) {
+      const ready = bridgeWindow.h5sdk.ready;
+      return new Promise((resolve, reject) => {
+        const timer = window.setTimeout(() => reject(new Error('feishu bridge timeout')), 10000);
+        bridgeWindow.h5sdk?.error?.((error) => {
+          window.clearTimeout(timer);
+          reject(error);
+        });
+        ready(() => {
+          requestCode()
+            .then((code) => {
+              window.clearTimeout(timer);
+              resolve(code);
+            })
+            .catch((error) => {
+              window.clearTimeout(timer);
+              reject(error);
+            });
+        });
+      });
+    }
+
+    return requestCode();
+  };
+
+  const completeFeishuWorkplaceLogin = async () => {
+    if (!isWorkplaceLogin || workplaceAttempted || !context || !entityRef) return;
+    const provider = providers.find((item) => item.provider === 'feishu');
+    if (!provider?.workplace_exchange_url || !provider.app_id) return;
+
+    workplaceAttempted = true;
+    autoRedirecting = true;
+    busyError = '';
+
+    try {
+      const authCode = queryAuthCode() || (await feishuAuthCodeFromBridge(provider.app_id));
+      await api.exchangeFeishuAppCode({ auth_code: authCode, entity_id: entityRef });
+      redirectToPath(returnTo);
+    } catch {
+      autoRedirecting = false;
+      busyError = t('login.error.exchange_failed');
+    }
+  };
 
   const loadProviders = async (entityValue = entityRef, methods = context?.methods || []) => {
     providersLoaded = false;
@@ -129,13 +249,14 @@
         ? await api.getAdminLoginContext({ path: $page.url.pathname, return_to: returnTo })
         : await api.getLoginContext({ path: $page.url.pathname, return_to: returnTo });
       busyError = loginErrorText(loginErrorKey);
-      if (!busyError && context?.auto_redirect_url) {
+      if (!busyError && context?.auto_redirect_url && !isWorkplaceLogin) {
         autoRedirecting = true;
         redirectToPath(context.auto_redirect_url);
         return;
       }
       const resolvedEntityRef = context?.entity?.id || context?.entity?.slug || '';
       await loadProviders(resolvedEntityRef, context?.methods || []);
+      await completeFeishuWorkplaceLogin();
     } catch {
       context = null;
       busyError = t('login.contextFailed');

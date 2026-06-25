@@ -128,15 +128,15 @@ func (h Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 	returnTo := r.URL.Query().Get("return_to")
 	preferredProvider := preferredProviderFromRequest(r, returnTo)
 	ctx := resolveLoginContext(path, returnTo)
-	if ctx.Mode == LoginModeUser {
-		if clientID := oidcClientIDFromReturnTo(returnTo); clientID != "" {
-			if resolver, ok := h.service.(LoginContextApplicationResolver); ok {
-				if appCtx, err := resolver.GetLoginContextApplicationByClientID(r.Context(), clientID); err == nil {
-					ctx = appCtx
-					ctx.ReturnTo = safeReturnTo(returnTo)
-				}
+	if clientID := oidcClientIDFromReturnTo(returnTo); clientID != "" {
+		if resolver, ok := h.service.(LoginContextApplicationResolver); ok {
+			if appCtx, err := resolver.GetLoginContextApplicationByClientID(r.Context(), clientID); err == nil {
+				ctx = appCtx
+				ctx.ReturnTo = safeReturnTo(returnTo)
 			}
-		} else if resolver, ok := h.service.(LoginContextDefaultEntityResolver); ok {
+		}
+	} else if ctx.Mode == LoginModeUser {
+		if resolver, ok := h.service.(LoginContextDefaultEntityResolver); ok {
 			if defaultCtx, err := resolver.GetDefaultLoginContext(r.Context()); err == nil {
 				ctx = defaultCtx
 				ctx.ReturnTo = safeReturnTo(returnTo)

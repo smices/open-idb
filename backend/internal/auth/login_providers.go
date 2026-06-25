@@ -16,9 +16,11 @@ import (
 
 // LoginProvider represents a configured third-party login provider.
 type LoginProvider struct {
-	Provider    string `json:"provider"`
-	DisplayName string `json:"display_name"`
-	OAuthURL    string `json:"oauth_url,omitempty"`
+	Provider             string `json:"provider"`
+	DisplayName          string `json:"display_name"`
+	OAuthURL             string `json:"oauth_url,omitempty"`
+	AppID                string `json:"app_id,omitempty"`
+	WorkplaceExchangeURL string `json:"workplace_exchange_url,omitempty"`
 }
 
 type FeishuProviderConfig struct {
@@ -82,7 +84,9 @@ func (s *LoginProviderService) ListProviders(ctx context.Context, entityID strin
 		if row.Provider == "feishu" {
 			rowAppID, _ := s.feishuAppIDFromRow(ctx, entityID, row)
 			if strings.TrimSpace(rowAppID) != "" {
+				p.AppID = strings.TrimSpace(rowAppID)
 				p.OAuthURL = s.buildFeishuOAuthURL(entityID, rowAppID)
+				p.WorkplaceExchangeURL = "/api/auth/feishu/exchange"
 			}
 		}
 		providers = append(providers, p)

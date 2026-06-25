@@ -71,6 +71,9 @@ func TestListProvidersReturnsActiveConfiguredProviders(t *testing.T) {
 	if providers[0].OAuthURL != "" {
 		t.Fatalf("dingtalk should not have oauth_url, got %q", providers[0].OAuthURL)
 	}
+	if providers[0].AppID != "" || providers[0].WorkplaceExchangeURL != "" {
+		t.Fatalf("dingtalk should not expose workplace fields: %#v", providers[0])
+	}
 
 	// Second provider: feishu (should have OAuth URL).
 	if providers[1].Provider != "feishu" {
@@ -90,6 +93,12 @@ func TestListProvidersReturnsActiveConfiguredProviders(t *testing.T) {
 	}
 	if !strings.Contains(providers[1].OAuthURL, "redirect_uri") {
 		t.Fatalf("oauth_url missing redirect_uri: %q", providers[1].OAuthURL)
+	}
+	if providers[1].AppID != "test-app-id" {
+		t.Fatalf("app_id = %q, want test-app-id", providers[1].AppID)
+	}
+	if providers[1].WorkplaceExchangeURL != "/api/auth/feishu/exchange" {
+		t.Fatalf("workplace_exchange_url = %q", providers[1].WorkplaceExchangeURL)
 	}
 }
 
@@ -135,6 +144,9 @@ func TestListProvidersFeishuWithoutAppIDHasNoURL(t *testing.T) {
 	}
 	if providers[0].OAuthURL != "" {
 		t.Fatalf("feishu without app_id should not have oauth_url, got %q", providers[0].OAuthURL)
+	}
+	if providers[0].AppID != "" || providers[0].WorkplaceExchangeURL != "" {
+		t.Fatalf("feishu without app_id should not expose workplace fields: %#v", providers[0])
 	}
 }
 
@@ -219,6 +231,12 @@ func TestListProvidersHandlerEndpoint(t *testing.T) {
 	}
 	if providers[0].OAuthURL == "" {
 		t.Fatal("missing oauth_url")
+	}
+	if providers[0].AppID != "my-app" {
+		t.Fatalf("app_id = %q, want my-app", providers[0].AppID)
+	}
+	if providers[0].WorkplaceExchangeURL != "/api/auth/feishu/exchange" {
+		t.Fatalf("workplace_exchange_url = %q", providers[0].WorkplaceExchangeURL)
 	}
 }
 

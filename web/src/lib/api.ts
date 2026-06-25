@@ -464,6 +464,16 @@ export interface LoginProvider {
   provider: string;
   display_name: string;
   oauth_url?: string;
+  app_id?: string;
+  workplace_exchange_url?: string;
+}
+
+export interface FeishuExchangeResponse {
+  session: string;
+  entity_id: string;
+  user_id: string;
+  username: string;
+  display_name: string;
 }
 
 export type LoginMode = 'app' | 'user' | 'admin' | 'entity_admin';
@@ -524,6 +534,11 @@ export const api = {
     const suffix = queryString({ entity_id: entityId });
     return apiRequest<LoginProvider[]>(`/api/auth/providers${suffix}`);
   },
+  exchangeFeishuAppCode: (payload: { auth_code: string; entity_id: string }) =>
+    apiRequest<FeishuExchangeResponse>('/api/auth/feishu/exchange', {
+      method: 'POST',
+      body: payload,
+    }),
   getLoginContext: (params?: { path?: string; return_to?: string }) => {
     const suffix = queryString({ path: params?.path, return_to: params?.return_to });
     return apiRequest<LoginContext>(`/api/auth/context${suffix}`);

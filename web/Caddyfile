@@ -3,7 +3,7 @@
 :80 {
 	encode zstd gzip
 
-	@backend path /api*
+	@backend path /api* /sapi*
 	handle @backend {
 		reverse_proxy http://idbridge:8080
 	}

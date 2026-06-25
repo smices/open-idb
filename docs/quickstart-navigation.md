@@ -6,7 +6,9 @@
   文档：[docs/development.md](docs/development.md)
 - 一键联调启动：`make dev-local-go-live`（执行预检后直接进入启动）  
   说明：启动 `web/` 前端与本地后端联调链路。  
-- 接入后核验：见接入指南 `2.6` 节  
+- 自托管 / IDC 部署：环境变量、迁移、镜像、反向代理、飞书配置、上线验证  
+  文档：[docs/deployment.md](docs/deployment.md)
+- 应用接入：OIDC、飞书登录、飞书工作台 SSO、排查清单  
   文档：[docs/integration-guide.md](docs/integration-guide.md)
 - 前端评审清单：Tailwind 组件体系+Skeleton 为关键能力、非 SPA（客户端路由状态机）与 Svelte 原生能力为主（该项目核心标准）  
   文档：[docs/web-review-checklist.md](docs/web-review-checklist.md)
