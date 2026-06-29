@@ -170,6 +170,8 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		// Organization tree read model
 		organizationHandler := adminapi.NewOrganizationHandler(adminCRUDService)
 		routerOptions = append(routerOptions, organizationHandler.RegisterRoutes)
+		oidcDirectoryHandler := adminapi.NewOIDCDirectoryHandler(adminCRUDService, service)
+		routerOptions = append(routerOptions, oidcDirectoryHandler.RegisterRoutes)
 
 		// OIDC Clients CRUD
 		oidcClientHandler := adminapi.NewOIDCClientHandler(adminCRUDService)

@@ -271,6 +271,12 @@ admin / admin123
 - 响应类型：`code`
 - PKCE：启用
 
+如果业务应用需要人员选择、部门选择或组织搜索，在 OIDC 配置的授权范围中加入：
+
+```text
+directory:read
+```
+
 管理员需要填写业务应用回调地址，必须是绝对 URL：
 
 ```text

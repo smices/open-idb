@@ -34,7 +34,7 @@ func TestBuildDiscoveryDocument(t *testing.T) {
 	if !reflect.DeepEqual(doc.IDTokenSigningAlgValuesSupported, []string{"RS256"}) {
 		t.Fatalf("IDTokenSigningAlgValuesSupported = %#v", doc.IDTokenSigningAlgValuesSupported)
 	}
-	if !reflect.DeepEqual(doc.ScopesSupported, []string{"openid", "profile", "email"}) {
+	if !reflect.DeepEqual(doc.ScopesSupported, []string{"openid", "profile", "email", "directory:read"}) {
 		t.Fatalf("ScopesSupported = %#v", doc.ScopesSupported)
 	}
 	if !reflect.DeepEqual(doc.TokenEndpointAuthMethodsSupported, []string{"client_secret_basic", "none"}) {

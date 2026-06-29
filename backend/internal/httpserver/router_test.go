@@ -195,6 +195,7 @@ func TestPublicAuthAndProtocolRoutesRemainReachable(t *testing.T) {
 		{http.MethodPost, "/api/oauth2/token"},
 		{http.MethodGet, "/api/oauth2/userinfo"},
 		{http.MethodPost, "/api/oauth2/revoke"},
+		{http.MethodGet, "/api/directory/organization-tree/search"},
 		{http.MethodPost, "/api/webhooks/feishu"},
 		{http.MethodPost, "/api/webhooks/feishu/entity/source"},
 	} {

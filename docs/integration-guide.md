@@ -232,7 +232,34 @@ https://idbridge.example.com/api/oauth2/authorize?response_type=code&client_id=<
 
 门户首页显示该用户可访问的应用。用户从业务应用发起登录时，IdBridge 登录完成后会回到业务应用，不进入门户。
 
-## 5. 管理 API 和服务 API
+## 5. OIDC 应用通讯录 API
+
+OIDC 应用如果需要做人员选择、部门选择或组织内搜索，可以申请 `directory:read` scope，然后使用 access token 调用通讯录 API。
+
+授权 URL 的 scope 示例：
+
+```text
+scope=openid%20profile%20email%20directory:read
+```
+
+请求必须带上：
+
+- `Authorization: Bearer <access_token>`
+- `X-IDB-Entity-ID: <company_entity_id>`
+
+可用接口：
+
+```text
+GET /api/directory/organization-tree/root
+GET /api/directory/organization-tree/children?id=<node_id>&kind=company|organization|department
+GET /api/directory/organization-tree/search?q=<keyword>
+```
+
+这些接口返回已同步的公司、部门和目录用户节点，用于业务应用内的人员选择和查找。接口不会返回原始飞书档案或外部平台敏感 ID。
+
+管理员需要先在 `/admin/applications` 的 OIDC 配置中允许 `directory:read`，否则 token 不会获得该 scope，调用目录 API 会返回 `insufficient_scope`。
+
+## 6. 管理 API 和服务 API
 
 当前边界：
 
@@ -247,9 +274,9 @@ https://idbridge.example.com/api/oauth2/authorize?response_type=code&client_id=<
 
 开源部署方通常不需要直接调用 `/sapi/*` 创建应用，优先使用管理后台。管理后台会自动处理 OIDC Client 签发和配置展示。
 
-## 6. 排查清单
+## 7. 排查清单
 
-### 6.1 应用登录提示 client 或 redirect_uri 错误
+### 7.1 应用登录提示 client 或 redirect_uri 错误
 
 检查：
 
@@ -258,7 +285,7 @@ https://idbridge.example.com/api/oauth2/authorize?response_type=code&client_id=<
 - 回调 URI 是否包含 `https://`。
 - `client_id` 是否复制正确。
 
-### 6.2 Discovery 返回前端 HTML
+### 7.2 Discovery 返回前端 HTML
 
 说明反向代理错误。请使用并检查：
 

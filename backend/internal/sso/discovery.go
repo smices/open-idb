@@ -38,7 +38,7 @@ func BuildDiscoveryDocumentWithEndpointPrefix(issuer string, endpointPrefix stri
 		ResponseTypesSupported:            []string{"code"},
 		SubjectTypesSupported:             []string{"public"},
 		IDTokenSigningAlgValuesSupported:  []string{SigningAlgorithmRS256},
-		ScopesSupported:                   []string{"openid", "profile", "email"},
+		ScopesSupported:                   []string{"openid", "profile", "email", "directory:read"},
 		TokenEndpointAuthMethodsSupported: []string{"client_secret_basic", "none"},
 		CodeChallengeMethodsSupported:     []string{CodeChallengeS256},
 	}

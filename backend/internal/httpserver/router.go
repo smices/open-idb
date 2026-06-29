@@ -104,6 +104,9 @@ func isPublicRoute(method string, path string) bool {
 	case "/api/webhooks/feishu":
 		return method == http.MethodPost
 	}
+	if method == http.MethodGet && strings.HasPrefix(path, "/api/directory/") {
+		return true
+	}
 	return method == http.MethodPost && strings.HasPrefix(path, "/api/webhooks/feishu/")
 }
 
