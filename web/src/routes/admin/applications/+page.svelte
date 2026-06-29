@@ -25,6 +25,7 @@
   let oidcClientId = '';
   let oidcRedirectUris = '';
   let oidcScopes = 'openid\nprofile\nemail';
+  let directoryReadEnabled = false;
   let oidcGrantTypes = 'authorization_code';
   let oidcResponseTypes = 'code';
   let oidcPkce = true;
@@ -35,6 +36,7 @@
 
   const applicationTypes = ['oidc_client', 'api_client', 'internal_app'];
   const applicationStatuses = ['active', 'disabled'];
+  const defaultOIDCScopes = ['openid', 'profile', 'email'];
 
   const applicationTypeLabel = (value: string): string => t(`applications.type.${value}`, value);
   const applicationStatusLabel = (value: string): string => t(`applications.status.${value}`, value);
@@ -48,6 +50,17 @@
       .flatMap((line) => line.split(','))
       .map((item) => item.trim())
       .filter(Boolean);
+  const setOIDCScopes = (scopes: string[]) => {
+    const normalized = scopes.length > 0 ? scopes : defaultOIDCScopes;
+    directoryReadEnabled = normalized.includes('directory:read');
+    oidcScopes = normalized.join('\n');
+  };
+  const oidcAllowedScopes = (): string[] => {
+    const values = new Set(parseListField(oidcScopes).filter((scope) => scope !== 'directory:read'));
+    defaultOIDCScopes.forEach((scope) => values.add(scope));
+    if (directoryReadEnabled) values.add('directory:read');
+    return Array.from(values);
+  };
   const hasInvalidRedirectURI = (values: string[]): boolean =>
     values.some((value) => {
       try {
@@ -58,7 +71,7 @@
       }
     });
   const firstRedirectURI = (): string => parseListField(oidcRedirectUris)[0] || '{redirect_uri}';
-  const oidcScopeValue = (): string => parseListField(oidcScopes).join(' ') || 'openid profile email';
+  const oidcScopeValue = (): string => oidcAllowedScopes().join(' ') || 'openid profile email';
   const authorizeTemplate = (workplace = false): string => {
     if (!oidcClientId) return t('applications.generatedAfterSave');
     const params = [
@@ -88,7 +101,7 @@
     oidcClient = null;
     oidcClientId = '';
     oidcRedirectUris = '';
-    oidcScopes = 'openid\nprofile\nemail';
+    setOIDCScopes(defaultOIDCScopes);
     oidcGrantTypes = 'authorization_code';
     oidcResponseTypes = 'code';
     oidcPkce = true;
@@ -108,7 +121,7 @@
         oidcClientId = detail.client_id;
         oidcClientSecret = detail.client_secret || '';
         oidcRedirectUris = (detail.redirect_uris || []).join('\n');
-        oidcScopes = (detail.allowed_scopes || ['openid', 'profile', 'email']).join('\n');
+        setOIDCScopes(detail.allowed_scopes || defaultOIDCScopes);
         oidcGrantTypes = (detail.grant_types || ['authorization_code']).join('\n');
         oidcResponseTypes = (detail.response_types || ['code']).join('\n');
         oidcPkce = detail.pkce_required !== false;
@@ -201,7 +214,7 @@
       if (shouldSaveOIDC) {
         const payload = {
           redirect_uris: redirectUris,
-          allowed_scopes: parseListField(oidcScopes),
+          allowed_scopes: oidcAllowedScopes(),
           grant_types: parseListField(oidcGrantTypes),
           response_types: parseListField(oidcResponseTypes),
           pkce_required: oidcPkce,
@@ -215,11 +228,15 @@
           const result = await api.createOIDCClient({
             application_id: savedApp.id,
             redirect_uris: payload.redirect_uris,
+            allowed_scopes: payload.allowed_scopes,
+            grant_types: payload.grant_types,
+            response_types: payload.response_types,
+            pkce_required: payload.pkce_required,
           });
           oidcClient = result.client;
           oidcClientId = result.client.client_id;
           oidcClientSecret = result.client.client_secret || result.client_secret || '';
-          oidcScopes = (result.client.allowed_scopes || ['openid', 'profile', 'email']).join('\n');
+          setOIDCScopes(result.client.allowed_scopes || defaultOIDCScopes);
           oidcGrantTypes = (result.client.grant_types || ['authorization_code']).join('\n');
           oidcResponseTypes = (result.client.response_types || ['code']).join('\n');
           oidcPkce = result.client.pkce_required !== false;
@@ -458,7 +475,7 @@
                     <tr>
                       <th class="w-28 px-3 py-2 text-left font-medium text-surface-500" scope="row">{t('applications.scopes')}</th>
                       <td class="px-3 py-2" colspan="2">
-                        <code class="block break-all font-mono">{oidcScopes.replaceAll('\n', ' ')}</code>
+                        <code class="block break-all font-mono">{oidcAllowedScopes().join(' ')}</code>
                       </td>
                     </tr>
                     <tr>
@@ -480,6 +497,16 @@
                   </tbody>
                 </table>
               </div>
+
+              <section class="rounded-container border border-surface-200-800 bg-surface-50-950 p-3">
+                <label class="flex items-start gap-2 text-sm">
+                  <input class="checkbox mt-0.5" type="checkbox" bind:checked={directoryReadEnabled} />
+                  <span class="min-w-0">
+                    <span class="block font-medium">{t('applications.directoryReadScope')}</span>
+                    <span class="block text-xs text-surface-500">{t('applications.directoryReadScopeDescription')}</span>
+                  </span>
+                </label>
+              </section>
 
               <label class="block">
                 <span class="text-xs text-surface-500">{t('applications.redirectUris')}</span>
