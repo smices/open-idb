@@ -22,10 +22,10 @@ SET name = $2,
     sync_enabled = $4,
     config_encrypted = $5
 WHERE id = (
-    SELECT id
-    FROM identity_sources
-    WHERE entity_id = $1 AND type = 'feishu'
-    ORDER BY created_at DESC
+    SELECT src.id
+    FROM identity_sources src
+    WHERE src.entity_id = $1 AND src.type = 'feishu'
+    ORDER BY src.created_at DESC
     LIMIT 1
 )
 RETURNING id,

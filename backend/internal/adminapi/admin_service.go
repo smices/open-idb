@@ -44,6 +44,29 @@ func NewAdminService(queries *generated.Queries, auditLogger ...AuditLogger) (*A
 	return svc, nil
 }
 
+// --- Platform settings ---
+
+func (s *AdminService) GetPlatformBranding(ctx context.Context) (PlatformBrandingResponse, error) {
+	row, err := s.queries.GetPlatformSettings(ctx)
+	if err != nil {
+		return PlatformBrandingResponse{}, err
+	}
+	return platformBrandingFromRow(row), nil
+}
+
+func (s *AdminService) UpdatePlatformBranding(ctx context.Context, platformName, logoURL, faviconURL, titleSuffix string) (PlatformBrandingResponse, error) {
+	row, err := s.queries.UpsertPlatformSettings(ctx, generated.UpsertPlatformSettingsParams{
+		PlatformName: strings.TrimSpace(platformName),
+		LogoUrl:      strings.TrimSpace(logoURL),
+		FaviconUrl:   strings.TrimSpace(faviconURL),
+		TitleSuffix:  strings.TrimSpace(titleSuffix),
+	})
+	if err != nil {
+		return PlatformBrandingResponse{}, err
+	}
+	return platformBrandingFromRow(row), nil
+}
+
 // --- Entities ---
 
 func (s *AdminService) ListEntities(ctx context.Context, limit, offset int32) ([]EntityResponse, error) {

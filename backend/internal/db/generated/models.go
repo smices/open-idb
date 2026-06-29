@@ -137,6 +137,9 @@ type DirectoryUser struct {
 	ExternalUnionID pgtype.Text        `json:"external_union_id"`
 	ExternalOpenID  pgtype.Text        `json:"external_open_id"`
 	Name            string             `json:"name"`
+	EnglishName     string             `json:"english_name"`
+	EmployeeNo      string             `json:"employee_no"`
+	JobTitle        string             `json:"job_title"`
 	Email           pgtype.Text        `json:"email"`
 	Phone           pgtype.Text        `json:"phone"`
 	AvatarUrl       pgtype.Text        `json:"avatar_url"`
@@ -145,9 +148,6 @@ type DirectoryUser struct {
 	LastSyncedAt    pgtype.Timestamptz `json:"last_synced_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	EnglishName     string             `json:"english_name"`
-	EmployeeNo      string             `json:"employee_no"`
-	JobTitle        string             `json:"job_title"`
 }
 
 type Group struct {
@@ -267,6 +267,15 @@ type Permission struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PlatformSetting struct {
+	ID           int16              `json:"id"`
+	PlatformName string             `json:"platform_name"`
+	LogoUrl      string             `json:"logo_url"`
+	FaviconUrl   string             `json:"favicon_url"`
+	TitleSuffix  string             `json:"title_suffix"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ResourceScope struct {
 	ID        string             `json:"id"`
 	EntityID  string             `json:"entity_id"`
@@ -334,6 +343,9 @@ type User struct {
 	EntityID        string             `json:"entity_id"`
 	Username        string             `json:"username"`
 	DisplayName     string             `json:"display_name"`
+	EnglishName     string             `json:"english_name"`
+	EmployeeNo      string             `json:"employee_no"`
+	JobTitle        string             `json:"job_title"`
 	Email           pgtype.Text        `json:"email"`
 	Phone           pgtype.Text        `json:"phone"`
 	AvatarUrl       pgtype.Text        `json:"avatar_url"`
@@ -343,9 +355,6 @@ type User struct {
 	Locale          pgtype.Text        `json:"locale"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	EnglishName     string             `json:"english_name"`
-	EmployeeNo      string             `json:"employee_no"`
-	JobTitle        string             `json:"job_title"`
 }
 
 type UserRole struct {

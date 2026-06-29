@@ -134,6 +134,14 @@ export interface AdminUserListResponse {
   total: number;
 }
 
+export interface PlatformBranding {
+  platform_name: string;
+  logo_url: string;
+  favicon_url: string;
+  title_suffix: string;
+  updated_at?: string;
+}
+
 export interface Entity {
   id: string;
   name: string;
@@ -511,6 +519,10 @@ export interface UserAccessSummary {
 }
 
 export const api = {
+  getPlatformBranding: (): Promise<PlatformBranding> => apiRequest<PlatformBranding>('/api/platform/branding'),
+  getAdminPlatformBranding: (): Promise<PlatformBranding> => apiRequest<PlatformBranding>('/sapi/platform/branding'),
+  updatePlatformBranding: (payload: { platform_name: string; logo_url?: string; favicon_url?: string; title_suffix?: string }) =>
+    apiRequest<PlatformBranding>('/sapi/platform/branding', { method: 'PUT', body: payload }),
   me: (): Promise<CurrentUser> => apiRequest<CurrentUser>('/api/me'),
   adminMe: (): Promise<AdminCurrentUser> => apiRequest<AdminCurrentUser>('/sapi/me'),
   updateMe: (payload: { display_name: string }): Promise<CurrentUser> =>

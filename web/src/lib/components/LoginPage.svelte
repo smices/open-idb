@@ -5,6 +5,7 @@
   import { api, type LoginContext, type LoginMode, type LoginProvider } from '$lib/api';
   import { t, tf } from '$lib/i18n';
   import { redirectToPath } from '$lib/session';
+  import { platformBranding } from '$lib/stores';
   import { AppWindow, Building2, KeyRound, ShieldCheck } from 'lucide-svelte';
   import { onMount } from 'svelte';
 
@@ -64,8 +65,11 @@
   $: canLoadProviders = Boolean(entityRef && context?.methods.includes('feishu'));
   $: feishuProvider = providers.find((provider) => provider.provider === 'feishu' && (provider.oauth_url || provider.workplace_exchange_url));
   $: isEnterpriseEntrance = mode === 'app' || Boolean(entityRef);
-  $: applicationName = context?.application?.name || (mode === 'app' ? 'Demo App' : 'IdBridge');
-  $: identityLogoUrl = entityLogoUrl || '/logo.svg';
+  $: platformName = $platformBranding.platform_name || t('app.title');
+  $: platformLogoUrl = $platformBranding.logo_url || '/logo.svg';
+  $: platformTitleSuffix = $platformBranding.title_suffix || platformName;
+  $: applicationName = context?.application?.name || (mode === 'app' ? 'Demo App' : platformName);
+  $: identityLogoUrl = entityLogoUrl || platformLogoUrl;
   $: pageTitle =
     mode === 'app'
       ? tf('login.enterprise.titleForApp', { app: applicationName })
@@ -94,6 +98,7 @@
       : isEnterpriseEntrance
         ? t('login.enterprise.identityReady')
         : t('login.enterprise.contextPending');
+  $: browserTitle = `${pageTitle} · ${platformTitleSuffix}`;
 
   function modeFromPath(pathname: string): LoginMode {
     if (pathname === '/auth/continue') return 'app';
@@ -271,7 +276,7 @@
 </script>
 
 <svelte:head>
-  <title>{pageTitle}</title>
+  <title>{browserTitle}</title>
 </svelte:head>
 
 <main class="glass-page-dark min-h-dvh px-5 py-8 text-surface-950-50 lg:px-16">

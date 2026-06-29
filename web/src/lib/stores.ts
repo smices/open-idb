@@ -3,6 +3,7 @@
 import { browser } from '$app/environment';
 import { writable, type Writable } from 'svelte/store';
 import { initLocaleFromStorage as initLocaleInternal, setThemeMode as setThemeModeInternal, getCurrentLocale, getThemeModeFromStorage, type ThemeMode } from './i18n';
+import type { PlatformBranding } from './api';
 
 export interface UserSummary {
   id: string;
@@ -20,6 +21,12 @@ export interface UserSummary {
 
 export const authLoading: Writable<boolean> = writable(true);
 export const authUser: Writable<UserSummary | null> = writable(null);
+export const platformBranding: Writable<PlatformBranding> = writable({
+  platform_name: 'IdBridge',
+  logo_url: '',
+  favicon_url: '',
+  title_suffix: '',
+});
 export const sidebarCollapsed: Writable<boolean> = writable(
   browser ? localStorage.getItem('idb-sidebar-collapsed') === '1' : false,
 );
@@ -51,4 +58,14 @@ export function getLocale(): 'en-US' | 'zh-CN' {
 
 export function setTheme(mode: ThemeMode): void {
   themeMode.set(mode);
+}
+
+export function setPlatformBranding(value: PlatformBranding): void {
+  platformBranding.set({
+    platform_name: value.platform_name || 'IdBridge',
+    logo_url: value.logo_url || '',
+    favicon_url: value.favicon_url || '',
+    title_suffix: value.title_suffix || '',
+    updated_at: value.updated_at,
+  });
 }

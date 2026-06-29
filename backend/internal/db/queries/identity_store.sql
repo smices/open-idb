@@ -20,6 +20,6 @@ WHERE entity_id = $1 AND id = $2;
 -- === Users (validation) ===
 
 -- name: GetUserByEntityAndID :one
-SELECT id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at, english_name, employee_no, job_title
+SELECT id, entity_id, username, display_name, english_name, employee_no, job_title, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at
 FROM users
 WHERE entity_id = $1 AND id = $2;

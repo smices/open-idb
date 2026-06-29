@@ -120,6 +120,117 @@ body {
 	background: var(--idb-panel-bg);
 }
 
+/* ---- Public Home ---- */
+.home-page {
+	position: relative;
+	isolation: isolate;
+	background:
+		linear-gradient(112deg, transparent 0 57%, color-mix(in srgb, var(--idb-accent) 13%, transparent) 57% 57.08%, transparent 57.08%),
+		linear-gradient(26deg, transparent 0 66%, color-mix(in srgb, var(--idb-accent) 11%, transparent) 66% 66.08%, transparent 66.08%),
+		linear-gradient(180deg, #f9fbfb 0%, var(--idb-shell-bg) 100%),
+		var(--idb-shell-bg);
+}
+
+.home-page::before {
+	position: absolute;
+	inset: 0;
+	z-index: -2;
+	content: '';
+	background-image:
+		linear-gradient(color-mix(in srgb, var(--idb-border) 56%, transparent) 1px, transparent 1px),
+		linear-gradient(90deg, color-mix(in srgb, var(--idb-border) 56%, transparent) 1px, transparent 1px);
+	background-position:
+		-1px -1px,
+		-1px -1px;
+	background-size: 44px 44px;
+	mask-image: linear-gradient(180deg, rgb(0 0 0 / 0.62), transparent 84%);
+	opacity: 0.52;
+	pointer-events: none;
+}
+
+.home-page::after {
+	position: absolute;
+	top: 8%;
+	right: max(-9vw, -7rem);
+	z-index: -1;
+	width: min(42rem, 78vw);
+	aspect-ratio: 1.08;
+	border: 1px solid color-mix(in srgb, var(--idb-accent) 34%, var(--idb-border));
+	border-radius: 28px;
+	content: '';
+	background:
+		linear-gradient(90deg, transparent 0 49.86%, color-mix(in srgb, var(--idb-accent) 18%, transparent) 49.86% 50.14%, transparent 50.14%),
+		linear-gradient(0deg, transparent 0 49.86%, color-mix(in srgb, var(--idb-accent) 15%, transparent) 49.86% 50.14%, transparent 50.14%);
+	box-shadow:
+		inset 0 0 0 1px color-mix(in srgb, var(--idb-panel-bg) 78%, transparent),
+		0 28px 80px rgb(16 24 28 / 0.07);
+	opacity: 0.46;
+	transform: rotate(-8deg);
+	pointer-events: none;
+}
+
+:root[data-mode='dark'] .home-page {
+	background:
+		linear-gradient(115deg, transparent 0 58%, color-mix(in srgb, var(--idb-accent) 10%, transparent) 58% 58.12%, transparent 58.12%),
+		linear-gradient(28deg, transparent 0 64%, color-mix(in srgb, var(--idb-accent) 8%, transparent) 64% 64.12%, transparent 64.12%),
+		var(--idb-shell-bg);
+}
+
+:root[data-mode='dark'] .home-page::before {
+	opacity: 0.5;
+}
+
+:root[data-mode='dark'] .home-page::after {
+	border-color: color-mix(in srgb, var(--idb-accent) 30%, var(--idb-border));
+	box-shadow:
+		inset 0 0 0 1px rgb(255 255 255 / 0.03),
+		0 28px 80px rgb(0 0 0 / 0.28);
+	opacity: 0.5;
+}
+
+.home-assurance-card {
+	position: relative;
+	overflow: hidden;
+	background: color-mix(in srgb, var(--idb-panel-bg) 90%, #ffffff 10%) !important;
+	border-color: color-mix(in srgb, var(--idb-border) 70%, var(--idb-accent) 30%) !important;
+	box-shadow: 0 24px 70px rgb(18 25 29 / 0.11) !important;
+}
+
+.home-assurance-card::before {
+	position: absolute;
+	inset: 0;
+	content: '';
+	background: linear-gradient(135deg, color-mix(in srgb, var(--idb-accent) 5%, transparent), transparent 42%);
+	pointer-events: none;
+}
+
+.home-assurance-card > * {
+	position: relative;
+	z-index: 1;
+}
+
+.home-assurance-card article {
+	background: color-mix(in srgb, var(--idb-panel-bg) 94%, var(--idb-accent) 6%) !important;
+	border-color: color-mix(in srgb, var(--idb-border) 72%, var(--idb-accent) 28%) !important;
+}
+
+.home-brand-mark {
+	border: 1px solid color-mix(in srgb, var(--idb-accent) 32%, var(--idb-border));
+	background: color-mix(in srgb, var(--idb-panel-bg) 88%, var(--idb-accent) 12%);
+	box-shadow: var(--idb-shadow-card);
+}
+
+:root[data-mode='dark'] .home-assurance-card {
+	background: var(--idb-panel-bg) !important;
+	border-color: color-mix(in srgb, var(--idb-border) 75%, var(--idb-accent) 25%) !important;
+	box-shadow: 0 24px 70px rgb(0 0 0 / 0.28) !important;
+}
+
+:root[data-mode='dark'] .home-assurance-card article {
+	background: color-mix(in srgb, var(--idb-panel-muted-bg) 86%, var(--idb-accent) 14%) !important;
+	border-color: color-mix(in srgb, var(--idb-border) 80%, var(--idb-accent) 20%) !important;
+}
+
 /* ---- App Shell ---- */
 .app-shell {
 	position: relative;
@@ -168,15 +279,11 @@ body {
 	width: 36px;
 	height: 36px;
 	place-items: center;
-	background-image: url('/logo.svg');
-	background-size: 36px 36px;
-	background-position: center;
-	background-repeat: no-repeat;
 }
 .brand-mark img {
-	width: 1px;
-	height: 1px;
-	opacity: 0;
+	width: 36px;
+	height: 36px;
+	object-fit: contain;
 }
 
 .brand strong,

@@ -126,7 +126,7 @@ FROM departments
 WHERE entity_id = $1 AND parent_id = $2;
 
 -- name: ListDirectoryUsersByDepartmentExternalID :many
-SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
 FROM directory_users
 WHERE entity_id = $1
   AND source_id = $2
@@ -154,7 +154,7 @@ WHERE entity_id = $1
   );
 
 -- name: ListRootDirectoryUsers :many
-SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
 FROM directory_users
 WHERE entity_id = $1
   AND (
@@ -208,7 +208,7 @@ WHERE entity_id = $1
   );
 
 -- name: SearchOrganizationTreeUsers :many
-SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
 FROM directory_users
 WHERE entity_id = $1
   AND (

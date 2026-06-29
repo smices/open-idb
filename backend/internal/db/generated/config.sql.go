@@ -11,39 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getFeishuSourceByEntity = `-- name: GetFeishuSourceByEntity :one
-SELECT id, entity_id, type, name, status, sync_enabled, created_at
-FROM identity_sources
-WHERE entity_id = $1 AND type = 'feishu' AND status = 'active'
-LIMIT 1
-`
-
-type GetFeishuSourceByEntityRow struct {
-	ID          string             `json:"id"`
-	EntityID    string             `json:"entity_id"`
-	Type        string             `json:"type"`
-	Name        string             `json:"name"`
-	Status      string             `json:"status"`
-	SyncEnabled bool               `json:"sync_enabled"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-}
-
-func (q *Queries) GetFeishuSourceByEntity(ctx context.Context, entityID string) (GetFeishuSourceByEntityRow, error) {
-	row := q.db.QueryRow(ctx, getFeishuSourceByEntity, entityID)
-	var i GetFeishuSourceByEntityRow
-	err := row.Scan(
-		&i.ID,
-		&i.EntityID,
-		&i.Type,
-		&i.Name,
-		&i.Status,
-		&i.SyncEnabled,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const getFeishuIdentitySourceConfig = `-- name: GetFeishuIdentitySourceConfig :one
+
 SELECT id,
        entity_id,
        type AS provider,
@@ -71,6 +40,7 @@ type GetFeishuIdentitySourceConfigRow struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
+// SPDX-License-Identifier: MIT
 func (q *Queries) GetFeishuIdentitySourceConfig(ctx context.Context, entityID string) (GetFeishuIdentitySourceConfigRow, error) {
 	row := q.db.QueryRow(ctx, getFeishuIdentitySourceConfig, entityID)
 	var i GetFeishuIdentitySourceConfigRow
@@ -83,6 +53,38 @@ func (q *Queries) GetFeishuIdentitySourceConfig(ctx context.Context, entityID st
 		&i.OauthConfigured,
 		&i.SyncEnabled,
 		&i.Config,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getFeishuSourceByEntity = `-- name: GetFeishuSourceByEntity :one
+SELECT id, entity_id, type, name, status, sync_enabled, created_at
+FROM identity_sources
+WHERE entity_id = $1 AND type = 'feishu' AND status = 'active'
+LIMIT 1
+`
+
+type GetFeishuSourceByEntityRow struct {
+	ID          string             `json:"id"`
+	EntityID    string             `json:"entity_id"`
+	Type        string             `json:"type"`
+	Name        string             `json:"name"`
+	Status      string             `json:"status"`
+	SyncEnabled bool               `json:"sync_enabled"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetFeishuSourceByEntity(ctx context.Context, entityID string) (GetFeishuSourceByEntityRow, error) {
+	row := q.db.QueryRow(ctx, getFeishuSourceByEntity, entityID)
+	var i GetFeishuSourceByEntityRow
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.Type,
+		&i.Name,
+		&i.Status,
+		&i.SyncEnabled,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -146,10 +148,10 @@ SET name = $2,
     sync_enabled = $4,
     config_encrypted = $5
 WHERE id = (
-    SELECT id
-    FROM identity_sources
-    WHERE entity_id = $1 AND type = 'feishu'
-    ORDER BY created_at DESC
+    SELECT src.id
+    FROM identity_sources src
+    WHERE src.entity_id = $1 AND src.type = 'feishu'
+    ORDER BY src.created_at DESC
     LIMIT 1
 )
 RETURNING id,
@@ -165,10 +167,10 @@ RETURNING id,
 
 type UpdateFeishuIdentitySourceConfigParams struct {
 	EntityID        string `json:"entity_id"`
-	DisplayName     string `json:"display_name"`
+	Name            string `json:"name"`
 	Status          string `json:"status"`
 	SyncEnabled     bool   `json:"sync_enabled"`
-	Config          []byte `json:"config"`
+	ConfigEncrypted []byte `json:"config_encrypted"`
 }
 
 type UpdateFeishuIdentitySourceConfigRow struct {
@@ -186,10 +188,10 @@ type UpdateFeishuIdentitySourceConfigRow struct {
 func (q *Queries) UpdateFeishuIdentitySourceConfig(ctx context.Context, arg UpdateFeishuIdentitySourceConfigParams) (UpdateFeishuIdentitySourceConfigRow, error) {
 	row := q.db.QueryRow(ctx, updateFeishuIdentitySourceConfig,
 		arg.EntityID,
-		arg.DisplayName,
+		arg.Name,
 		arg.Status,
 		arg.SyncEnabled,
-		arg.Config,
+		arg.ConfigEncrypted,
 	)
 	var i UpdateFeishuIdentitySourceConfigRow
 	err := row.Scan(

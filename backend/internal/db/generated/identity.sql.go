@@ -174,7 +174,7 @@ INSERT INTO users (
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 )
-RETURNING id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at, english_name, employee_no, job_title
+RETURNING id, entity_id, username, display_name, english_name, employee_no, job_title, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at
 `
 
 type CreateManagedUserParams struct {
@@ -215,6 +215,9 @@ func (q *Queries) CreateManagedUser(ctx context.Context, arg CreateManagedUserPa
 		&i.EntityID,
 		&i.Username,
 		&i.DisplayName,
+		&i.EnglishName,
+		&i.EmployeeNo,
+		&i.JobTitle,
 		&i.Email,
 		&i.Phone,
 		&i.AvatarUrl,
@@ -224,9 +227,6 @@ func (q *Queries) CreateManagedUser(ctx context.Context, arg CreateManagedUserPa
 		&i.Locale,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.EnglishName,
-		&i.EmployeeNo,
-		&i.JobTitle,
 	)
 	return i, err
 }
@@ -261,7 +261,7 @@ func (q *Queries) GetAccountBindingByProviderUID(ctx context.Context, arg GetAcc
 }
 
 const getDirectoryUserByExternalID = `-- name: GetDirectoryUserByExternalID :one
-SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
 FROM directory_users
 WHERE entity_id = $1 AND source_id = $2 AND external_user_id = $3
 `
@@ -283,6 +283,9 @@ func (q *Queries) GetDirectoryUserByExternalID(ctx context.Context, arg GetDirec
 		&i.ExternalUnionID,
 		&i.ExternalOpenID,
 		&i.Name,
+		&i.EnglishName,
+		&i.EmployeeNo,
+		&i.JobTitle,
 		&i.Email,
 		&i.Phone,
 		&i.AvatarUrl,
@@ -291,9 +294,6 @@ func (q *Queries) GetDirectoryUserByExternalID(ctx context.Context, arg GetDirec
 		&i.LastSyncedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.EnglishName,
-		&i.EmployeeNo,
-		&i.JobTitle,
 	)
 	return i, err
 }
@@ -345,7 +345,7 @@ func (q *Queries) GetEntityBySlug(ctx context.Context, slug string) (BusinessEnt
 }
 
 const getManagedUserByBinding = `-- name: GetManagedUserByBinding :one
-SELECT u.id, u.entity_id, u.username, u.display_name, u.email, u.phone, u.avatar_url, u.lifecycle_status, u.user_type, u.primary_source_id, u.locale, u.created_at, u.updated_at, u.english_name, u.employee_no, u.job_title
+SELECT u.id, u.entity_id, u.username, u.display_name, u.english_name, u.employee_no, u.job_title, u.email, u.phone, u.avatar_url, u.lifecycle_status, u.user_type, u.primary_source_id, u.locale, u.created_at, u.updated_at
 FROM users u
 JOIN account_bindings ab ON ab.entity_id = u.entity_id AND ab.user_id = u.id
 WHERE ab.entity_id = $1 AND ab.source_id = $2 AND ab.provider_uid = $3
@@ -365,6 +365,9 @@ func (q *Queries) GetManagedUserByBinding(ctx context.Context, arg GetManagedUse
 		&i.EntityID,
 		&i.Username,
 		&i.DisplayName,
+		&i.EnglishName,
+		&i.EmployeeNo,
+		&i.JobTitle,
 		&i.Email,
 		&i.Phone,
 		&i.AvatarUrl,
@@ -374,9 +377,6 @@ func (q *Queries) GetManagedUserByBinding(ctx context.Context, arg GetManagedUse
 		&i.Locale,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.EnglishName,
-		&i.EmployeeNo,
-		&i.JobTitle,
 	)
 	return i, err
 }
@@ -483,7 +483,7 @@ SET display_name = $4,
     lifecycle_status = $11,
     updated_at = now()
 WHERE entity_id = $1 AND id = $2 AND primary_source_id = $3
-RETURNING id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at, english_name, employee_no, job_title
+RETURNING id, entity_id, username, display_name, english_name, employee_no, job_title, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at
 `
 
 type UpdateManagedUserFromDirectoryParams struct {
@@ -520,6 +520,9 @@ func (q *Queries) UpdateManagedUserFromDirectory(ctx context.Context, arg Update
 		&i.EntityID,
 		&i.Username,
 		&i.DisplayName,
+		&i.EnglishName,
+		&i.EmployeeNo,
+		&i.JobTitle,
 		&i.Email,
 		&i.Phone,
 		&i.AvatarUrl,
@@ -529,9 +532,6 @@ func (q *Queries) UpdateManagedUserFromDirectory(ctx context.Context, arg Update
 		&i.Locale,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.EnglishName,
-		&i.EmployeeNo,
-		&i.JobTitle,
 	)
 	return i, err
 }
@@ -627,7 +627,7 @@ DO UPDATE SET
     raw_profile = EXCLUDED.raw_profile,
     last_synced_at = now(),
     updated_at = now()
-RETURNING id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
+RETURNING id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
 `
 
 type UpsertDirectoryUserParams struct {
@@ -673,6 +673,9 @@ func (q *Queries) UpsertDirectoryUser(ctx context.Context, arg UpsertDirectoryUs
 		&i.ExternalUnionID,
 		&i.ExternalOpenID,
 		&i.Name,
+		&i.EnglishName,
+		&i.EmployeeNo,
+		&i.JobTitle,
 		&i.Email,
 		&i.Phone,
 		&i.AvatarUrl,
@@ -681,9 +684,6 @@ func (q *Queries) UpsertDirectoryUser(ctx context.Context, arg UpsertDirectoryUs
 		&i.LastSyncedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.EnglishName,
-		&i.EmployeeNo,
-		&i.JobTitle,
 	)
 	return i, err
 }

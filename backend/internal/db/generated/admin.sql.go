@@ -98,7 +98,8 @@ func (q *Queries) GetApplicationByID(ctx context.Context, arg GetApplicationByID
 }
 
 const getDirectoryUserByID = `-- name: GetDirectoryUserByID :one
-SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
+
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
 FROM directory_users
 WHERE entity_id = $1 AND id = $2
 `
@@ -108,6 +109,7 @@ type GetDirectoryUserByIDParams struct {
 	ID       string `json:"id"`
 }
 
+// === Directory Users ===
 func (q *Queries) GetDirectoryUserByID(ctx context.Context, arg GetDirectoryUserByIDParams) (DirectoryUser, error) {
 	row := q.db.QueryRow(ctx, getDirectoryUserByID, arg.EntityID, arg.ID)
 	var i DirectoryUser
@@ -119,6 +121,9 @@ func (q *Queries) GetDirectoryUserByID(ctx context.Context, arg GetDirectoryUser
 		&i.ExternalUnionID,
 		&i.ExternalOpenID,
 		&i.Name,
+		&i.EnglishName,
+		&i.EmployeeNo,
+		&i.JobTitle,
 		&i.Email,
 		&i.Phone,
 		&i.AvatarUrl,
@@ -127,15 +132,12 @@ func (q *Queries) GetDirectoryUserByID(ctx context.Context, arg GetDirectoryUser
 		&i.LastSyncedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.EnglishName,
-		&i.EmployeeNo,
-		&i.JobTitle,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at, english_name, employee_no, job_title
+SELECT id, entity_id, username, display_name, english_name, employee_no, job_title, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at
 FROM users
 WHERE entity_id = $1 AND id = $2
 `
@@ -153,6 +155,9 @@ func (q *Queries) GetUserByID(ctx context.Context, arg GetUserByIDParams) (User,
 		&i.EntityID,
 		&i.Username,
 		&i.DisplayName,
+		&i.EnglishName,
+		&i.EmployeeNo,
+		&i.JobTitle,
 		&i.Email,
 		&i.Phone,
 		&i.AvatarUrl,
@@ -162,9 +167,6 @@ func (q *Queries) GetUserByID(ctx context.Context, arg GetUserByIDParams) (User,
 		&i.Locale,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.EnglishName,
-		&i.EmployeeNo,
-		&i.JobTitle,
 	)
 	return i, err
 }
@@ -264,7 +266,7 @@ func (q *Queries) ListApplications(ctx context.Context, arg ListApplicationsPara
 const listUsers = `-- name: ListUsers :many
 
 
-SELECT id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at, english_name, employee_no, job_title
+SELECT id, entity_id, username, display_name, english_name, employee_no, job_title, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at
 FROM users
 WHERE entity_id = $1
   AND ($4::text IS NULL OR lifecycle_status = $4::text)
@@ -300,6 +302,9 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, e
 			&i.EntityID,
 			&i.Username,
 			&i.DisplayName,
+			&i.EnglishName,
+			&i.EmployeeNo,
+			&i.JobTitle,
 			&i.Email,
 			&i.Phone,
 			&i.AvatarUrl,
@@ -309,9 +314,6 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, e
 			&i.Locale,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.EnglishName,
-			&i.EmployeeNo,
-			&i.JobTitle,
 		); err != nil {
 			return nil, err
 		}
@@ -367,7 +369,7 @@ SET display_name = COALESCE($3, display_name),
     locale = COALESCE($6, locale),
     updated_at = now()
 WHERE entity_id = $1 AND id = $2
-RETURNING id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at, english_name, employee_no, job_title
+RETURNING id, entity_id, username, display_name, english_name, employee_no, job_title, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at
 `
 
 type UpdateUserParams struct {
@@ -394,6 +396,9 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		&i.EntityID,
 		&i.Username,
 		&i.DisplayName,
+		&i.EnglishName,
+		&i.EmployeeNo,
+		&i.JobTitle,
 		&i.Email,
 		&i.Phone,
 		&i.AvatarUrl,
@@ -403,9 +408,6 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		&i.Locale,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.EnglishName,
-		&i.EmployeeNo,
-		&i.JobTitle,
 	)
 	return i, err
 }
@@ -414,7 +416,7 @@ const updateUserLifecycle = `-- name: UpdateUserLifecycle :one
 UPDATE users
 SET lifecycle_status = $3, updated_at = now()
 WHERE entity_id = $1 AND id = $2
-RETURNING id, entity_id, username, display_name, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at, english_name, employee_no, job_title
+RETURNING id, entity_id, username, display_name, english_name, employee_no, job_title, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at
 `
 
 type UpdateUserLifecycleParams struct {
@@ -431,6 +433,9 @@ func (q *Queries) UpdateUserLifecycle(ctx context.Context, arg UpdateUserLifecyc
 		&i.EntityID,
 		&i.Username,
 		&i.DisplayName,
+		&i.EnglishName,
+		&i.EmployeeNo,
+		&i.JobTitle,
 		&i.Email,
 		&i.Phone,
 		&i.AvatarUrl,
@@ -440,9 +445,6 @@ func (q *Queries) UpdateUserLifecycle(ctx context.Context, arg UpdateUserLifecyc
 		&i.Locale,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.EnglishName,
-		&i.EmployeeNo,
-		&i.JobTitle,
 	)
 	return i, err
 }

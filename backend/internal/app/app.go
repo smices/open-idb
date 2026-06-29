@@ -140,6 +140,8 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		adminCRUDService.SetOrganizationTreeCache(organizationTreeCache)
 		entityHandler := adminapi.NewEntityHandler(adminCRUDService)
 		routerOptions = append(routerOptions, entityHandler.RegisterRoutes)
+		platformHandler := adminapi.NewPlatformHandler(adminCRUDService)
+		routerOptions = append(routerOptions, platformHandler.RegisterRoutes)
 		userHandler := adminapi.NewUserHandler(adminCRUDService)
 		routerOptions = append(routerOptions, userHandler.RegisterRoutes)
 		directoryHandler := adminapi.NewDirectoryHandler(adminCRUDService)

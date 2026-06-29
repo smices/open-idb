@@ -85,6 +85,8 @@ func isPublicRoute(method string, path string) bool {
 	switch path {
 	case "/healthz", "/readyz":
 		return method == http.MethodGet
+	case "/api/platform/branding":
+		return method == http.MethodGet
 	case "/api/auth/context", "/api/auth/providers", "/sapi/auth/context":
 		return method == http.MethodGet
 	case "/api/login/account", "/sapi/login/account", "/auth/feishu/exchange", "/api/auth/feishu/exchange":

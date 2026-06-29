@@ -7,8 +7,10 @@
   import {
     authLoading,
     authUser,
+    platformBranding,
     sidebarCollapsed,
     initLocaleFromStorage,
+    setPlatformBranding,
     toggleSidebar,
     type UserSummary,
   } from '$lib/stores';
@@ -27,6 +29,7 @@
     GitBranch,
     Network,
     RefreshCw,
+    Settings,
     ShieldCheck,
     UserCog,
     UserRound,
@@ -36,6 +39,9 @@
 
   let { children } = $props();
   let hasIdentitySource = $state(false);
+
+  const brandName = $derived($platformBranding.platform_name || t('app.title'));
+  const brandLogoUrl = $derived($platformBranding.logo_url || '/logo.svg');
 
   const portalItems = [
     { id: 'portal', path: '/portal', label: t('nav.portal.apps'), title: t('portal.title'), icon: AppWindow },
@@ -71,6 +77,7 @@
       label: t('nav.admin.system'),
       items: [
         { id: 'entities', path: '/admin/entities', label: t('entities.title'), title: t('entities.title'), description: t('nav.admin.entitiesDescription'), icon: Building2 },
+        { id: 'platform', path: '/admin/platform', label: t('platform.title'), title: t('platform.title'), description: t('nav.admin.platformDescription'), icon: Settings },
         { id: 'adminUsers', path: '/admin/admin-users', label: t('adminUsers.title'), title: t('adminUsers.title'), description: t('nav.admin.adminUsersDescription'), icon: UserCog },
         { id: 'audit', path: '/admin/audit', label: t('audit.title'), title: t('audit.title'), description: t('nav.admin.auditDescription'), icon: FileSearch },
       ],
@@ -100,7 +107,7 @@
     adminGroups
       .map((group) => ({
         ...group,
-        items: group.items.filter((item) => item.id !== 'adminUsers' || $authUser?.capabilities?.includes('system')),
+        items: group.items.filter((item) => (item.id !== 'adminUsers' && item.id !== 'platform') || $authUser?.capabilities?.includes('system')),
       }))
       .filter((group) => group.items.length > 0),
   );
@@ -113,6 +120,11 @@
     initThemeFromStorage();
 
     if (!browser) return;
+
+    void api
+      .getPlatformBranding()
+      .then(setPlatformBranding)
+      .catch(() => undefined);
 
     const initSession = async () => {
       if (isLoginPath(page.url.pathname)) {
@@ -161,6 +173,13 @@
   };
 </script>
 
+<svelte:head>
+  <meta name="application-name" content={brandName} />
+  {#if $platformBranding.favicon_url}
+    <link rel="icon" href={$platformBranding.favicon_url} />
+  {/if}
+</svelte:head>
+
 <div class="glass-page min-h-dvh text-surface-950-50">
   {#if isLoginPage}
     <main class="w-full min-h-dvh">
@@ -183,11 +202,11 @@
     <main class="portal-shell min-h-dvh">
       <header class="portal-topbar">
         <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-3 lg:px-8">
-          <a class="inline-flex items-center gap-3 no-underline" href="/portal" aria-label={t('app.title')}>
+          <a class="inline-flex items-center gap-3 no-underline" href="/portal" aria-label={brandName}>
             <span class="portal-brand-mark">
-              <img class="size-7" src="/logo.svg" alt="" aria-hidden="true" />
+              <img class="size-7" src={brandLogoUrl} alt="" aria-hidden="true" />
             </span>
-            <span class="text-sm font-semibold">{t('app.title')}</span>
+            <span class="text-sm font-semibold">{brandName}</span>
           </a>
           <nav class="portal-nav" aria-label="Portal">
             {#each portalItems as item}
@@ -215,11 +234,11 @@
       <aside class="sidebar" aria-label="Admin">
         <div class={$sidebarCollapsed ? 'brand collapsed' : 'brand'}>
           <div class="brand-mark">
-            <img src="/logo.svg" alt="" aria-hidden="true" />
+            <img src={brandLogoUrl} alt="" aria-hidden="true" />
           </div>
           {#if !$sidebarCollapsed}
             <div>
-              <strong>{t('app.title')}</strong>
+              <strong>{brandName}</strong>
               <span>Admin Console</span>
             </div>
           {/if}

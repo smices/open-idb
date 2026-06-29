@@ -56,11 +56,11 @@ func (s *ConfigDBService) UpsertFeishuConfig(ctx context.Context, session auth.S
 		return FeishuIdentitySourceConfig{}, err
 	}
 	row, err := s.queries.UpdateFeishuIdentitySourceConfig(ctx, generated.UpdateFeishuIdentitySourceConfigParams{
-		EntityID:    entityID,
-		DisplayName: input.DisplayName,
-		Status:      input.Status,
-		SyncEnabled: input.SyncEnabled,
-		Config:      normalizeFeishuIdentitySourceConfig(input.Config),
+		EntityID:        entityID,
+		Name:            input.DisplayName,
+		Status:          input.Status,
+		SyncEnabled:     input.SyncEnabled,
+		ConfigEncrypted: normalizeFeishuIdentitySourceConfig(input.Config),
 	})
 	if err != nil {
 		return FeishuIdentitySourceConfig{}, err

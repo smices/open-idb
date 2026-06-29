@@ -40,6 +40,15 @@ CREATE TABLE business_entities (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE platform_settings (
+    id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    platform_name TEXT NOT NULL DEFAULT 'IdBridge',
+    logo_url TEXT NOT NULL DEFAULT '',
+    favicon_url TEXT NOT NULL DEFAULT '',
+    title_suffix TEXT NOT NULL DEFAULT '',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE identity_sources (
     id CHAR(26) PRIMARY KEY DEFAULT idb_generate_ulid() CHECK (id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
     entity_id CHAR(26) NOT NULL CHECK (entity_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$') REFERENCES business_entities(id) ON DELETE CASCADE,
@@ -362,6 +371,15 @@ CREATE TABLE admin_sessions (
 );
 
 CREATE INDEX idx_admin_sessions_active ON admin_sessions(admin_user_id, expires_at) WHERE revoked_at IS NULL;
+
+INSERT INTO platform_settings (id, platform_name, logo_url, favicon_url, title_suffix)
+VALUES (1, 'IdBridge', '', '', '')
+ON CONFLICT (id) DO UPDATE SET
+    platform_name = EXCLUDED.platform_name,
+    logo_url = EXCLUDED.logo_url,
+    favicon_url = EXCLUDED.favicon_url,
+    title_suffix = EXCLUDED.title_suffix,
+    updated_at = now();
 
 WITH entity_row AS (
     INSERT INTO business_entities (name, slug, status, default_locale, brand_name, logo_url, login_message)

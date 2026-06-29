@@ -589,7 +589,7 @@ func (q *Queries) ListDepartments(ctx context.Context, arg ListDepartmentsParams
 }
 
 const listDirectoryUsersByDepartmentExternalID = `-- name: ListDirectoryUsersByDepartmentExternalID :many
-SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
 FROM directory_users
 WHERE entity_id = $1
   AND source_id = $2
@@ -635,6 +635,9 @@ func (q *Queries) ListDirectoryUsersByDepartmentExternalID(ctx context.Context, 
 			&i.ExternalUnionID,
 			&i.ExternalOpenID,
 			&i.Name,
+			&i.EnglishName,
+			&i.EmployeeNo,
+			&i.JobTitle,
 			&i.Email,
 			&i.Phone,
 			&i.AvatarUrl,
@@ -643,9 +646,6 @@ func (q *Queries) ListDirectoryUsersByDepartmentExternalID(ctx context.Context, 
 			&i.LastSyncedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.EnglishName,
-			&i.EmployeeNo,
-			&i.JobTitle,
 		); err != nil {
 			return nil, err
 		}
@@ -859,7 +859,7 @@ func (q *Queries) ListRootDepartments(ctx context.Context, arg ListRootDepartmen
 }
 
 const listRootDirectoryUsers = `-- name: ListRootDirectoryUsers :many
-SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
 FROM directory_users
 WHERE entity_id = $1
   AND (
@@ -910,6 +910,9 @@ func (q *Queries) ListRootDirectoryUsers(ctx context.Context, arg ListRootDirect
 			&i.ExternalUnionID,
 			&i.ExternalOpenID,
 			&i.Name,
+			&i.EnglishName,
+			&i.EmployeeNo,
+			&i.JobTitle,
 			&i.Email,
 			&i.Phone,
 			&i.AvatarUrl,
@@ -918,9 +921,6 @@ func (q *Queries) ListRootDirectoryUsers(ctx context.Context, arg ListRootDirect
 			&i.LastSyncedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.EnglishName,
-			&i.EmployeeNo,
-			&i.JobTitle,
 		); err != nil {
 			return nil, err
 		}
@@ -1084,7 +1084,7 @@ func (q *Queries) SearchOrganizationTreeDepartments(ctx context.Context, arg Sea
 }
 
 const searchOrganizationTreeUsers = `-- name: SearchOrganizationTreeUsers :many
-SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at, english_name, employee_no, job_title
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
 FROM directory_users
 WHERE entity_id = $1
   AND (
@@ -1129,6 +1129,9 @@ func (q *Queries) SearchOrganizationTreeUsers(ctx context.Context, arg SearchOrg
 			&i.ExternalUnionID,
 			&i.ExternalOpenID,
 			&i.Name,
+			&i.EnglishName,
+			&i.EmployeeNo,
+			&i.JobTitle,
 			&i.Email,
 			&i.Phone,
 			&i.AvatarUrl,
@@ -1137,9 +1140,6 @@ func (q *Queries) SearchOrganizationTreeUsers(ctx context.Context, arg SearchOrg
 			&i.LastSyncedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.EnglishName,
-			&i.EmployeeNo,
-			&i.JobTitle,
 		); err != nil {
 			return nil, err
 		}

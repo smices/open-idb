@@ -2,6 +2,7 @@
 
 <script lang="ts">
   import { t } from '$lib/i18n';
+  import { platformBranding } from '$lib/stores';
   import { ArrowRight, Building2, FileCheck2, KeyRound, ShieldCheck } from 'lucide-svelte';
 
   const metrics = [
@@ -15,20 +16,24 @@
     { icon: KeyRound, title: 'login.assurance.access', description: 'login.assurance.accessDescription' },
     { icon: FileCheck2, title: 'login.assurance.audit', description: 'login.assurance.auditDescription' },
   ];
+
+  const brandName = $derived($platformBranding.platform_name || t('app.title'));
+  const brandLogoUrl = $derived($platformBranding.logo_url || '/logo.svg');
+  const browserTitle = $derived($platformBranding.title_suffix ? `${brandName} · ${$platformBranding.title_suffix}` : brandName);
 </script>
 
 <svelte:head>
-  <title>{t('login.homeTitle')}</title>
+  <title>{browserTitle}</title>
 </svelte:head>
 
-<main class="glass-page-dark min-h-dvh px-5 py-6 text-surface-950-50 lg:px-12">
-  <section class="mx-auto flex min-h-[calc(100dvh-3rem)] max-w-7xl flex-col gap-8">
+<main class="home-page min-h-dvh overflow-hidden px-5 py-6 text-surface-950-50 lg:px-12">
+  <section class="relative z-10 mx-auto flex min-h-[calc(100dvh-3rem)] max-w-7xl flex-col gap-8">
     <header class="flex items-center justify-between gap-4">
-      <a class="inline-flex items-center gap-3 text-surface-950-50 no-underline" href="/" aria-label={t('app.title')}>
-        <span class="preset-glass-primary inline-flex size-10 items-center justify-center rounded-container">
-          <img class="size-7" src="/logo.svg" alt="" aria-hidden="true" />
+      <a class="inline-flex items-center gap-3 text-surface-950-50 no-underline" href="/" aria-label={brandName}>
+        <span class="home-brand-mark inline-flex size-10 items-center justify-center rounded-container">
+          <img class="size-7" src={brandLogoUrl} alt="" aria-hidden="true" />
         </span>
-        <span class="text-sm font-semibold tracking-wide">{t('app.title')}</span>
+        <span class="text-sm font-semibold tracking-wide">{brandName}</span>
       </a>
     </header>
 
@@ -43,9 +48,6 @@
             {t('login.primaryCta')}
             <ArrowRight size={18} aria-hidden="true" />
           </a>
-          <a class="btn h-12 justify-center rounded-container border border-surface-300-700 bg-surface-50-950 px-5 text-base font-semibold text-surface-950-50 hover:border-primary-400" href="/admin/login">
-            {t('login.consoleCta')}
-          </a>
         </div>
 
         <div class="mt-8 grid max-w-2xl grid-cols-3 gap-3">
@@ -58,7 +60,7 @@
         </div>
       </section>
 
-      <aside class="rounded-container border border-surface-300-700 bg-surface-50-950 p-5 shadow-2xl shadow-black/20">
+      <aside class="home-assurance-card rounded-container border border-surface-300-700 bg-surface-50-950 p-5 shadow-2xl shadow-black/20">
         <div class="mb-5 flex items-center gap-3">
           <span class="preset-glass-primary inline-flex size-11 items-center justify-center rounded-container text-primary-200">
             <Building2 size={22} aria-hidden="true" />
