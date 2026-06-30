@@ -4,7 +4,7 @@
   import { onMount } from 'svelte';
   import { Copy, KeyRound, Plus, Settings, Trash2 } from 'lucide-svelte';
   import { t } from '$lib/i18n';
-  import { api, type Application, type OIDCClient } from '$lib/api';
+  import { api, type Application, type OIDCClient, type Role } from '$lib/api';
   import IdConfirmDialog from '$lib/components/ui/IdConfirmDialog.svelte';
   import IdModal from '$lib/components/ui/IdModal.svelte';
   import { notifyError, notifySuccess } from '$lib/toast';
@@ -33,6 +33,9 @@
   let oidcClientSecret = '';
   let copiedValue = '';
   let idbridgeOrigin = '';
+  let roles: Role[] = [];
+  let selectedRoleIds: string[] = [];
+  let rolesLoading = false;
 
   const applicationTypes = ['oidc_client', 'api_client', 'internal_app'];
   const applicationStatuses = ['active', 'disabled'];
@@ -40,6 +43,21 @@
 
   const applicationTypeLabel = (value: string): string => t(`applications.type.${value}`, value);
   const applicationStatusLabel = (value: string): string => t(`applications.status.${value}`, value);
+  const employeeRoleId = (): string => roles.find((role) => role.code === 'employee')?.id || '';
+  const setDefaultAccessRoles = () => {
+    const roleId = employeeRoleId();
+    selectedRoleIds = roleId ? [roleId] : [];
+  };
+  const roleSelected = (roleId: string): boolean => selectedRoleIds.includes(roleId);
+  const toggleRole = (roleId: string, checked: boolean) => {
+    const next = new Set(selectedRoleIds);
+    if (checked) {
+      next.add(roleId);
+    } else {
+      next.delete(roleId);
+    }
+    selectedRoleIds = Array.from(next);
+  };
 
   const formatDate = (value?: string): string => (value ? new Date(value).toLocaleString() : '-');
   const copyIconLabel = (value?: string): string => (copiedValue === value ? t('common.copied') : t('common.copy'));
@@ -134,6 +152,30 @@
     }
   };
 
+  const loadRoles = async () => {
+    rolesLoading = true;
+    try {
+      const data = await api.listRoles({ limit: 200 });
+      roles = data.items || [];
+      if (selectedRoleIds.length === 0) setDefaultAccessRoles();
+    } catch {
+      notifyError(t('applications.fetchRolesFailed'));
+    } finally {
+      rolesLoading = false;
+    }
+  };
+
+  const loadApplicationRoleAssignments = async (applicationId: string) => {
+    try {
+      const data = await api.listApplicationRoleAssignments(applicationId);
+      selectedRoleIds = (data.roles || data.items || []).filter((item) => item.effect === 'allow').map((item) => item.role_id);
+      if (selectedRoleIds.length === 0) setDefaultAccessRoles();
+    } catch {
+      notifyError(t('applications.fetchAccessFailed'));
+      setDefaultAccessRoles();
+    }
+  };
+
   const loadApplications = async () => {
     loading = true;
     error = '';
@@ -154,6 +196,7 @@
     appType = 'oidc_client';
     appStatus = 'active';
     resetOIDCForm();
+    setDefaultAccessRoles();
     error = '';
     dialogOpen = true;
   };
@@ -165,8 +208,10 @@
     appType = item.type;
     appStatus = item.status;
     resetOIDCForm();
+    setDefaultAccessRoles();
     error = '';
     dialogOpen = true;
+    await loadApplicationRoleAssignments(item.id);
     if (item.type === 'oidc_client') {
       await loadOIDCConfig(item.id);
     }
@@ -243,6 +288,7 @@
           oidcStatus = result.client.status || 'active';
         }
       }
+      await api.setApplicationRoleAssignments(savedApp.id, selectedRoleIds);
       notifySuccess(t('applications.saveSuccess'));
       if (shouldSaveOIDC) {
         appEditingId = savedApp.id;
@@ -293,6 +339,7 @@
       idbridgeOrigin = `${window.location.origin}${apiTarget}`.replace(/\/$/, '');
     }
     void loadApplications();
+    void loadRoles();
   });
 </script>
 
@@ -512,6 +559,32 @@
                 <span class="text-xs text-surface-500">{t('applications.redirectUris')}</span>
                 <textarea class="textarea w-full bg-surface-50-950 font-mono text-sm" rows="2" bind:value={oidcRedirectUris}></textarea>
               </label>
+
+              <section class="space-y-2 rounded-container border border-surface-200-800 bg-surface-50-950 p-3">
+                <h4 class="text-xs font-medium text-surface-500">{t('applications.accessRoles')}</h4>
+                {#if rolesLoading}
+                  <div class="text-sm text-surface-500">{t('common.loading')}</div>
+                {:else if !roles.length}
+                  <div class="text-sm text-surface-500">{t('applications.noRoles')}</div>
+                {:else}
+                  <div class="grid gap-2 sm:grid-cols-2">
+                    {#each roles as role}
+                      <label class="flex items-start gap-2 text-sm">
+                        <input
+                          class="checkbox mt-0.5"
+                          type="checkbox"
+                          checked={roleSelected(role.id)}
+                          on:change={(event) => toggleRole(role.id, event.currentTarget.checked)}
+                        />
+                        <span class="min-w-0">
+                          <span class="block font-medium">{role.name}</span>
+                          <span class="block truncate text-xs text-surface-500">{role.description || role.code}</span>
+                        </span>
+                      </label>
+                    {/each}
+                  </div>
+                {/if}
+              </section>
 
               {#if oidcClient}
                 <section class="space-y-2">

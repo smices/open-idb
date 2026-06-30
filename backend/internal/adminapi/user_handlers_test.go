@@ -74,6 +74,12 @@ func (m *mockUserService) UpdateApplication(_ context.Context, _, _ string, _, _
 	return ApplicationResponse{}, nil
 }
 func (m *mockUserService) DeleteApplication(_ context.Context, _, _ string) error { return nil }
+func (m *mockUserService) ListApplicationRoleAssignments(_ context.Context, _, _ string) ([]ApplicationRoleAssignmentResponse, error) {
+	return nil, nil
+}
+func (m *mockUserService) SetApplicationRoleAssignments(_ context.Context, _, _ string, _ []string) error {
+	return nil
+}
 func (m *mockUserService) ListAllSyncJobs(_ context.Context, _ string, _, _ int32) ([]SyncJobResponse, error) {
 	return nil, nil
 }

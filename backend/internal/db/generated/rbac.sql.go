@@ -70,6 +70,25 @@ func (q *Queries) AssignRoleToUser(ctx context.Context, arg AssignRoleToUserPara
 	return err
 }
 
+const assignRoleToUserByCode = `-- name: AssignRoleToUserByCode :exec
+INSERT INTO user_roles (entity_id, user_id, role_id)
+SELECT $1, $2, r.id
+FROM roles r
+WHERE r.entity_id = $1 AND r.code = $3
+ON CONFLICT DO NOTHING
+`
+
+type AssignRoleToUserByCodeParams struct {
+	EntityID string `json:"entity_id"`
+	UserID   string `json:"user_id"`
+	Code     string `json:"code"`
+}
+
+func (q *Queries) AssignRoleToUserByCode(ctx context.Context, arg AssignRoleToUserByCodeParams) error {
+	_, err := q.db.Exec(ctx, assignRoleToUserByCode, arg.EntityID, arg.UserID, arg.Code)
+	return err
+}
+
 const countPermissions = `-- name: CountPermissions :one
 SELECT count(*)::bigint
 FROM permissions
@@ -393,8 +412,26 @@ func (q *Queries) GetRoleByID(ctx context.Context, arg GetRoleByIDParams) (Role,
 	return i, err
 }
 
-const hasApplicationAccess = `-- name: HasApplicationAccess :one
+const grantApplicationAccessToRoleCode = `-- name: GrantApplicationAccessToRoleCode :exec
+INSERT INTO application_assignments (entity_id, application_id, subject_type, subject_id, effect)
+SELECT $1, $2, 'role', r.id, 'allow'
+FROM roles r
+WHERE r.entity_id = $1 AND r.code = $3
+ON CONFLICT (entity_id, application_id, subject_type, subject_id, effect) DO NOTHING
+`
 
+type GrantApplicationAccessToRoleCodeParams struct {
+	EntityID      string `json:"entity_id"`
+	ApplicationID string `json:"application_id"`
+	Code          string `json:"code"`
+}
+
+func (q *Queries) GrantApplicationAccessToRoleCode(ctx context.Context, arg GrantApplicationAccessToRoleCodeParams) error {
+	_, err := q.db.Exec(ctx, grantApplicationAccessToRoleCode, arg.EntityID, arg.ApplicationID, arg.Code)
+	return err
+}
+
+const hasApplicationAccess = `-- name: HasApplicationAccess :one
 SELECT
     EXISTS (
         SELECT 1
@@ -436,12 +473,76 @@ type HasApplicationAccessParams struct {
 	SubjectID     string `json:"subject_id"`
 }
 
-// === Application Assignments ===
 func (q *Queries) HasApplicationAccess(ctx context.Context, arg HasApplicationAccessParams) (pgtype.Bool, error) {
 	row := q.db.QueryRow(ctx, hasApplicationAccess, arg.EntityID, arg.ApplicationID, arg.SubjectID)
 	var has_access pgtype.Bool
 	err := row.Scan(&has_access)
 	return has_access, err
+}
+
+const listApplicationRoleAssignments = `-- name: ListApplicationRoleAssignments :many
+
+SELECT
+    aa.id,
+    aa.entity_id,
+    aa.application_id,
+    aa.subject_id AS role_id,
+    r.code AS role_code,
+    r.name AS role_name,
+    aa.effect,
+    aa.created_at
+FROM application_assignments aa
+JOIN roles r ON r.entity_id = aa.entity_id AND r.id = aa.subject_id
+WHERE aa.entity_id = $1
+  AND aa.application_id = $2
+  AND aa.subject_type = 'role'
+ORDER BY r.name ASC
+`
+
+type ListApplicationRoleAssignmentsParams struct {
+	EntityID      string `json:"entity_id"`
+	ApplicationID string `json:"application_id"`
+}
+
+type ListApplicationRoleAssignmentsRow struct {
+	ID            string             `json:"id"`
+	EntityID      string             `json:"entity_id"`
+	ApplicationID string             `json:"application_id"`
+	RoleID        string             `json:"role_id"`
+	RoleCode      string             `json:"role_code"`
+	RoleName      string             `json:"role_name"`
+	Effect        string             `json:"effect"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+// === Application Assignments ===
+func (q *Queries) ListApplicationRoleAssignments(ctx context.Context, arg ListApplicationRoleAssignmentsParams) ([]ListApplicationRoleAssignmentsRow, error) {
+	rows, err := q.db.Query(ctx, listApplicationRoleAssignments, arg.EntityID, arg.ApplicationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListApplicationRoleAssignmentsRow{}
+	for rows.Next() {
+		var i ListApplicationRoleAssignmentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.ApplicationID,
+			&i.RoleID,
+			&i.RoleCode,
+			&i.RoleName,
+			&i.Effect,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listPermissions = `-- name: ListPermissions :many
@@ -758,6 +859,35 @@ type RemoveRoleFromUserParams struct {
 
 func (q *Queries) RemoveRoleFromUser(ctx context.Context, arg RemoveRoleFromUserParams) error {
 	_, err := q.db.Exec(ctx, removeRoleFromUser, arg.EntityID, arg.UserID, arg.RoleID)
+	return err
+}
+
+const setApplicationRoleAssignments = `-- name: SetApplicationRoleAssignments :exec
+WITH selected_roles AS (
+    SELECT unnest($3::char(26)[]) AS role_id
+),
+deleted AS (
+    DELETE FROM application_assignments aa
+    WHERE aa.entity_id = $1
+      AND aa.application_id = $2
+      AND aa.subject_type = 'role'
+      AND aa.subject_id NOT IN (SELECT role_id FROM selected_roles)
+)
+INSERT INTO application_assignments (entity_id, application_id, subject_type, subject_id, effect)
+SELECT $1, $2, 'role', sr.role_id, 'allow'
+FROM selected_roles sr
+JOIN roles r ON r.entity_id = $1 AND r.id = sr.role_id
+ON CONFLICT (entity_id, application_id, subject_type, subject_id, effect) DO NOTHING
+`
+
+type SetApplicationRoleAssignmentsParams struct {
+	EntityID      string   `json:"entity_id"`
+	ApplicationID string   `json:"application_id"`
+	RoleIds       []string `json:"role_ids"`
+}
+
+func (q *Queries) SetApplicationRoleAssignments(ctx context.Context, arg SetApplicationRoleAssignmentsParams) error {
+	_, err := q.db.Exec(ctx, setApplicationRoleAssignments, arg.EntityID, arg.ApplicationID, arg.RoleIds)
 	return err
 }
 

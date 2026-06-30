@@ -29,6 +29,8 @@ func (h ApplicationHandler) RegisterRoutes(r chi.Router) {
 	r.Post("/sapi/applications", h.createApplication)
 	r.Put("/sapi/applications/{id}", h.updateApplication)
 	r.Delete("/sapi/applications/{id}", h.deleteApplication)
+	r.Get("/sapi/applications/{id}/role-assignments", h.listRoleAssignments)
+	r.Put("/sapi/applications/{id}/role-assignments", h.setRoleAssignments)
 }
 
 func (h ApplicationHandler) resolveEntityID(ctx context.Context, candidate string) (string, error) {
@@ -176,4 +178,76 @@ func (h ApplicationHandler) deleteApplication(w http.ResponseWriter, r *http.Req
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h ApplicationHandler) listRoleAssignments(w http.ResponseWriter, r *http.Request) {
+	session, ok := readSession(w, r)
+	if !ok {
+		return
+	}
+	entityID, err := h.resolveEntityID(r.Context(), session.EntityID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_entity_id", err.Error())
+		return
+	}
+	id, err := ulidValue(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_application_id", err.Error())
+		return
+	}
+	assignments, err := h.service.ListApplicationRoleAssignments(r.Context(), entityID, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "application_assignment_list_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"items": assignments,
+		"roles": assignments,
+	})
+}
+
+func (h ApplicationHandler) setRoleAssignments(w http.ResponseWriter, r *http.Request) {
+	session, ok := readSession(w, r)
+	if !ok {
+		return
+	}
+	entityID, err := h.resolveEntityID(r.Context(), session.EntityID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_entity_id", err.Error())
+		return
+	}
+	id, err := ulidValue(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_application_id", err.Error())
+		return
+	}
+	var body struct {
+		RoleIDs []string `json:"role_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json body")
+		return
+	}
+	roleIDs := make([]string, 0, len(body.RoleIDs))
+	for _, roleID := range body.RoleIDs {
+		value, err := ulidValue(roleID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_role_id", err.Error())
+			return
+		}
+		roleIDs = append(roleIDs, value)
+	}
+	if err := h.service.SetApplicationRoleAssignments(r.Context(), entityID, id, roleIDs); err != nil {
+		writeError(w, http.StatusInternalServerError, "application_assignment_update_failed", err.Error())
+		return
+	}
+	assignments, err := h.service.ListApplicationRoleAssignments(r.Context(), entityID, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "application_assignment_list_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"items": assignments,
+		"roles": assignments,
+	})
 }

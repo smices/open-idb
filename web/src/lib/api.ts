@@ -424,6 +424,17 @@ export interface Role {
   created_at?: string;
 }
 
+export interface ApplicationRoleAssignment {
+  id: string;
+  entity_id: string;
+  application_id: string;
+  role_id: string;
+  role_code: string;
+  role_name: string;
+  effect: string;
+  created_at?: string;
+}
+
 export interface Permission {
   id: string;
   entity_id: string;
@@ -711,6 +722,18 @@ export const api = {
     }),
   deleteApplication: (id: string) =>
     apiRequest<void>(`/sapi/applications/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  listApplicationRoleAssignments: (id: string) =>
+    apiRequest<{ items: ApplicationRoleAssignment[]; roles: ApplicationRoleAssignment[] }>(
+      `/sapi/applications/${encodeURIComponent(id)}/role-assignments`,
+    ),
+  setApplicationRoleAssignments: (id: string, roleIds: string[]) =>
+    apiRequest<{ items: ApplicationRoleAssignment[]; roles: ApplicationRoleAssignment[] }>(
+      `/sapi/applications/${encodeURIComponent(id)}/role-assignments`,
+      {
+        method: 'PUT',
+        body: { role_ids: roleIds },
+      },
+    ),
 
   listOIDCClients: (params?: { limit?: number; offset?: number }) => {
     const suffix = queryString({ limit: params?.limit, offset: params?.offset });

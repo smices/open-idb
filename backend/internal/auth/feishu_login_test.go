@@ -76,6 +76,7 @@ type mockLoginQueries struct {
 	createUserFn      func(context.Context, generated.CreateManagedUserParams) (generated.User, error)
 	createBindingFn   func(context.Context, generated.CreateAccountBindingParams) (generated.AccountBinding, error)
 	updateUserFn      func(context.Context, generated.UpdateManagedUserFromDirectoryParams) (generated.User, error)
+	assignRoleFn      func(context.Context, generated.AssignRoleToUserByCodeParams) error
 	getSourceFn       func(context.Context, string) (generated.GetFeishuSourceByEntityRow, error)
 	getEntityBySlugFn func(context.Context, string) (generated.BusinessEntity, error)
 }
@@ -94,6 +95,12 @@ func (m *mockLoginQueries) CreateAccountBinding(ctx context.Context, arg generat
 }
 func (m *mockLoginQueries) UpdateManagedUserFromDirectory(ctx context.Context, arg generated.UpdateManagedUserFromDirectoryParams) (generated.User, error) {
 	return m.updateUserFn(ctx, arg)
+}
+func (m *mockLoginQueries) AssignRoleToUserByCode(ctx context.Context, arg generated.AssignRoleToUserByCodeParams) error {
+	if m.assignRoleFn != nil {
+		return m.assignRoleFn(ctx, arg)
+	}
+	return nil
 }
 func (m *mockLoginQueries) GetFeishuSourceByEntity(ctx context.Context, entityID string) (generated.GetFeishuSourceByEntityRow, error) {
 	return m.getSourceFn(ctx, entityID)

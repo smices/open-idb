@@ -65,6 +65,13 @@ INSERT INTO user_roles (entity_id, user_id, role_id)
 VALUES ($1, $2, $3)
 ON CONFLICT DO NOTHING;
 
+-- name: AssignRoleToUserByCode :exec
+INSERT INTO user_roles (entity_id, user_id, role_id)
+SELECT $1, $2, r.id
+FROM roles r
+WHERE r.entity_id = $1 AND r.code = $3
+ON CONFLICT DO NOTHING;
+
 -- name: ListUserRoles :many
 SELECT r.id, r.entity_id, r.name, r.code, r.description, r.created_at, r.updated_at
 FROM roles r
@@ -170,6 +177,47 @@ DELETE FROM role_resource_scopes
 WHERE entity_id = $1 AND role_id = $2 AND resource_scope_id = $3;
 
 -- === Application Assignments ===
+
+-- name: ListApplicationRoleAssignments :many
+SELECT
+    aa.id,
+    aa.entity_id,
+    aa.application_id,
+    aa.subject_id AS role_id,
+    r.code AS role_code,
+    r.name AS role_name,
+    aa.effect,
+    aa.created_at
+FROM application_assignments aa
+JOIN roles r ON r.entity_id = aa.entity_id AND r.id = aa.subject_id
+WHERE aa.entity_id = $1
+  AND aa.application_id = $2
+  AND aa.subject_type = 'role'
+ORDER BY r.name ASC;
+
+-- name: SetApplicationRoleAssignments :exec
+WITH selected_roles AS (
+    SELECT unnest(sqlc.arg('role_ids')::char(26)[]) AS role_id
+),
+deleted AS (
+    DELETE FROM application_assignments aa
+    WHERE aa.entity_id = $1
+      AND aa.application_id = $2
+      AND aa.subject_type = 'role'
+      AND aa.subject_id NOT IN (SELECT role_id FROM selected_roles)
+)
+INSERT INTO application_assignments (entity_id, application_id, subject_type, subject_id, effect)
+SELECT $1, $2, 'role', sr.role_id, 'allow'
+FROM selected_roles sr
+JOIN roles r ON r.entity_id = $1 AND r.id = sr.role_id
+ON CONFLICT (entity_id, application_id, subject_type, subject_id, effect) DO NOTHING;
+
+-- name: GrantApplicationAccessToRoleCode :exec
+INSERT INTO application_assignments (entity_id, application_id, subject_type, subject_id, effect)
+SELECT $1, $2, 'role', r.id, 'allow'
+FROM roles r
+WHERE r.entity_id = $1 AND r.code = $3
+ON CONFLICT (entity_id, application_id, subject_type, subject_id, effect) DO NOTHING;
 
 -- name: HasApplicationAccess :one
 SELECT

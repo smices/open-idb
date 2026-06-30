@@ -290,6 +290,34 @@ func (s *AdminService) DeleteApplication(ctx context.Context, entityID, id strin
 	})
 }
 
+func (s *AdminService) ListApplicationRoleAssignments(ctx context.Context, entityID, applicationID string) ([]ApplicationRoleAssignmentResponse, error) {
+	rows, err := s.queries.ListApplicationRoleAssignments(ctx, generated.ListApplicationRoleAssignmentsParams{
+		EntityID:      entityID,
+		ApplicationID: applicationID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	assignments := make([]ApplicationRoleAssignmentResponse, 0, len(rows))
+	for _, row := range rows {
+		assignments = append(assignments, applicationRoleAssignmentFromRow(row))
+	}
+	return assignments, nil
+}
+
+func (s *AdminService) SetApplicationRoleAssignments(ctx context.Context, entityID, applicationID string, roleIDs []string) error {
+	before, _ := s.ListApplicationRoleAssignments(ctx, entityID, applicationID)
+	if err := s.queries.SetApplicationRoleAssignments(ctx, generated.SetApplicationRoleAssignmentsParams{
+		EntityID:      entityID,
+		ApplicationID: applicationID,
+		RoleIds:       roleIDs,
+	}); err != nil {
+		return err
+	}
+	after, _ := s.ListApplicationRoleAssignments(ctx, entityID, applicationID)
+	return s.audit.logUpdate(ctx, entityID, "", "application", applicationID, before, after)
+}
+
 // --- Sync Jobs ---
 
 func (s *AdminService) ListAllSyncJobs(ctx context.Context, entityID string, limit, offset int32) ([]SyncJobResponse, error) {
@@ -649,6 +677,13 @@ func (s *AdminService) CreateOIDCClient(ctx context.Context, params generated.Cr
 
 	row, err := s.queries.CreateOIDCClient(ctx, params)
 	if err != nil {
+		return OIDCClientResponse{}, "", err
+	}
+	if err := s.queries.GrantApplicationAccessToRoleCode(ctx, generated.GrantApplicationAccessToRoleCodeParams{
+		EntityID:      params.EntityID,
+		ApplicationID: params.ApplicationID,
+		Code:          "employee",
+	}); err != nil {
 		return OIDCClientResponse{}, "", err
 	}
 	resp := OIDCClientResponse{

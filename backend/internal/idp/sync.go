@@ -352,6 +352,15 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 			_ = s.failJob(ctx, entityID, job.ID, result, err)
 			return result, err
 		}
+		if err := s.queries.AssignRoleToUserByCode(ctx, generated.AssignRoleToUserByCodeParams{
+			EntityID: entityID,
+			UserID:   managedUser.ID,
+			Code:     "employee",
+		}); err != nil {
+			_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
+			_ = s.failJob(ctx, entityID, job.ID, result, err)
+			return result, err
+		}
 		result.ManagedUsersCreated++
 
 		if _, err := s.queries.CreateAccountBinding(ctx, generated.CreateAccountBindingParams{

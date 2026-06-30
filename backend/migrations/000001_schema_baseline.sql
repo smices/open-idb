@@ -463,6 +463,7 @@ ON CONFLICT (entity_id, code) DO UPDATE SET
 
 WITH role_seed(code, name, description) AS (
     VALUES
+        ('employee', '员工', '默认员工角色；用于登录后访问已授权的业务应用。'),
         ('system_admin', '系统管理员', '管理公司、身份源、组织、账号、应用、角色、同步任务和审计日志。'),
         ('entity_admin', '公司管理员', '负责本公司身份源、组织架构、账号、应用和同步任务管理。'),
         ('identity_admin', '身份管理员', '负责身份源、组织架构、账号和同步任务管理。'),

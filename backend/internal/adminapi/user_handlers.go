@@ -101,6 +101,18 @@ type RoleResponse struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// ApplicationRoleAssignmentResponse represents an app access grant to a role.
+type ApplicationRoleAssignmentResponse struct {
+	ID            string    `json:"id"`
+	EntityID      string    `json:"entity_id"`
+	ApplicationID string    `json:"application_id"`
+	RoleID        string    `json:"role_id"`
+	RoleCode      string    `json:"role_code"`
+	RoleName      string    `json:"role_name"`
+	Effect        string    `json:"effect"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 // PermissionResponse represents a permission in API responses.
 type PermissionResponse struct {
 	ID        string    `json:"id"`
@@ -127,6 +139,8 @@ type userService interface {
 	CreateApplication(ctx context.Context, entityID string, name, appType string) (ApplicationResponse, error)
 	UpdateApplication(ctx context.Context, entityID, id string, name, status pgtype.Text) (ApplicationResponse, error)
 	DeleteApplication(ctx context.Context, entityID, id string) error
+	ListApplicationRoleAssignments(ctx context.Context, entityID, applicationID string) ([]ApplicationRoleAssignmentResponse, error)
+	SetApplicationRoleAssignments(ctx context.Context, entityID, applicationID string, roleIDs []string) error
 	ListAllSyncJobs(ctx context.Context, entityID string, limit, offset int32) ([]SyncJobResponse, error)
 	CountAllSyncJobs(ctx context.Context, entityID string) (int64, error)
 	ListRoles(ctx context.Context, entityID string, limit, offset int32) ([]RoleResponse, error)
@@ -372,6 +386,19 @@ func roleFromRow(row generated.Role) RoleResponse {
 		Description: textString(row.Description),
 		CreatedAt:   row.CreatedAt.Time,
 		UpdatedAt:   row.UpdatedAt.Time,
+	}
+}
+
+func applicationRoleAssignmentFromRow(row generated.ListApplicationRoleAssignmentsRow) ApplicationRoleAssignmentResponse {
+	return ApplicationRoleAssignmentResponse{
+		ID:            ulidString(row.ID),
+		EntityID:      ulidString(row.EntityID),
+		ApplicationID: ulidString(row.ApplicationID),
+		RoleID:        ulidString(row.RoleID),
+		RoleCode:      row.RoleCode,
+		RoleName:      row.RoleName,
+		Effect:        row.Effect,
+		CreatedAt:     row.CreatedAt.Time,
 	}
 }
 

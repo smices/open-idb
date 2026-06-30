@@ -60,6 +60,7 @@ type loginQueries interface {
 	CreateManagedUser(ctx context.Context, arg generated.CreateManagedUserParams) (generated.User, error)
 	CreateAccountBinding(ctx context.Context, arg generated.CreateAccountBindingParams) (generated.AccountBinding, error)
 	UpdateManagedUserFromDirectory(ctx context.Context, arg generated.UpdateManagedUserFromDirectoryParams) (generated.User, error)
+	AssignRoleToUserByCode(ctx context.Context, arg generated.AssignRoleToUserByCodeParams) error
 	GetFeishuSourceByEntity(ctx context.Context, entityID string) (generated.GetFeishuSourceByEntityRow, error)
 	GetEntityBySlug(ctx context.Context, slug string) (generated.BusinessEntity, error)
 }
@@ -266,6 +267,13 @@ func (s *FeishuLoginService) completeLogin(ctx context.Context, entityID string,
 	})
 	if err != nil {
 		return FeishuLoginResult{}, fmt.Errorf("create managed user: %w", err)
+	}
+	if err := s.queries.AssignRoleToUserByCode(ctx, generated.AssignRoleToUserByCodeParams{
+		EntityID: entityULID,
+		UserID:   managedUser.ID,
+		Code:     "employee",
+	}); err != nil {
+		return FeishuLoginResult{}, fmt.Errorf("assign default employee role: %w", err)
 	}
 
 	if _, err := s.queries.CreateAccountBinding(ctx, generated.CreateAccountBindingParams{
