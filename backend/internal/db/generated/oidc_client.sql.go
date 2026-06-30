@@ -40,7 +40,7 @@ func (q *Queries) DeleteOIDCClient(ctx context.Context, arg DeleteOIDCClientPara
 }
 
 const getOIDCClientByID = `-- name: GetOIDCClientByID :one
-SELECT id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, status, created_at, updated_at
+SELECT id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at
 FROM oidc_clients
 WHERE entity_id = $1 AND id = $2
 `
@@ -64,6 +64,9 @@ func (q *Queries) GetOIDCClientByID(ctx context.Context, arg GetOIDCClientByIDPa
 		&i.GrantTypes,
 		&i.ResponseTypes,
 		&i.PkceRequired,
+		&i.WorkplaceProvider,
+		&i.WorkplaceAppID,
+		&i.WorkplaceAppSecret,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -73,7 +76,7 @@ func (q *Queries) GetOIDCClientByID(ctx context.Context, arg GetOIDCClientByIDPa
 
 const listOIDCClients = `-- name: ListOIDCClients :many
 
-SELECT id, entity_id, application_id, client_id, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, status, created_at, updated_at
+SELECT id, entity_id, application_id, client_id, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at
 FROM oidc_clients
 WHERE entity_id = $1
 ORDER BY created_at DESC
@@ -87,18 +90,21 @@ type ListOIDCClientsParams struct {
 }
 
 type ListOIDCClientsRow struct {
-	ID            string             `json:"id"`
-	EntityID      string             `json:"entity_id"`
-	ApplicationID string             `json:"application_id"`
-	ClientID      string             `json:"client_id"`
-	RedirectUris  []string           `json:"redirect_uris"`
-	AllowedScopes []string           `json:"allowed_scopes"`
-	GrantTypes    []string           `json:"grant_types"`
-	ResponseTypes []string           `json:"response_types"`
-	PkceRequired  bool               `json:"pkce_required"`
-	Status        string             `json:"status"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID                 string             `json:"id"`
+	EntityID           string             `json:"entity_id"`
+	ApplicationID      string             `json:"application_id"`
+	ClientID           string             `json:"client_id"`
+	RedirectUris       []string           `json:"redirect_uris"`
+	AllowedScopes      []string           `json:"allowed_scopes"`
+	GrantTypes         []string           `json:"grant_types"`
+	ResponseTypes      []string           `json:"response_types"`
+	PkceRequired       bool               `json:"pkce_required"`
+	WorkplaceProvider  string             `json:"workplace_provider"`
+	WorkplaceAppID     string             `json:"workplace_app_id"`
+	WorkplaceAppSecret string             `json:"workplace_app_secret"`
+	Status             string             `json:"status"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 // SPDX-License-Identifier: MIT
@@ -121,6 +127,9 @@ func (q *Queries) ListOIDCClients(ctx context.Context, arg ListOIDCClientsParams
 			&i.GrantTypes,
 			&i.ResponseTypes,
 			&i.PkceRequired,
+			&i.WorkplaceProvider,
+			&i.WorkplaceAppID,
+			&i.WorkplaceAppSecret,
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -139,7 +148,7 @@ const rotateOIDCClientSecret = `-- name: RotateOIDCClientSecret :one
 UPDATE oidc_clients
 SET client_secret_hash = $3, updated_at = now()
 WHERE entity_id = $1 AND id = $2
-RETURNING id, entity_id, application_id, client_id, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, status, created_at, updated_at
+RETURNING id, entity_id, application_id, client_id, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at
 `
 
 type RotateOIDCClientSecretParams struct {
@@ -149,18 +158,21 @@ type RotateOIDCClientSecretParams struct {
 }
 
 type RotateOIDCClientSecretRow struct {
-	ID            string             `json:"id"`
-	EntityID      string             `json:"entity_id"`
-	ApplicationID string             `json:"application_id"`
-	ClientID      string             `json:"client_id"`
-	RedirectUris  []string           `json:"redirect_uris"`
-	AllowedScopes []string           `json:"allowed_scopes"`
-	GrantTypes    []string           `json:"grant_types"`
-	ResponseTypes []string           `json:"response_types"`
-	PkceRequired  bool               `json:"pkce_required"`
-	Status        string             `json:"status"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID                 string             `json:"id"`
+	EntityID           string             `json:"entity_id"`
+	ApplicationID      string             `json:"application_id"`
+	ClientID           string             `json:"client_id"`
+	RedirectUris       []string           `json:"redirect_uris"`
+	AllowedScopes      []string           `json:"allowed_scopes"`
+	GrantTypes         []string           `json:"grant_types"`
+	ResponseTypes      []string           `json:"response_types"`
+	PkceRequired       bool               `json:"pkce_required"`
+	WorkplaceProvider  string             `json:"workplace_provider"`
+	WorkplaceAppID     string             `json:"workplace_app_id"`
+	WorkplaceAppSecret string             `json:"workplace_app_secret"`
+	Status             string             `json:"status"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) RotateOIDCClientSecret(ctx context.Context, arg RotateOIDCClientSecretParams) (RotateOIDCClientSecretRow, error) {
@@ -176,6 +188,9 @@ func (q *Queries) RotateOIDCClientSecret(ctx context.Context, arg RotateOIDCClie
 		&i.GrantTypes,
 		&i.ResponseTypes,
 		&i.PkceRequired,
+		&i.WorkplaceProvider,
+		&i.WorkplaceAppID,
+		&i.WorkplaceAppSecret,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -190,36 +205,45 @@ SET redirect_uris = COALESCE($3, redirect_uris),
     grant_types = COALESCE($5, grant_types),
     response_types = COALESCE($6, response_types),
     pkce_required = COALESCE($7, pkce_required),
-    status = COALESCE($8, status),
+    workplace_provider = COALESCE($8, workplace_provider),
+    workplace_app_id = COALESCE($9, workplace_app_id),
+    workplace_app_secret = COALESCE($10, workplace_app_secret),
+    status = COALESCE($11, status),
     updated_at = now()
 WHERE entity_id = $1 AND id = $2
-RETURNING id, entity_id, application_id, client_id, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, status, created_at, updated_at
+RETURNING id, entity_id, application_id, client_id, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at
 `
 
 type UpdateOIDCClientParams struct {
-	EntityID      string      `json:"entity_id"`
-	ID            string      `json:"id"`
-	RedirectUris  []string    `json:"redirect_uris"`
-	AllowedScopes []string    `json:"allowed_scopes"`
-	GrantTypes    []string    `json:"grant_types"`
-	ResponseTypes []string    `json:"response_types"`
-	PkceRequired  pgtype.Bool `json:"pkce_required"`
-	Status        pgtype.Text `json:"status"`
+	EntityID           string      `json:"entity_id"`
+	ID                 string      `json:"id"`
+	RedirectUris       []string    `json:"redirect_uris"`
+	AllowedScopes      []string    `json:"allowed_scopes"`
+	GrantTypes         []string    `json:"grant_types"`
+	ResponseTypes      []string    `json:"response_types"`
+	PkceRequired       pgtype.Bool `json:"pkce_required"`
+	WorkplaceProvider  pgtype.Text `json:"workplace_provider"`
+	WorkplaceAppID     pgtype.Text `json:"workplace_app_id"`
+	WorkplaceAppSecret pgtype.Text `json:"workplace_app_secret"`
+	Status             pgtype.Text `json:"status"`
 }
 
 type UpdateOIDCClientRow struct {
-	ID            string             `json:"id"`
-	EntityID      string             `json:"entity_id"`
-	ApplicationID string             `json:"application_id"`
-	ClientID      string             `json:"client_id"`
-	RedirectUris  []string           `json:"redirect_uris"`
-	AllowedScopes []string           `json:"allowed_scopes"`
-	GrantTypes    []string           `json:"grant_types"`
-	ResponseTypes []string           `json:"response_types"`
-	PkceRequired  bool               `json:"pkce_required"`
-	Status        string             `json:"status"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID                 string             `json:"id"`
+	EntityID           string             `json:"entity_id"`
+	ApplicationID      string             `json:"application_id"`
+	ClientID           string             `json:"client_id"`
+	RedirectUris       []string           `json:"redirect_uris"`
+	AllowedScopes      []string           `json:"allowed_scopes"`
+	GrantTypes         []string           `json:"grant_types"`
+	ResponseTypes      []string           `json:"response_types"`
+	PkceRequired       bool               `json:"pkce_required"`
+	WorkplaceProvider  string             `json:"workplace_provider"`
+	WorkplaceAppID     string             `json:"workplace_app_id"`
+	WorkplaceAppSecret string             `json:"workplace_app_secret"`
+	Status             string             `json:"status"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) UpdateOIDCClient(ctx context.Context, arg UpdateOIDCClientParams) (UpdateOIDCClientRow, error) {
@@ -231,6 +255,9 @@ func (q *Queries) UpdateOIDCClient(ctx context.Context, arg UpdateOIDCClientPara
 		arg.GrantTypes,
 		arg.ResponseTypes,
 		arg.PkceRequired,
+		arg.WorkplaceProvider,
+		arg.WorkplaceAppID,
+		arg.WorkplaceAppSecret,
 		arg.Status,
 	)
 	var i UpdateOIDCClientRow
@@ -244,6 +271,9 @@ func (q *Queries) UpdateOIDCClient(ctx context.Context, arg UpdateOIDCClientPara
 		&i.GrantTypes,
 		&i.ResponseTypes,
 		&i.PkceRequired,
+		&i.WorkplaceProvider,
+		&i.WorkplaceAppID,
+		&i.WorkplaceAppSecret,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,

@@ -651,19 +651,22 @@ func (s *AdminService) GetOIDCClientByID(ctx context.Context, entityID, id strin
 		return OIDCClientResponse{}, err
 	}
 	return OIDCClientResponse{
-		ID:            ulidString(row.ID),
-		EntityID:      ulidString(row.EntityID),
-		ApplicationID: ulidString(row.ApplicationID),
-		ClientID:      row.ClientID,
-		ClientSecret:  textValue(row.ClientSecretHash),
-		RedirectURIs:  row.RedirectUris,
-		AllowedScopes: row.AllowedScopes,
-		GrantTypes:    row.GrantTypes,
-		ResponseTypes: row.ResponseTypes,
-		PKCERequired:  row.PkceRequired,
-		Status:        row.Status,
-		CreatedAt:     row.CreatedAt.Time.Format(time.RFC3339),
-		UpdatedAt:     row.UpdatedAt.Time.Format(time.RFC3339),
+		ID:                 ulidString(row.ID),
+		EntityID:           ulidString(row.EntityID),
+		ApplicationID:      ulidString(row.ApplicationID),
+		ClientID:           row.ClientID,
+		ClientSecret:       textValue(row.ClientSecretHash),
+		RedirectURIs:       row.RedirectUris,
+		AllowedScopes:      row.AllowedScopes,
+		GrantTypes:         row.GrantTypes,
+		ResponseTypes:      row.ResponseTypes,
+		PKCERequired:       row.PkceRequired,
+		WorkplaceProvider:  row.WorkplaceProvider,
+		WorkplaceAppID:     row.WorkplaceAppID,
+		WorkplaceAppSecret: row.WorkplaceAppSecret,
+		Status:             row.Status,
+		CreatedAt:          row.CreatedAt.Time.Format(time.RFC3339),
+		UpdatedAt:          row.UpdatedAt.Time.Format(time.RFC3339),
 	}, nil
 }
 
@@ -687,18 +690,21 @@ func (s *AdminService) CreateOIDCClient(ctx context.Context, params generated.Cr
 		return OIDCClientResponse{}, "", err
 	}
 	resp := OIDCClientResponse{
-		ID:            ulidString(row.ID),
-		EntityID:      ulidString(row.EntityID),
-		ApplicationID: ulidString(row.ApplicationID),
-		ClientID:      row.ClientID,
-		RedirectURIs:  row.RedirectUris,
-		AllowedScopes: row.AllowedScopes,
-		GrantTypes:    row.GrantTypes,
-		ResponseTypes: row.ResponseTypes,
-		PKCERequired:  row.PkceRequired,
-		Status:        row.Status,
-		CreatedAt:     row.CreatedAt.Time.Format(time.RFC3339),
-		UpdatedAt:     row.UpdatedAt.Time.Format(time.RFC3339),
+		ID:                 ulidString(row.ID),
+		EntityID:           ulidString(row.EntityID),
+		ApplicationID:      ulidString(row.ApplicationID),
+		ClientID:           row.ClientID,
+		RedirectURIs:       row.RedirectUris,
+		AllowedScopes:      row.AllowedScopes,
+		GrantTypes:         row.GrantTypes,
+		ResponseTypes:      row.ResponseTypes,
+		PKCERequired:       row.PkceRequired,
+		WorkplaceProvider:  row.WorkplaceProvider,
+		WorkplaceAppID:     row.WorkplaceAppID,
+		WorkplaceAppSecret: row.WorkplaceAppSecret,
+		Status:             row.Status,
+		CreatedAt:          row.CreatedAt.Time.Format(time.RFC3339),
+		UpdatedAt:          row.UpdatedAt.Time.Format(time.RFC3339),
 	}
 	if err := s.audit.logCreate(ctx, ulidString(params.EntityID), "", "oidc_client", resp.ID, resp); err != nil {
 		return OIDCClientResponse{}, "", err
@@ -714,18 +720,21 @@ func (s *AdminService) UpdateOIDCClient(ctx context.Context, params generated.Up
 		return OIDCClientResponse{}, err
 	}
 	after := OIDCClientResponse{
-		ID:            ulidString(row.ID),
-		EntityID:      ulidString(row.EntityID),
-		ApplicationID: ulidString(row.ApplicationID),
-		ClientID:      row.ClientID,
-		RedirectURIs:  row.RedirectUris,
-		AllowedScopes: row.AllowedScopes,
-		GrantTypes:    row.GrantTypes,
-		ResponseTypes: row.ResponseTypes,
-		PKCERequired:  row.PkceRequired,
-		Status:        row.Status,
-		CreatedAt:     row.CreatedAt.Time.Format(time.RFC3339),
-		UpdatedAt:     row.UpdatedAt.Time.Format(time.RFC3339),
+		ID:                 ulidString(row.ID),
+		EntityID:           ulidString(row.EntityID),
+		ApplicationID:      ulidString(row.ApplicationID),
+		ClientID:           row.ClientID,
+		RedirectURIs:       row.RedirectUris,
+		AllowedScopes:      row.AllowedScopes,
+		GrantTypes:         row.GrantTypes,
+		ResponseTypes:      row.ResponseTypes,
+		PKCERequired:       row.PkceRequired,
+		WorkplaceProvider:  row.WorkplaceProvider,
+		WorkplaceAppID:     row.WorkplaceAppID,
+		WorkplaceAppSecret: row.WorkplaceAppSecret,
+		Status:             row.Status,
+		CreatedAt:          row.CreatedAt.Time.Format(time.RFC3339),
+		UpdatedAt:          row.UpdatedAt.Time.Format(time.RFC3339),
 	}
 	if err := s.audit.logUpdate(ctx, ulidString(params.EntityID), "", "oidc_client", after.ID, before, after); err != nil {
 		return OIDCClientResponse{}, err
@@ -763,18 +772,21 @@ func (s *AdminService) RotateOIDCClientSecret(ctx context.Context, entityID, id 
 		return OIDCClientResponse{}, "", err
 	}
 	resp := OIDCClientResponse{
-		ID:            ulidString(row.ID),
-		EntityID:      ulidString(row.EntityID),
-		ApplicationID: ulidString(row.ApplicationID),
-		ClientID:      row.ClientID,
-		RedirectURIs:  row.RedirectUris,
-		AllowedScopes: row.AllowedScopes,
-		GrantTypes:    row.GrantTypes,
-		ResponseTypes: row.ResponseTypes,
-		PKCERequired:  row.PkceRequired,
-		Status:        row.Status,
-		CreatedAt:     row.CreatedAt.Time.Format(time.RFC3339),
-		UpdatedAt:     row.UpdatedAt.Time.Format(time.RFC3339),
+		ID:                 ulidString(row.ID),
+		EntityID:           ulidString(row.EntityID),
+		ApplicationID:      ulidString(row.ApplicationID),
+		ClientID:           row.ClientID,
+		RedirectURIs:       row.RedirectUris,
+		AllowedScopes:      row.AllowedScopes,
+		GrantTypes:         row.GrantTypes,
+		ResponseTypes:      row.ResponseTypes,
+		PKCERequired:       row.PkceRequired,
+		WorkplaceProvider:  row.WorkplaceProvider,
+		WorkplaceAppID:     row.WorkplaceAppID,
+		WorkplaceAppSecret: row.WorkplaceAppSecret,
+		Status:             row.Status,
+		CreatedAt:          row.CreatedAt.Time.Format(time.RFC3339),
+		UpdatedAt:          row.UpdatedAt.Time.Format(time.RFC3339),
 	}
 	if err := s.audit.logAction(ctx, audit.Event{
 		EntityID:     ulidString(entityID),

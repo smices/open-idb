@@ -24,17 +24,15 @@ type LoginProvider struct {
 }
 
 type FeishuProviderConfig struct {
-	AppID                 string `json:"app_id"`
-	AppSecret             string `json:"app_secret"`
-	WorkplaceAppID        string `json:"workplace_app_id,omitempty"`
-	WorkplaceAppSecret    string `json:"workplace_app_secret,omitempty"`
-	WorkplaceExchangeMode string `json:"workplace_exchange_mode,omitempty"`
+	AppID     string `json:"app_id"`
+	AppSecret string `json:"app_secret"`
 }
 
 // providerQueries is the database interface for login provider discovery.
 // *generated.Queries satisfies this interface.
 type providerQueries interface {
 	ListLoginProviders(ctx context.Context, entityID string) ([]generated.ListLoginProvidersRow, error)
+	GetOIDCClientByClientID(ctx context.Context, arg generated.GetOIDCClientByClientIDParams) (generated.OidcClient, error)
 	GetEntityBySlug(ctx context.Context, slug string) (generated.BusinessEntity, error)
 }
 
@@ -59,6 +57,10 @@ func NewLoginProviderService(queries *generated.Queries, feishuAppID string, fei
 // ListProviders returns configured third-party login providers for a entity.
 // For Feishu providers, it constructs the OAuth authorize URL.
 func (s *LoginProviderService) ListProviders(ctx context.Context, entityID string) ([]LoginProvider, error) {
+	return s.ListProvidersForClient(ctx, entityID, "")
+}
+
+func (s *LoginProviderService) ListProvidersForClient(ctx context.Context, entityID string, clientID string) ([]LoginProvider, error) {
 	entityULID, err := resolveEntityRef(ctx, s.queries, entityID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid entity_id: %w", err)
@@ -86,7 +88,13 @@ func (s *LoginProviderService) ListProviders(ctx context.Context, entityID strin
 		}
 		if row.Provider == "feishu" {
 			rowAppID, _ := s.feishuAppIDFromRow(ctx, entityID, row)
-			workplaceAppID, _ := s.feishuWorkplaceAppIDFromRow(ctx, entityID, row)
+			workplaceAppID, err := s.feishuWorkplaceAppIDFromClient(ctx, entityULID, clientID)
+			if err != nil {
+				return nil, err
+			}
+			if strings.TrimSpace(clientID) == "" && strings.TrimSpace(workplaceAppID) == "" {
+				workplaceAppID = rowAppID
+			}
 			if strings.TrimSpace(rowAppID) != "" {
 				p.OAuthURL = s.buildFeishuOAuthURL(entityID, rowAppID)
 			}
@@ -139,7 +147,7 @@ func (s *LoginProviderService) ResolveFeishuConfig(ctx context.Context, entityID
 	return cfg, nil
 }
 
-func (s *LoginProviderService) ResolveFeishuWorkplaceConfig(ctx context.Context, entityID string) (FeishuProviderConfig, error) {
+func (s *LoginProviderService) ResolveFeishuWorkplaceConfig(ctx context.Context, entityID string, clientID string) (FeishuProviderConfig, error) {
 	cfg, err := s.ResolveFeishuConfig(ctx, entityID)
 	if err != nil {
 		return FeishuProviderConfig{}, err
@@ -148,24 +156,22 @@ func (s *LoginProviderService) ResolveFeishuWorkplaceConfig(ctx context.Context,
 	if err != nil {
 		return FeishuProviderConfig{}, fmt.Errorf("invalid entity_id: %w", err)
 	}
-	rows, err := s.queries.ListLoginProviders(ctx, entityULID)
-	if err != nil {
-		return FeishuProviderConfig{}, err
-	}
-	for _, row := range rows {
-		if row.Provider != "feishu" {
-			continue
-		}
-		rowCfg, err := ParseFeishuProviderConfig(row.Config)
+	clientID = strings.TrimSpace(clientID)
+	if clientID != "" {
+		client, err := s.queries.GetOIDCClientByClientID(ctx, generated.GetOIDCClientByClientIDParams{
+			EntityID: entityULID,
+			ClientID: clientID,
+		})
 		if err != nil {
 			return FeishuProviderConfig{}, err
 		}
-		if strings.TrimSpace(rowCfg.WorkplaceAppID) != "" {
-			cfg.AppID = strings.TrimSpace(rowCfg.WorkplaceAppID)
+		if strings.TrimSpace(client.WorkplaceProvider) != "feishu" ||
+			strings.TrimSpace(client.WorkplaceAppID) == "" ||
+			strings.TrimSpace(client.WorkplaceAppSecret) == "" {
+			return FeishuProviderConfig{}, fmt.Errorf("feishu workplace app_id and app_secret are not configured for client")
 		}
-		if strings.TrimSpace(rowCfg.WorkplaceAppSecret) != "" {
-			cfg.AppSecret = strings.TrimSpace(rowCfg.WorkplaceAppSecret)
-		}
+		cfg.AppID = strings.TrimSpace(client.WorkplaceAppID)
+		cfg.AppSecret = strings.TrimSpace(client.WorkplaceAppSecret)
 	}
 	if strings.TrimSpace(cfg.AppID) == "" || strings.TrimSpace(cfg.AppSecret) == "" {
 		return FeishuProviderConfig{}, fmt.Errorf("feishu workplace app_id and app_secret are not configured")
@@ -195,20 +201,22 @@ func (s *LoginProviderService) feishuAppIDFromRow(ctx context.Context, entityID 
 	return strings.TrimSpace(s.feishuAppID), nil
 }
 
-func (s *LoginProviderService) feishuWorkplaceAppIDFromRow(ctx context.Context, entityID string, row generated.ListLoginProvidersRow) (string, error) {
-	_ = ctx
-	_ = entityID
-	cfg, err := ParseFeishuProviderConfig(row.Config)
+func (s *LoginProviderService) feishuWorkplaceAppIDFromClient(ctx context.Context, entityID string, clientID string) (string, error) {
+	clientID = strings.TrimSpace(clientID)
+	if clientID == "" {
+		return "", nil
+	}
+	client, err := s.queries.GetOIDCClientByClientID(ctx, generated.GetOIDCClientByClientIDParams{
+		EntityID: entityID,
+		ClientID: clientID,
+	})
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(cfg.WorkplaceAppID) != "" {
-		return strings.TrimSpace(cfg.WorkplaceAppID), nil
+	if strings.TrimSpace(client.WorkplaceProvider) != "feishu" {
+		return "", nil
 	}
-	if strings.TrimSpace(cfg.AppID) != "" {
-		return strings.TrimSpace(cfg.AppID), nil
-	}
-	return strings.TrimSpace(s.feishuAppID), nil
+	return strings.TrimSpace(client.WorkplaceAppID), nil
 }
 
 func (s *LoginProviderService) feishuAppIDConfig(rows []generated.ListLoginProvidersRow, entityID string) []byte {

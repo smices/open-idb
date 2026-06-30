@@ -215,8 +215,8 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 					BaseURL:   cfg.FeishuBaseURL,
 				}, nil)
 			},
-			buildWorkplaceClient: func(ctx context.Context, entityID string) (*feishu.Client, error) {
-				resolvedCfg, err := providerService.ResolveFeishuWorkplaceConfig(ctx, entityID)
+			buildWorkplaceClient: func(ctx context.Context, entityID string, clientID string) (*feishu.Client, error) {
+				resolvedCfg, err := providerService.ResolveFeishuWorkplaceConfig(ctx, entityID, clientID)
 				if err != nil {
 					return nil, err
 				}
@@ -284,7 +284,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 
 type feishuClientResolver struct {
 	buildClient          func(ctx context.Context, entityID string) (*feishu.Client, error)
-	buildWorkplaceClient func(ctx context.Context, entityID string) (*feishu.Client, error)
+	buildWorkplaceClient func(ctx context.Context, entityID string, clientID string) (*feishu.Client, error)
 }
 
 func (r feishuClientResolver) GetFeishuUserProvider(ctx context.Context, entityID string, _ string) (auth.FeishuUserProvider, error) {
@@ -295,9 +295,9 @@ func (r feishuClientResolver) GetFeishuUserProvider(ctx context.Context, entityI
 	return feishuClientAdapter{client}, nil
 }
 
-func (r feishuClientResolver) GetFeishuWorkplaceUserProvider(ctx context.Context, entityID string, _ string) (auth.FeishuUserProvider, error) {
+func (r feishuClientResolver) GetFeishuWorkplaceUserProvider(ctx context.Context, entityID string, _ string, clientID string) (auth.FeishuUserProvider, error) {
 	if r.buildWorkplaceClient != nil {
-		client, err := r.buildWorkplaceClient(ctx, entityID)
+		client, err := r.buildWorkplaceClient(ctx, entityID, clientID)
 		if err != nil {
 			return nil, err
 		}

@@ -19,6 +19,7 @@ import (
 
 type mockProviderQueries struct {
 	listFn         func(context.Context, string) ([]generated.ListLoginProvidersRow, error)
+	getClientFn    func(context.Context, generated.GetOIDCClientByClientIDParams) (generated.OidcClient, error)
 	entityBySlugFn func(context.Context, string) (generated.BusinessEntity, error)
 }
 
@@ -34,6 +35,13 @@ func (m *mockProviderQueries) GetEntityBySlug(ctx context.Context, slug string) 
 		return m.entityBySlugFn(ctx, slug)
 	}
 	return generated.BusinessEntity{}, fmt.Errorf("entity slug %q not found", slug)
+}
+
+func (m *mockProviderQueries) GetOIDCClientByClientID(ctx context.Context, arg generated.GetOIDCClientByClientIDParams) (generated.OidcClient, error) {
+	if m.getClientFn != nil {
+		return m.getClientFn(ctx, arg)
+	}
+	return generated.OidcClient{}, fmt.Errorf("client %q not found", arg.ClientID)
 }
 
 // --- Tests ---
@@ -102,7 +110,7 @@ func TestListProvidersReturnsActiveConfiguredProviders(t *testing.T) {
 	}
 }
 
-func TestListProvidersUsesWorkplaceAppIDForBridgeOnly(t *testing.T) {
+func TestListProvidersUsesOIDCClientWorkplaceAppIDForBridgeOnly(t *testing.T) {
 	queries := &mockProviderQueries{
 		listFn: func(_ context.Context, _ string) ([]generated.ListLoginProvidersRow, error) {
 			return []generated.ListLoginProvidersRow{
@@ -111,8 +119,18 @@ func TestListProvidersUsesWorkplaceAppIDForBridgeOnly(t *testing.T) {
 					DisplayName:     "飞书",
 					Status:          "active",
 					OauthConfigured: true,
-					Config:          []byte(`{"app_id":"login-app","app_secret":"login-secret","workplace_app_id":"workplace-app","workplace_app_secret":"workplace-secret"}`),
+					Config:          []byte(`{"app_id":"login-app","app_secret":"login-secret"}`),
 				},
+			}, nil
+		},
+		getClientFn: func(_ context.Context, arg generated.GetOIDCClientByClientIDParams) (generated.OidcClient, error) {
+			if arg.ClientID != "dashboard" {
+				t.Fatalf("client_id = %q, want dashboard", arg.ClientID)
+			}
+			return generated.OidcClient{
+				WorkplaceProvider:  "feishu",
+				WorkplaceAppID:     "workplace-app",
+				WorkplaceAppSecret: "workplace-secret",
 			}, nil
 		},
 	}
@@ -121,7 +139,7 @@ func TestListProvidersUsesWorkplaceAppIDForBridgeOnly(t *testing.T) {
 		feishuRedirectURI: "https://example.test/auth/feishu/callback",
 	}
 
-	providers, err := svc.ListProviders(context.Background(), "01HZZZZZZZ0000000000000001")
+	providers, err := svc.ListProvidersForClient(context.Background(), "01HZZZZZZZ0000000000000001", "dashboard")
 	if err != nil {
 		t.Fatalf("ListProviders error = %v", err)
 	}
@@ -139,7 +157,7 @@ func TestListProvidersUsesWorkplaceAppIDForBridgeOnly(t *testing.T) {
 	}
 }
 
-func TestResolveFeishuWorkplaceConfigOverridesLoginCredentials(t *testing.T) {
+func TestResolveFeishuWorkplaceConfigUsesOIDCClientCredentials(t *testing.T) {
 	queries := &mockProviderQueries{
 		listFn: func(_ context.Context, _ string) ([]generated.ListLoginProvidersRow, error) {
 			return []generated.ListLoginProvidersRow{
@@ -148,14 +166,24 @@ func TestResolveFeishuWorkplaceConfigOverridesLoginCredentials(t *testing.T) {
 					DisplayName:     "飞书",
 					Status:          "active",
 					OauthConfigured: true,
-					Config:          []byte(`{"app_id":"login-app","app_secret":"login-secret","workplace_app_id":"workplace-app","workplace_app_secret":"workplace-secret"}`),
+					Config:          []byte(`{"app_id":"login-app","app_secret":"login-secret"}`),
 				},
+			}, nil
+		},
+		getClientFn: func(_ context.Context, arg generated.GetOIDCClientByClientIDParams) (generated.OidcClient, error) {
+			if arg.ClientID != "dashboard" {
+				t.Fatalf("client_id = %q, want dashboard", arg.ClientID)
+			}
+			return generated.OidcClient{
+				WorkplaceProvider:  "feishu",
+				WorkplaceAppID:     "workplace-app",
+				WorkplaceAppSecret: "workplace-secret",
 			}, nil
 		},
 	}
 	svc := &LoginProviderService{queries: queries}
 
-	cfg, err := svc.ResolveFeishuWorkplaceConfig(context.Background(), "01HZZZZZZZ0000000000000001")
+	cfg, err := svc.ResolveFeishuWorkplaceConfig(context.Background(), "01HZZZZZZZ0000000000000001", "dashboard")
 	if err != nil {
 		t.Fatalf("ResolveFeishuWorkplaceConfig error = %v", err)
 	}

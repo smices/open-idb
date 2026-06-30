@@ -76,7 +76,7 @@ type LoginProvisionPolicy struct {
 
 type FeishuClientResolver interface {
 	GetFeishuUserProvider(ctx context.Context, entityID string, sourceID string) (FeishuUserProvider, error)
-	GetFeishuWorkplaceUserProvider(ctx context.Context, entityID string, sourceID string) (FeishuUserProvider, error)
+	GetFeishuWorkplaceUserProvider(ctx context.Context, entityID string, sourceID string, clientID string) (FeishuUserProvider, error)
 }
 
 // FeishuLoginService handles the complete Feishu login flow:
@@ -123,7 +123,7 @@ func (r *staticFeishuClientResolver) GetFeishuUserProvider(context.Context, stri
 	return r.client, nil
 }
 
-func (r *staticFeishuClientResolver) GetFeishuWorkplaceUserProvider(context.Context, string, string) (FeishuUserProvider, error) {
+func (r *staticFeishuClientResolver) GetFeishuWorkplaceUserProvider(context.Context, string, string, string) (FeishuUserProvider, error) {
 	return r.client, nil
 }
 
@@ -154,8 +154,8 @@ func (s *FeishuLoginService) LoginViaOAuth(ctx context.Context, entityID string,
 }
 
 // LoginViaAppCode handles the embedded app flow.
-func (s *FeishuLoginService) LoginViaAppCode(ctx context.Context, entityID string, sourceID string, authCode string) (FeishuLoginResult, error) {
-	client, err := s.resolveWorkplaceClient(ctx, entityID, sourceID)
+func (s *FeishuLoginService) LoginViaAppCode(ctx context.Context, entityID string, sourceID string, authCode string, clientID string) (FeishuLoginResult, error) {
+	client, err := s.resolveWorkplaceClient(ctx, entityID, sourceID, clientID)
 	if err != nil {
 		return FeishuLoginResult{}, err
 	}
@@ -176,9 +176,9 @@ func (s *FeishuLoginService) resolveClient(ctx context.Context, entityID string,
 	return s.feishuClient, nil
 }
 
-func (s *FeishuLoginService) resolveWorkplaceClient(ctx context.Context, entityID string, sourceID string) (FeishuUserProvider, error) {
+func (s *FeishuLoginService) resolveWorkplaceClient(ctx context.Context, entityID string, sourceID string, clientID string) (FeishuUserProvider, error) {
 	if s.feishuClientResolver != nil {
-		return s.feishuClientResolver.GetFeishuWorkplaceUserProvider(ctx, entityID, sourceID)
+		return s.feishuClientResolver.GetFeishuWorkplaceUserProvider(ctx, entityID, sourceID, clientID)
 	}
 	return s.resolveClient(ctx, entityID, sourceID)
 }
@@ -633,6 +633,7 @@ func (h FeishuLoginHandler) loginExchange(w http.ResponseWriter, r *http.Request
 	var body struct {
 		AuthCode string `json:"auth_code"`
 		EntityID string `json:"entity_id"`
+		ClientID string `json:"client_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.AuthCode == "" {
 		writeError(w, http.StatusBadRequest, "invalid_body", "auth_code is required")
@@ -664,7 +665,7 @@ func (h FeishuLoginHandler) loginExchange(w http.ResponseWriter, r *http.Request
 	}
 
 	traceID := id.NewULID()
-	result, err := h.loginService.LoginViaAppCode(r.Context(), entityID, sourceID, body.AuthCode)
+	result, err := h.loginService.LoginViaAppCode(r.Context(), entityID, sourceID, body.AuthCode, body.ClientID)
 	if err != nil {
 		h.writeAudit(r, auditmodel.Event{
 			EntityID:  entityID,
@@ -730,7 +731,7 @@ func (h FeishuLoginHandler) listProviders(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	providers, err := h.providerService.ListProviders(r.Context(), entityID)
+	providers, err := h.providerService.ListProvidersForClient(r.Context(), entityID, r.URL.Query().Get("client_id"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "providers_error", err.Error())
 		return

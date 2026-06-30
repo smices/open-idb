@@ -242,15 +242,18 @@ func createOIDCTestClient(ctx context.Context, t *testing.T, queries *generated.
 		t.Fatalf("create app: %v", err)
 	}
 	_, err = queries.CreateOIDCClient(ctx, generated.CreateOIDCClientParams{
-		EntityID:         entityID,
-		ApplicationID:    app.ID,
-		ClientID:         clientID,
-		ClientSecretHash: pgtype.Text{},
-		RedirectUris:     []string{redirectURI},
-		AllowedScopes:    []string{"openid", "profile", "email"},
-		GrantTypes:       []string{"authorization_code"},
-		ResponseTypes:    []string{"code"},
-		PkceRequired:     true,
+		EntityID:           entityID,
+		ApplicationID:      app.ID,
+		ClientID:           clientID,
+		ClientSecretHash:   pgtype.Text{},
+		RedirectUris:       []string{redirectURI},
+		AllowedScopes:      []string{"openid", "profile", "email"},
+		GrantTypes:         []string{"authorization_code"},
+		ResponseTypes:      []string{"code"},
+		PkceRequired:       true,
+		WorkplaceProvider:  "",
+		WorkplaceAppID:     "",
+		WorkplaceAppSecret: "",
 	})
 	if err != nil {
 		t.Fatalf("create oidc client: %v", err)

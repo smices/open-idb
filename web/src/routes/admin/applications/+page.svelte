@@ -31,6 +31,9 @@
   let oidcPkce = true;
   let oidcStatus = 'active';
   let oidcClientSecret = '';
+  let workplaceProvider = '';
+  let workplaceAppId = '';
+  let workplaceAppSecret = '';
   let copiedValue = '';
   let idbridgeOrigin = '';
   let roles: Role[] = [];
@@ -125,6 +128,9 @@
     oidcPkce = true;
     oidcStatus = 'active';
     oidcClientSecret = '';
+    workplaceProvider = '';
+    workplaceAppId = '';
+    workplaceAppSecret = '';
   };
 
   const loadOIDCConfig = async (applicationId: string) => {
@@ -144,6 +150,9 @@
         oidcResponseTypes = (detail.response_types || ['code']).join('\n');
         oidcPkce = detail.pkce_required !== false;
         oidcStatus = detail.status || 'active';
+        workplaceProvider = detail.workplace_provider || '';
+        workplaceAppId = detail.workplace_app_id || '';
+        workplaceAppSecret = detail.workplace_app_secret || '';
       }
     } catch {
       notifyError(t('applications.fetchOidcFailed'));
@@ -244,6 +253,15 @@
       notifyError(t('applications.redirectUrisInvalid'));
       return;
     }
+    if (shouldSaveOIDC && workplaceProvider === 'feishu' && (!workplaceAppId.trim() || !workplaceAppSecret.trim())) {
+      notifyError(t('applications.workplaceConfigIncomplete'));
+      return;
+    }
+    if (shouldSaveOIDC && workplaceProvider !== 'feishu') {
+      workplaceProvider = '';
+      workplaceAppId = '';
+      workplaceAppSecret = '';
+    }
 
     saving = true;
     error = '';
@@ -263,6 +281,9 @@
           grant_types: parseListField(oidcGrantTypes),
           response_types: parseListField(oidcResponseTypes),
           pkce_required: oidcPkce,
+          workplace_provider: workplaceProvider,
+          workplace_app_id: workplaceAppId.trim(),
+          workplace_app_secret: workplaceAppSecret.trim(),
         };
         if (oidcClient) {
           await api.updateOIDCClient(oidcClient.id, {
@@ -286,6 +307,9 @@
           oidcResponseTypes = (result.client.response_types || ['code']).join('\n');
           oidcPkce = result.client.pkce_required !== false;
           oidcStatus = result.client.status || 'active';
+          workplaceProvider = result.client.workplace_provider || '';
+          workplaceAppId = result.client.workplace_app_id || '';
+          workplaceAppSecret = result.client.workplace_app_secret || '';
         }
       }
       await api.setApplicationRoleAssignments(savedApp.id, selectedRoleIds);
@@ -559,6 +583,30 @@
                 <span class="text-xs text-surface-500">{t('applications.redirectUris')}</span>
                 <textarea class="textarea w-full bg-surface-50-950 font-mono text-sm" rows="2" bind:value={oidcRedirectUris}></textarea>
               </label>
+
+              <section class="space-y-3 rounded-container border border-surface-200-800 bg-surface-50-950 p-3">
+                <div>
+                  <h4 class="text-xs font-medium text-surface-500">{t('applications.workplaceAccess')}</h4>
+                  <p class="mt-1 text-xs text-surface-500">{t('applications.workplaceAccessDescription')}</p>
+                </div>
+                <div class="grid gap-3 sm:grid-cols-3">
+                  <label class="block">
+                    <span class="text-xs text-surface-500">{t('applications.workplaceProvider')}</span>
+                    <select class="input h-8 w-full bg-surface-50-950 text-sm" bind:value={workplaceProvider}>
+                      <option value="">{t('common.no')}</option>
+                      <option value="feishu">{t('applications.workplaceProvider.feishu')}</option>
+                    </select>
+                  </label>
+                  <label class="block">
+                    <span class="text-xs text-surface-500">{t('applications.workplaceAppId')}</span>
+                    <input class="input h-8 w-full bg-surface-50-950 text-sm" type="text" bind:value={workplaceAppId} disabled={workplaceProvider !== 'feishu'} placeholder={t('applications.workplaceAppIdPlaceholder')} />
+                  </label>
+                  <label class="block">
+                    <span class="text-xs text-surface-500">{t('applications.workplaceAppSecret')}</span>
+                    <input class="input h-8 w-full bg-surface-50-950 text-sm" type="text" bind:value={workplaceAppSecret} disabled={workplaceProvider !== 'feishu'} placeholder={t('applications.workplaceAppSecretPlaceholder')} autocomplete="off" />
+                  </label>
+                </div>
+              </section>
 
               <section class="space-y-2 rounded-container border border-surface-200-800 bg-surface-50-950 p-3">
                 <h4 class="text-xs font-medium text-surface-500">{t('applications.accessRoles')}</h4>

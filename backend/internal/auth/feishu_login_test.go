@@ -475,6 +475,7 @@ func TestFeishuLoginViaAppCode(t *testing.T) {
 		"01HZZZZZZZ0000000000000001",
 		"01HZZZZZZZ0000000000000002",
 		"app-auth-code",
+		"dashboard",
 	)
 	if err != nil {
 		t.Fatalf("LoginViaAppCode error = %v", err)

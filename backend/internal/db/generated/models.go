@@ -233,19 +233,22 @@ type OauthToken struct {
 }
 
 type OidcClient struct {
-	ID               string             `json:"id"`
-	EntityID         string             `json:"entity_id"`
-	ApplicationID    string             `json:"application_id"`
-	ClientID         string             `json:"client_id"`
-	ClientSecretHash pgtype.Text        `json:"client_secret_hash"`
-	RedirectUris     []string           `json:"redirect_uris"`
-	AllowedScopes    []string           `json:"allowed_scopes"`
-	GrantTypes       []string           `json:"grant_types"`
-	ResponseTypes    []string           `json:"response_types"`
-	PkceRequired     bool               `json:"pkce_required"`
-	Status           string             `json:"status"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	ID                 string             `json:"id"`
+	EntityID           string             `json:"entity_id"`
+	ApplicationID      string             `json:"application_id"`
+	ClientID           string             `json:"client_id"`
+	ClientSecretHash   pgtype.Text        `json:"client_secret_hash"`
+	RedirectUris       []string           `json:"redirect_uris"`
+	AllowedScopes      []string           `json:"allowed_scopes"`
+	GrantTypes         []string           `json:"grant_types"`
+	ResponseTypes      []string           `json:"response_types"`
+	PkceRequired       bool               `json:"pkce_required"`
+	WorkplaceProvider  string             `json:"workplace_provider"`
+	WorkplaceAppID     string             `json:"workplace_app_id"`
+	WorkplaceAppSecret string             `json:"workplace_app_secret"`
+	Status             string             `json:"status"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Organization struct {

@@ -458,6 +458,9 @@ export interface OIDCClient {
   grant_types?: string[];
   response_types?: string[];
   pkce_required?: boolean;
+  workplace_provider?: string;
+  workplace_app_id?: string;
+  workplace_app_secret?: string;
   status?: string;
   created_at?: string;
   updated_at?: string;
@@ -553,11 +556,11 @@ export const api = {
       method: 'PUT',
       body: payload,
     }),
-  listLoginProviders: (entityId?: string) => {
-    const suffix = queryString({ entity_id: entityId });
+  listLoginProviders: (entityId?: string, clientId?: string) => {
+    const suffix = queryString({ entity_id: entityId, client_id: clientId });
     return apiRequest<LoginProvider[]>(`/api/auth/providers${suffix}`);
   },
-  exchangeFeishuAppCode: (payload: { auth_code: string; entity_id: string }) =>
+  exchangeFeishuAppCode: (payload: { auth_code: string; entity_id: string; client_id?: string }) =>
     apiRequest<FeishuExchangeResponse>('/api/auth/feishu/exchange', {
       method: 'POST',
       body: payload,
@@ -748,6 +751,9 @@ export const api = {
     grant_types?: string[];
     response_types?: string[];
     pkce_required?: boolean;
+    workplace_provider?: string;
+    workplace_app_id?: string;
+    workplace_app_secret?: string;
   }) =>
     apiRequest<OIDCClientCreateResponse>('/sapi/oidc-clients', {
       method: 'POST',
@@ -761,6 +767,9 @@ export const api = {
       grant_types?: string[];
       response_types?: string[];
       pkce_required?: boolean;
+      workplace_provider?: string;
+      workplace_app_id?: string;
+      workplace_app_secret?: string;
       status?: string;
     },
   ) =>

@@ -43,6 +43,7 @@
   $: query = $page.url.searchParams;
   $: isAdminLogin = $page.url.pathname === '/admin/login';
   $: returnTo = query.get('return_to') || (isAdminLogin ? '/admin' : '/portal');
+  $: oidcClientId = returnToParam(returnTo, 'client_id');
   $: workplaceProvider = normalizeWorkplaceProvider(
     query.get('workplace') ||
       query.get('workplace_provider') ||
@@ -224,7 +225,7 @@
 
     try {
       const authCode = queryAuthCode() || (await feishuAuthCodeFromBridge(provider.app_id));
-      await api.exchangeFeishuAppCode({ auth_code: authCode, entity_id: entityRef });
+      await api.exchangeFeishuAppCode({ auth_code: authCode, entity_id: entityRef, client_id: oidcClientId });
       redirectToPath(returnTo);
     } catch {
       autoRedirecting = false;
@@ -238,7 +239,7 @@
     if (!entityValue || !methods.includes('feishu')) return;
     providersLoading = true;
     try {
-      providers = await api.listLoginProviders(entityValue);
+      providers = await api.listLoginProviders(entityValue, oidcClientId);
       providersLoaded = true;
     } catch {
       busyError = t('login.providersFailed');

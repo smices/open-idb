@@ -154,23 +154,29 @@ INSERT INTO oidc_clients (
     grant_types,
     response_types,
     pkce_required,
+    workplace_provider,
+    workplace_app_id,
+    workplace_app_secret,
     status
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, 'active'
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'active'
 )
-RETURNING id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, status, created_at, updated_at
+RETURNING id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at
 `
 
 type CreateOIDCClientParams struct {
-	EntityID         string      `json:"entity_id"`
-	ApplicationID    string      `json:"application_id"`
-	ClientID         string      `json:"client_id"`
-	ClientSecretHash pgtype.Text `json:"client_secret_hash"`
-	RedirectUris     []string    `json:"redirect_uris"`
-	AllowedScopes    []string    `json:"allowed_scopes"`
-	GrantTypes       []string    `json:"grant_types"`
-	ResponseTypes    []string    `json:"response_types"`
-	PkceRequired     bool        `json:"pkce_required"`
+	EntityID           string      `json:"entity_id"`
+	ApplicationID      string      `json:"application_id"`
+	ClientID           string      `json:"client_id"`
+	ClientSecretHash   pgtype.Text `json:"client_secret_hash"`
+	RedirectUris       []string    `json:"redirect_uris"`
+	AllowedScopes      []string    `json:"allowed_scopes"`
+	GrantTypes         []string    `json:"grant_types"`
+	ResponseTypes      []string    `json:"response_types"`
+	PkceRequired       bool        `json:"pkce_required"`
+	WorkplaceProvider  string      `json:"workplace_provider"`
+	WorkplaceAppID     string      `json:"workplace_app_id"`
+	WorkplaceAppSecret string      `json:"workplace_app_secret"`
 }
 
 func (q *Queries) CreateOIDCClient(ctx context.Context, arg CreateOIDCClientParams) (OidcClient, error) {
@@ -184,6 +190,9 @@ func (q *Queries) CreateOIDCClient(ctx context.Context, arg CreateOIDCClientPara
 		arg.GrantTypes,
 		arg.ResponseTypes,
 		arg.PkceRequired,
+		arg.WorkplaceProvider,
+		arg.WorkplaceAppID,
+		arg.WorkplaceAppSecret,
 	)
 	var i OidcClient
 	err := row.Scan(
@@ -197,6 +206,9 @@ func (q *Queries) CreateOIDCClient(ctx context.Context, arg CreateOIDCClientPara
 		&i.GrantTypes,
 		&i.ResponseTypes,
 		&i.PkceRequired,
+		&i.WorkplaceProvider,
+		&i.WorkplaceAppID,
+		&i.WorkplaceAppSecret,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -263,7 +275,7 @@ func (q *Queries) GetAuthorizationCode(ctx context.Context, arg GetAuthorization
 }
 
 const getOIDCClientByClientID = `-- name: GetOIDCClientByClientID :one
-SELECT id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, status, created_at, updated_at
+SELECT id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at
 FROM oidc_clients
 WHERE entity_id = $1 AND client_id = $2
 `
@@ -287,6 +299,9 @@ func (q *Queries) GetOIDCClientByClientID(ctx context.Context, arg GetOIDCClient
 		&i.GrantTypes,
 		&i.ResponseTypes,
 		&i.PkceRequired,
+		&i.WorkplaceProvider,
+		&i.WorkplaceAppID,
+		&i.WorkplaceAppSecret,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
