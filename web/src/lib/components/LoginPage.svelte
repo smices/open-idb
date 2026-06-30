@@ -29,6 +29,30 @@
     fail?: (error: unknown) => void;
   };
 
+  type FeishuWorkplaceErrorCode =
+    | 'sdk_load_failed'
+    | 'bridge_unavailable'
+    | 'bridge_timeout'
+    | 'auth_code_empty'
+    | 'auth_code_failed'
+    | 'exchange_api_failed';
+
+  class FeishuWorkplaceError extends Error {
+    code: FeishuWorkplaceErrorCode;
+    detail: string;
+
+    constructor(code: FeishuWorkplaceErrorCode, detail = '') {
+      super(code);
+      this.code = code;
+      this.detail = detail;
+    }
+  }
+
+  const FEISHU_H5_SDK_URLS = [
+    import.meta.env.PUBLIC_FEISHU_H5_SDK_URL?.trim(),
+    'https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.35.js',
+  ].filter(Boolean) as string[];
+
   let account = '';
   let password = '';
   let context: LoginContext | null = null;
@@ -162,19 +186,106 @@
 
   const getProviderLoginUrl = (): string => context?.auto_redirect_url || getFeishuLoginUrl();
 
+  const errorDetail = (error: unknown): string => {
+    if (!error) return '';
+    if (typeof error === 'string') return error;
+    if (error instanceof Error) return error.message;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  };
+
+  const feishuBridgeHandler = (bridgeWindow: FeishuBridgeWindow) =>
+    bridgeWindow.tt?.requestAuthCode ||
+    bridgeWindow.tt?.getAuthCode ||
+    bridgeWindow.h5sdk?.requestAuthCode ||
+    bridgeWindow.h5sdk?.getAuthCode ||
+    bridgeWindow.h5sdk?.biz?.auth?.getAuthCode;
+
+  const hasFeishuBridge = (bridgeWindow: FeishuBridgeWindow): boolean =>
+    Boolean(feishuBridgeHandler(bridgeWindow) || bridgeWindow.h5sdk?.ready);
+
+  const loadScript = (src: string): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const existing = document.querySelector<HTMLScriptElement>(`script[data-idb-feishu-sdk="${src}"]`);
+      if (existing?.dataset.loaded === 'true') {
+        resolve();
+        return;
+      }
+      if (existing) {
+        existing.addEventListener('load', () => resolve(), { once: true });
+        existing.addEventListener('error', () => reject(new Error(`failed to load ${src}`)), { once: true });
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = src;
+      script.async = true;
+      script.dataset.idbFeishuSdk = src;
+      script.onload = () => {
+        script.dataset.loaded = 'true';
+        resolve();
+      };
+      script.onerror = () => reject(new Error(`failed to load ${src}`));
+      document.head.appendChild(script);
+    });
+
+  const waitForFeishuBridge = (timeoutMs = 3000): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const startedAt = Date.now();
+      const check = () => {
+        if (hasFeishuBridge(window as FeishuBridgeWindow)) {
+          resolve();
+          return;
+        }
+        if (Date.now() - startedAt >= timeoutMs) {
+          reject(new FeishuWorkplaceError('bridge_unavailable'));
+          return;
+        }
+        window.setTimeout(check, 100);
+      };
+      check();
+    });
+
+  const ensureFeishuH5Sdk = async (): Promise<void> => {
+    const bridgeWindow = window as FeishuBridgeWindow;
+    if (hasFeishuBridge(bridgeWindow)) return;
+
+    let lastError: unknown = null;
+    for (const src of FEISHU_H5_SDK_URLS) {
+      try {
+        await loadScript(src);
+        await waitForFeishuBridge();
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (lastError instanceof FeishuWorkplaceError) throw lastError;
+    throw new FeishuWorkplaceError('sdk_load_failed', errorDetail(lastError));
+  };
+
+  const workplaceErrorText = (error: unknown): string => {
+    if (error instanceof FeishuWorkplaceError) {
+      const detail = error.detail ? ` (${error.detail})` : '';
+      return `${t(`login.error.${error.code}`)}${detail}`;
+    }
+    const detail = errorDetail(error);
+    return `${t('login.error.exchange_api_failed')}${detail ? ` (${detail})` : ''}`;
+  };
+
   const feishuAuthCodeFromBridge = async (appId: string): Promise<string> => {
+    await ensureFeishuH5Sdk();
     const bridgeWindow = window as FeishuBridgeWindow;
     const requestCode = (): Promise<string> =>
       new Promise((resolve, reject) => {
-        const handler =
-          bridgeWindow.tt?.requestAuthCode ||
-          bridgeWindow.tt?.getAuthCode ||
-          bridgeWindow.h5sdk?.requestAuthCode ||
-          bridgeWindow.h5sdk?.getAuthCode ||
-          bridgeWindow.h5sdk?.biz?.auth?.getAuthCode;
+        const handler = feishuBridgeHandler(bridgeWindow);
 
         if (!handler) {
-          reject(new Error('feishu bridge is unavailable'));
+          reject(new FeishuWorkplaceError('bridge_unavailable'));
           return;
         }
 
@@ -183,19 +294,19 @@
           success: (response) => {
             const code = response.code || response.auth_code || response.authCode || '';
             if (code) resolve(code);
-            else reject(new Error('feishu auth_code is empty'));
+            else reject(new FeishuWorkplaceError('auth_code_empty', errorDetail(response)));
           },
-          fail: reject,
+          fail: (error) => reject(new FeishuWorkplaceError('auth_code_failed', errorDetail(error))),
         });
       });
 
     if (bridgeWindow.h5sdk?.ready) {
       const ready = bridgeWindow.h5sdk.ready;
       return new Promise((resolve, reject) => {
-        const timer = window.setTimeout(() => reject(new Error('feishu bridge timeout')), 10000);
+        const timer = window.setTimeout(() => reject(new FeishuWorkplaceError('bridge_timeout')), 10000);
         bridgeWindow.h5sdk?.error?.((error) => {
           window.clearTimeout(timer);
-          reject(error);
+          reject(new FeishuWorkplaceError('auth_code_failed', errorDetail(error)));
         });
         ready(() => {
           requestCode()
@@ -230,9 +341,9 @@
       const authCode = queryAuthCode() || (await feishuAuthCodeFromBridge(provider.app_id));
       await api.exchangeFeishuAppCode({ auth_code: authCode, entity_id: entityRef, client_id: oidcClientId });
       redirectToPath(returnTo);
-    } catch {
+    } catch (error) {
       autoRedirecting = false;
-      busyError = t('login.error.exchange_failed');
+      busyError = workplaceErrorText(error instanceof FeishuWorkplaceError ? error : new FeishuWorkplaceError('exchange_api_failed', errorDetail(error)));
     }
   };
 
