@@ -153,7 +153,7 @@ func (h OIDCClientHandler) createOIDCClient(w http.ResponseWriter, r *http.Reque
 		body.ClientID = clientID
 	}
 	if len(body.AllowedScopes) == 0 {
-		body.AllowedScopes = []string{"openid", "profile", "email"}
+		body.AllowedScopes = []string{"openid", "profile", "email", "directory:read"}
 	}
 	if len(body.GrantTypes) == 0 {
 		body.GrantTypes = []string{"authorization_code"}

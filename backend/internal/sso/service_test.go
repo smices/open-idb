@@ -106,6 +106,35 @@ func TestValidateAuthorizeRequestDelegatesToFosite(t *testing.T) {
 	}
 }
 
+func TestEffectiveAuthorizeScopesUsesAllowedClientScopes(t *testing.T) {
+	got, err := effectiveAuthorizeScopes(
+		[]string{"openid", "profile", "email"},
+		[]string{"openid", "profile", "email", "directory:read"},
+	)
+	if err != nil {
+		t.Fatalf("effectiveAuthorizeScopes() error = %v", err)
+	}
+	want := []string{"openid", "profile", "email", "directory:read"}
+	if len(got) != len(want) {
+		t.Fatalf("scopes = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("scopes = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func TestEffectiveAuthorizeScopesRejectsScopeOutsideClientGrant(t *testing.T) {
+	_, err := effectiveAuthorizeScopes(
+		[]string{"openid", "admin:write"},
+		[]string{"openid", "profile", "email", "directory:read"},
+	)
+	if err == nil {
+		t.Fatal("effectiveAuthorizeScopes() error = nil, want error")
+	}
+}
+
 func TestHasExternalIdentitySource(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

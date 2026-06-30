@@ -116,7 +116,7 @@ The application owner must provide a valid absolute callback URL, for example:
 https://app.example.com/auth/oidc/callback
 ```
 
-OIDC clients that need people picker or organization search capabilities can request the optional `directory:read` scope and call:
+OIDC clients that need people picker or organization search capabilities can enable the Directory API scope in IdBridge and call:
 
 ```text
 GET /api/directory/organization-tree/search?q=<keyword>

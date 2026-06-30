@@ -234,13 +234,7 @@ https://idbridge.example.com/api/oauth2/authorize?response_type=code&client_id=<
 
 ## 5. OIDC 应用通讯录 API
 
-OIDC 应用如果需要做人员选择、部门选择或组织内搜索，可以申请 `directory:read` scope，然后使用 access token 调用通讯录 API。
-
-授权 URL 的 scope 示例：
-
-```text
-scope=openid%20profile%20email%20directory:read
-```
+OIDC 应用如果需要做人员选择、部门选择或组织内搜索，管理员在 IdBridge 应用配置中勾选“目录 API”即可。IdBridge 会按应用已勾选的授权范围签发 access token，业务应用不需要维护第二份 scope 配置。
 
 请求必须带上：
 

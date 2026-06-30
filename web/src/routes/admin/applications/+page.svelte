@@ -24,8 +24,8 @@
   let oidcLoading = false;
   let oidcClientId = '';
   let oidcRedirectUris = '';
-  let oidcScopes = 'openid\nprofile\nemail';
-  let directoryReadEnabled = false;
+  let oidcScopes = 'openid\nprofile\nemail\ndirectory:read';
+  let directoryReadEnabled = true;
   let oidcGrantTypes = 'authorization_code';
   let oidcResponseTypes = 'code';
   let oidcPkce = true;
@@ -36,7 +36,7 @@
 
   const applicationTypes = ['oidc_client', 'api_client', 'internal_app'];
   const applicationStatuses = ['active', 'disabled'];
-  const defaultOIDCScopes = ['openid', 'profile', 'email'];
+  const defaultOIDCScopes = ['openid', 'profile', 'email', 'directory:read'];
 
   const applicationTypeLabel = (value: string): string => t(`applications.type.${value}`, value);
   const applicationStatusLabel = (value: string): string => t(`applications.status.${value}`, value);

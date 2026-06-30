@@ -191,12 +191,14 @@ func (s *Service) ValidateAuthorizeRequest(ctx context.Context, input AuthorizeI
 		if !containsString(client.RedirectUris, input.RedirectURI) {
 			return AuthorizeDecision{}, fmt.Errorf("redirect uri is not allowed")
 		}
-		if !containsString(input.Scopes, "openid") {
+		effectiveScopes, err := effectiveAuthorizeScopes(input.Scopes, client.AllowedScopes)
+		if err != nil {
+			return AuthorizeDecision{}, err
+		}
+		if !containsString(effectiveScopes, "openid") {
 			return AuthorizeDecision{}, fmt.Errorf("scope must include openid")
 		}
-		if !isSubset(input.Scopes, client.AllowedScopes) {
-			return AuthorizeDecision{}, fmt.Errorf("requested scope is not allowed")
-		}
+		input.Scopes = effectiveScopes
 	}
 	if s.fosite != nil {
 		req := authorizeHTTPRequest(input)
@@ -218,9 +220,11 @@ func (s *Service) IssueAuthorizationCode(ctx context.Context, input AuthorizeInp
 	if s.store == nil {
 		return "", fmt.Errorf("sso store is required")
 	}
-	if _, err := s.ValidateAuthorizeRequest(ctx, input); err != nil {
+	decision, err := s.ValidateAuthorizeRequest(ctx, input)
+	if err != nil {
 		return "", err
 	}
+	input.Scopes = decision.Scopes
 	client, err := s.getActiveClient(ctx, input.EntityID, input.ClientID)
 	if err != nil {
 		return "", err
@@ -527,6 +531,33 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func effectiveAuthorizeScopes(requested []string, allowed []string) ([]string, error) {
+	if len(allowed) == 0 {
+		return nil, fmt.Errorf("client has no allowed scopes")
+	}
+	if len(requested) > 0 && !isSubset(requested, allowed) {
+		return nil, fmt.Errorf("requested scope is not allowed")
+	}
+	return uniqueStrings(allowed), nil
+}
+
+func uniqueStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func isSubset(values []string, allowed []string) bool {
