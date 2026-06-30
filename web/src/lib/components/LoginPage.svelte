@@ -217,7 +217,10 @@
   const completeFeishuWorkplaceLogin = async () => {
     if (!isWorkplaceLogin || workplaceAttempted || !context || !entityRef) return;
     const provider = providers.find((item) => item.provider === 'feishu');
-    if (!provider?.workplace_exchange_url || !provider.app_id) return;
+    if (!provider?.workplace_exchange_url || !provider.app_id) {
+      busyError = t('login.error.workplace_not_configured');
+      return;
+    }
 
     workplaceAttempted = true;
     autoRedirecting = true;
@@ -236,7 +239,10 @@
   const loadProviders = async (entityValue = entityRef, methods = context?.methods || []) => {
     providersLoaded = false;
     providers = [];
-    if (!entityValue || !methods.includes('feishu')) return;
+    if (!entityValue || !methods.includes('feishu')) {
+      if (isWorkplaceLogin) busyError = t('login.error.workplace_not_available');
+      return;
+    }
     providersLoading = true;
     try {
       providers = await api.listLoginProviders(entityValue, oidcClientId);
@@ -326,7 +332,9 @@
       <div class="mb-6">
         <p class="text-sm font-medium text-primary-200">{isEnterpriseEntrance ? t('login.enterprise.formEyebrow') : t(`login.${mode}.formEyebrow`)}</p>
         <h2 class="mt-2 text-2xl font-semibold">
-          {isEnterpriseEntrance
+          {isWorkplaceLogin
+            ? t('login.workplace.formTitle')
+            : isEnterpriseEntrance
             ? t('login.enterprise.formTitle')
             : mode === 'entity_admin' && entityBrand
               ? tf('login.entity_admin.formTitleWithBrand', { brand: entityBrand })
@@ -343,6 +351,31 @@
           <div class="preset-glass-surface-soft h-12 rounded-container"></div>
           <div class="preset-glass-surface-soft h-12 rounded-container"></div>
           <div class="preset-glass-surface-soft h-12 rounded-container"></div>
+        </div>
+      {:else if isWorkplaceLogin}
+        <div class="space-y-4">
+          {#if entityRef}
+            <div class="flex min-h-12 items-center gap-3 rounded-container border border-surface-200-800 bg-surface-100-900 px-4 py-3 text-sm">
+              <ShieldCheck class="shrink-0 text-primary-300" size={18} />
+              <div class="min-w-0">
+                <p class="text-xs text-surface-600-400">{t('login.enterprise.verifiedContext')}</p>
+                <p class="truncate font-semibold">{entityLabel || entityRef}</p>
+              </div>
+            </div>
+          {/if}
+
+          {#if providersLoading}
+            <p class="rounded-container border border-surface-200-800 bg-surface-100-900 px-4 py-3 text-sm text-surface-600-400">{t('common.loading')}</p>
+          {:else if feishuProvider}
+            <button class="btn h-12 w-full justify-center gap-2 rounded-container bg-primary-500 text-base font-semibold text-white hover:bg-primary-600 focus-visible:ring-4 focus-visible:ring-primary-400/30" type="button" on:click={() => void completeFeishuWorkplaceLogin()}>
+              <span class="feishu-mark" aria-hidden="true">
+                <span></span><span></span><span></span><span></span>
+              </span>
+              {t('login.workplace.retry')}
+            </button>
+          {:else}
+            <p class="rounded-container border border-surface-200-800 bg-surface-100-900 px-4 py-3 text-sm text-surface-600-400">{t('login.error.workplace_not_configured')}</p>
+          {/if}
         </div>
       {:else}
         {#if entityRef}
