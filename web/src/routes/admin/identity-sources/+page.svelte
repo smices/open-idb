@@ -20,6 +20,8 @@
   let error = '';
   let appId = '';
   let appSecret = '';
+  let workplaceAppId = '';
+  let workplaceAppSecret = '';
   let enableSync = false;
   let oauthRedirectUri = '';
 
@@ -42,12 +44,16 @@
       config = await api.getFeishuIdentitySourceConfig();
       appId = (config?.config?.app_id as string) || '';
       appSecret = (config?.config?.app_secret as string) || '';
+      workplaceAppId = (config?.config?.workplace_app_id as string) || '';
+      workplaceAppSecret = (config?.config?.workplace_app_secret as string) || '';
       enableSync = config?.sync_enabled ?? providerSource?.sync_enabled ?? false;
       oauthRedirectUri = config?.redirect_uri || '';
     } catch {
       config = null;
       appId = '';
       appSecret = '';
+      workplaceAppId = '';
+      workplaceAppSecret = '';
       enableSync = providerSource?.sync_enabled ?? false;
       oauthRedirectUri = '';
       notifyError(t('identitySources.configFetchFailed'));
@@ -92,7 +98,9 @@
     configSaving = true;
     error = '';
     const hasOAuthInput = appId.trim() !== '' || appSecret.trim() !== '';
+    const hasWorkplaceInput = workplaceAppId.trim() !== '' || workplaceAppSecret.trim() !== '';
     const oauthAlreadyConfigured = config?.oauth_configured ?? false;
+    const workplaceAlreadyConfigured = Boolean(config?.config?.workplace_app_secret);
 
     if (!providerSource) {
       notifyError(t('identitySources.feishuSourceRequired'));
@@ -105,13 +113,34 @@
       configSaving = false;
       return;
     }
+    if (hasWorkplaceInput && (!workplaceAppId.trim() || (!workplaceAppSecret.trim() && !workplaceAlreadyConfigured))) {
+      notifyError(t('identitySources.feishuWorkplaceConfigIncomplete'));
+      configSaving = false;
+      return;
+    }
 
     try {
-      const { bot_app_id: _botAppId, bot_app_secret: _botAppSecret, ...safeExistingConfig } = config?.config || {};
+      const {
+        bot_app_id: _botAppId,
+        bot_app_secret: _botAppSecret,
+        workplace_app_id: _oldWorkplaceAppId,
+        workplace_app_secret: oldWorkplaceAppSecret,
+        ...safeExistingConfig
+      } = config?.config || {};
       const nextConfig = {
         ...safeExistingConfig,
         app_id: appId.trim(),
         ...(appSecret.trim() ? { app_secret: appSecret.trim() } : {}),
+        ...(workplaceAppId.trim()
+          ? {
+              workplace_app_id: workplaceAppId.trim(),
+              ...(workplaceAppSecret.trim()
+                ? { workplace_app_secret: workplaceAppSecret.trim() }
+                : oldWorkplaceAppSecret
+                  ? { workplace_app_secret: oldWorkplaceAppSecret }
+                  : {}),
+            }
+          : {}),
       };
 
       config = await api.upsertFeishuIdentitySourceConfig({
@@ -194,6 +223,18 @@
             <span class="text-sm text-surface-500">{t('identitySources.appSecret')}</span>
             <input class="input w-full" type="text" bind:value={appSecret} placeholder={t('identitySources.appSecretPlaceholder')} autocomplete="off" />
           </label>
+        </div>
+
+        <div class="grid gap-3 md:grid-cols-2">
+          <label class="block">
+            <span class="text-sm text-surface-500">{t('identitySources.workplaceAppId')}</span>
+            <input class="input w-full" type="text" bind:value={workplaceAppId} placeholder={t('identitySources.workplaceAppIdPlaceholder')} />
+          </label>
+          <label class="block">
+            <span class="text-sm text-surface-500">{t('identitySources.workplaceAppSecret')}</span>
+            <input class="input w-full" type="text" bind:value={workplaceAppSecret} placeholder={t('identitySources.workplaceAppSecretPlaceholder')} autocomplete="off" />
+          </label>
+          <p class="text-xs leading-5 text-surface-500 md:col-span-2">{t('identitySources.workplaceConfigHelp')}</p>
         </div>
 
         <label class="block">

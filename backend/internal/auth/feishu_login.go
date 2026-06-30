@@ -75,6 +75,7 @@ type LoginProvisionPolicy struct {
 
 type FeishuClientResolver interface {
 	GetFeishuUserProvider(ctx context.Context, entityID string, sourceID string) (FeishuUserProvider, error)
+	GetFeishuWorkplaceUserProvider(ctx context.Context, entityID string, sourceID string) (FeishuUserProvider, error)
 }
 
 // FeishuLoginService handles the complete Feishu login flow:
@@ -121,6 +122,10 @@ func (r *staticFeishuClientResolver) GetFeishuUserProvider(context.Context, stri
 	return r.client, nil
 }
 
+func (r *staticFeishuClientResolver) GetFeishuWorkplaceUserProvider(context.Context, string, string) (FeishuUserProvider, error) {
+	return r.client, nil
+}
+
 // LookupSourceID finds the Feishu identity source for a entity and returns its ID as a string.
 func (s *FeishuLoginService) LookupSourceID(ctx context.Context, entityID string) (string, error) {
 	entityULID, err := resolveEntityRef(ctx, s.queries, entityID)
@@ -149,7 +154,7 @@ func (s *FeishuLoginService) LoginViaOAuth(ctx context.Context, entityID string,
 
 // LoginViaAppCode handles the embedded app flow.
 func (s *FeishuLoginService) LoginViaAppCode(ctx context.Context, entityID string, sourceID string, authCode string) (FeishuLoginResult, error) {
-	client, err := s.resolveClient(ctx, entityID, sourceID)
+	client, err := s.resolveWorkplaceClient(ctx, entityID, sourceID)
 	if err != nil {
 		return FeishuLoginResult{}, err
 	}
@@ -168,6 +173,13 @@ func (s *FeishuLoginService) resolveClient(ctx context.Context, entityID string,
 		return nil, fmt.Errorf("feishu client is not configured")
 	}
 	return s.feishuClient, nil
+}
+
+func (s *FeishuLoginService) resolveWorkplaceClient(ctx context.Context, entityID string, sourceID string) (FeishuUserProvider, error) {
+	if s.feishuClientResolver != nil {
+		return s.feishuClientResolver.GetFeishuWorkplaceUserProvider(ctx, entityID, sourceID)
+	}
+	return s.resolveClient(ctx, entityID, sourceID)
 }
 
 // completeLogin is the shared core logic for both login paths.

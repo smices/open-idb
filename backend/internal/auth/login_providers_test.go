@@ -102,6 +102,68 @@ func TestListProvidersReturnsActiveConfiguredProviders(t *testing.T) {
 	}
 }
 
+func TestListProvidersUsesWorkplaceAppIDForBridgeOnly(t *testing.T) {
+	queries := &mockProviderQueries{
+		listFn: func(_ context.Context, _ string) ([]generated.ListLoginProvidersRow, error) {
+			return []generated.ListLoginProvidersRow{
+				{
+					Provider:        "feishu",
+					DisplayName:     "飞书",
+					Status:          "active",
+					OauthConfigured: true,
+					Config:          []byte(`{"app_id":"login-app","app_secret":"login-secret","workplace_app_id":"workplace-app","workplace_app_secret":"workplace-secret"}`),
+				},
+			}, nil
+		},
+	}
+	svc := &LoginProviderService{
+		queries:           queries,
+		feishuRedirectURI: "https://example.test/auth/feishu/callback",
+	}
+
+	providers, err := svc.ListProviders(context.Background(), "01HZZZZZZZ0000000000000001")
+	if err != nil {
+		t.Fatalf("ListProviders error = %v", err)
+	}
+	if len(providers) != 1 {
+		t.Fatalf("len = %d, want 1", len(providers))
+	}
+	if providers[0].AppID != "workplace-app" {
+		t.Fatalf("bridge app_id = %q, want workplace-app", providers[0].AppID)
+	}
+	if !strings.Contains(providers[0].OAuthURL, "login-app") {
+		t.Fatalf("oauth_url should use login app: %q", providers[0].OAuthURL)
+	}
+	if strings.Contains(providers[0].OAuthURL, "workplace-app") {
+		t.Fatalf("oauth_url should not use workplace app: %q", providers[0].OAuthURL)
+	}
+}
+
+func TestResolveFeishuWorkplaceConfigOverridesLoginCredentials(t *testing.T) {
+	queries := &mockProviderQueries{
+		listFn: func(_ context.Context, _ string) ([]generated.ListLoginProvidersRow, error) {
+			return []generated.ListLoginProvidersRow{
+				{
+					Provider:        "feishu",
+					DisplayName:     "飞书",
+					Status:          "active",
+					OauthConfigured: true,
+					Config:          []byte(`{"app_id":"login-app","app_secret":"login-secret","workplace_app_id":"workplace-app","workplace_app_secret":"workplace-secret"}`),
+				},
+			}, nil
+		},
+	}
+	svc := &LoginProviderService{queries: queries}
+
+	cfg, err := svc.ResolveFeishuWorkplaceConfig(context.Background(), "01HZZZZZZZ0000000000000001")
+	if err != nil {
+		t.Fatalf("ResolveFeishuWorkplaceConfig error = %v", err)
+	}
+	if cfg.AppID != "workplace-app" || cfg.AppSecret != "workplace-secret" {
+		t.Fatalf("workplace cfg = %#v, want workplace credentials", cfg)
+	}
+}
+
 func TestListProvidersEmptyWhenNoneConfigured(t *testing.T) {
 	queries := &mockProviderQueries{
 		listFn: func(_ context.Context, _ string) ([]generated.ListLoginProvidersRow, error) {

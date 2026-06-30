@@ -125,6 +125,12 @@ func validateFeishuIdentitySourceConfig(oauthConfigured bool, rawConfig json.Raw
 	if strings.TrimSpace(config.AppSecret) == "" {
 		return fmt.Errorf("app_secret is required when oauth_configured is true")
 	}
+	if strings.TrimSpace(config.WorkplaceAppID) != "" && strings.TrimSpace(config.WorkplaceAppSecret) == "" {
+		return fmt.Errorf("workplace_app_secret is required when workplace_app_id is configured")
+	}
+	if strings.TrimSpace(config.WorkplaceAppSecret) != "" && strings.TrimSpace(config.WorkplaceAppID) == "" {
+		return fmt.Errorf("workplace_app_id is required when workplace_app_secret is configured")
+	}
 	return nil
 }
 
