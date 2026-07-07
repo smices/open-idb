@@ -16,8 +16,9 @@
 
 管理员账号和普通用户账号隔离：
 
-- 管理员账号在 `admin_users`，登录 `/admin/login`。
-- 普通用户在 `users`，登录 `/portal` 或应用登录流。
+- 管理员账号在 `admin_users`，只能通过 `/admin/login` 或 `/t/{entity}/admin/login` 登录。
+- 普通用户在 `users`，通过 `/portal`、`/login`、`/auth/continue` 或应用登录流进入。
+- `/` 不暴露管理员入口。用户登录和企业后台管理员登录是两套独立账号体系。
 
 ## 1. 身份源接入
 
@@ -76,6 +77,7 @@ IDB_FEISHU_REDIRECT_URI='https://idbridge.example.com/api/auth/feishu/callback'
 - “组织架构”显示公司、部门树和同步来的员工。
 - “账号管理”显示 IdBridge 内可登录、可授权、可分配角色和应用访问的账号。
 - 通讯录档案和账号对象不是同一个概念。
+- 全量同步按飞书快照收敛：匹配到既有用户时保留 IdBridge ULID，飞书中缺失的同步用户软删除，不物理删除。
 
 ## 2. 业务应用接入 IdBridge
 

@@ -14,6 +14,12 @@ The product is designed for self-hosted deployments in a company IDC or private 
 - Current primary identity source: Feishu
 - Planned identity source boundary: Feishu, WeCom, DingTalk, LDAP; current release only enables Feishu in production use
 
+Login boundaries:
+
+- `/`, `/login`, and `/auth/continue` are user-side surfaces. They use Feishu SSO and Feishu workplace SSO first.
+- `/admin/login` and `/t/{entity}/admin/login` are administrator-only surfaces.
+- Administrator accounts and user accounts are stored, authenticated, and counted separately.
+
 ## Quick Start For Local Development
 
 Requirements:
@@ -130,7 +136,7 @@ Before shipping an image or deploying to an IDC environment:
 
 ```bash
 cd backend && go test ./...
-cd web && npm run check && npm run build
+cd web && npm run check:ui && npm run build
 ```
 
 After deployment:

@@ -7,7 +7,7 @@
 - Docker
 - kubectl connected to the local development cluster
 
-The backend lives under `backend/`. The only frontend is the SvelteKit web app under `web/`.
+The backend lives under `backend/`. The only frontend is the React + Vite + Ant Design app under `web/`.
 
 ## Common Commands
 
@@ -41,7 +41,7 @@ What it does:
 - Validates the k8s namespace and `svc/postgres`.
 - Starts a PostgreSQL port-forward to `127.0.0.1:15432`.
 - Starts the Go backend at `http://localhost:18080`.
-- Starts the SvelteKit web frontend at `http://localhost:5180`.
+- Starts the React/Vite web frontend at `http://localhost:5180`.
 - Runs the frontend contract checks in preflight/quickfix flows.
 
 Useful overrides:
@@ -65,6 +65,7 @@ Or run Vite directly:
 
 ```bash
 cd web
+npm run check:ui
 npm run dev -- --host 0.0.0.0 --port 5180
 ```
 

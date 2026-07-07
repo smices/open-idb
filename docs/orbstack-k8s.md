@@ -27,7 +27,7 @@ curl -k https://idbridge.local.test/login
 - The migration job runs `goose` from the application image against `/app/migrations`.
 - The Ingress host is `idbridge.local.test` and uses the `traefik` IngressClass.
 - The Ingress points `/` to the `web/` frontend service. The frontend Caddy container only sends `/api*` to the backend.
-- The `web` frontend follows `docs/web-svelte-tailwind-contract.md` (SvelteKit + Tailwind + Skeleton, non-SPA main flow).
+- The `web` frontend follows `docs/web-react-antd-contract.md` (React + Vite + Ant Design).
 - `make k8s-local-tls` creates an untracked local CA and wildcard certificate under `.local/tls/`, creates the Kubernetes `idbridge-tls` secret, and reapplies the Ingress.
 - `TRUST_LOCAL_CA=1 make k8s-local-tls` also trusts the generated CA in the macOS login keychain so browsers stop warning about `https://idbridge.local.test`.
 

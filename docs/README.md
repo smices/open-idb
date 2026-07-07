@@ -9,8 +9,8 @@
 - [存储架构：PostgreSQL 与 Redis 边界](architecture/storage.md)
 - [Web 前端评审清单](web-review-checklist.md)
 - [Web 前端最终交付清单](web-final-delivery-checklist.md)
-- [Web 前端统一硬约束（Tailwind+Skeleton + 非 SPA + SvelteKit）](web-svelte-tailwind-contract.md)（v1.3）
-- [web 前端约束 1 页速读](web-svelte-tailwind-contract-brief.md)（v1.3）
+- [Web 前端统一硬约束（React + Vite + Ant Design）](web-react-antd-contract.md)（v1.0）
+- [web 前端约束 1 页速读](web-react-antd-contract-brief.md)（v1.0）
 
 ## 说明
 

@@ -9,7 +9,7 @@ IdBridge 由两个运行单元组成：
 | 组件 | 说明 |
 |---|---|
 | `idbridge` backend | Go API 服务，提供 `/api/*`、`/sapi/*`、OIDC、登录、同步、审计等能力 |
-| `idbridge-frontend` web | SvelteKit 静态前端，提供 `/admin/*`、`/portal`、`/auth/continue` 等页面 |
+| `idbridge-frontend` web | React + Vite + Ant Design 静态前端，提供 `/admin/*`、`/portal`、`/auth/continue` 等页面 |
 
 推荐生产形态：
 
@@ -92,10 +92,9 @@ goose -dir /app/migrations postgres "$DATABASE_URL" up
 
 - 默认公司：`Default Enterprise`
 - 默认平台管理员：`admin / admin123`
-- 默认用户账号：`admin / admin123`
 - 基础权限和角色
 
-首次登录后必须立即修改默认管理员密码。
+首次登录后必须立即修改默认管理员密码。管理员账号和普通用户账号完全隔离，初始化管理员不属于业务用户数。
 
 ## 5. 构建镜像
 
@@ -223,7 +222,8 @@ https://idbridge.example.com/api/auth/feishu/callback
 
 - 当前版本只开放飞书作为主身份源。
 - 同一公司内主身份源互斥。
-- 本地账号只是登录兜底能力，不作为身份源配置。
+- 员工登录以飞书 SSO 和飞书工作台 SSO 为主；本地账号只是用户侧登录兜底能力，不作为身份源配置。
+- 全量同步必须和飞书当前快照一致：已存在用户保持 ULID 不变，飞书快照中缺失的同步用户软删除。
 
 ## 9. 管理员和账号
 
@@ -253,6 +253,7 @@ admin / admin123
 
 - 管理员：`admin_users`，登录 `/admin/*`，使用 `idb_admin_session`。
 - 用户：`users`，登录 `/portal` 或应用登录流，使用 `idb_session`。
+- `/`、`/login`、`/auth/continue` 不暴露管理员入口、管理员文案或管理员账号提示。
 
 ## 10. 应用接入
 

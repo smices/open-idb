@@ -15,8 +15,8 @@ DEV_LOCAL_DATABASE_URL ?= postgres://idbridge:idbridge-dev@127.0.0.1:$(DEV_LOCAL
 DEV_LOCAL_NAMESPACE ?= open-idb
 WEB_CHECK_STRICT ?= 0
 WEB_DEV_PORT ?= 5180
-WEB_FRONTEND_CONTRACT_VERSION ?= web-svelte-tailwind-contract-v1.4
-WEB_FRONTEND_CONTRACT_DATE ?= 2026-05-29
+WEB_FRONTEND_CONTRACT_VERSION ?= web-react-antd-contract-v1.0
+WEB_FRONTEND_CONTRACT_DATE ?= 2026-07-07
 
 test:
 	@cd backend && \
@@ -128,145 +128,40 @@ web-build:
 		npm run build
 
 web-check:
-	@echo "[P1] [web-check] Checking non-SPA navigation constraints..."
-	@STYLE_HITS=$$(rg -n "<style|window\\.history\\.(pushState|replaceState)" web/src/app.html web/src/routes web/src/lib web/src --glob '*.svelte' --glob '*.ts' --glob '*.html' | sed -n '1,120p' || true); \
-	if [ -n "$$STYLE_HITS" ]; then \
-		echo "[P0] Found unsupported style/history SPA-style code in web:"; \
-		echo "$$STYLE_HITS"; \
-		exit 1; \
-	fi
-	@echo "[P1] 未检测到页面内 <style> 覆写和 window.history 路由控制"
-	@LOCATION_HITS=$$(rg -n "window\\.location\\." web/src/routes web/src/lib --glob '*.svelte' --glob '*.ts' --glob '!web/src/lib/session.ts' | sed -n '1,120p' || true); \
-	if [ -n "$$LOCATION_HITS" ]; then \
-		echo "[P0] Found window.location usage outside allowed session helpers:"; \
-		echo "$$LOCATION_HITS"; \
-		exit 1; \
-	fi
-	@echo "[P1] window.location 仅允许集中在 web/src/lib/session.ts"
-	@GOTO_HITS=$$(rg -n "goto\\(|\\$app/navigation" web/src/routes web/src/lib --glob '*.svelte' --glob '*.ts' | sed -n '1,120p' || true); \
-	if [ -n "$$GOTO_HITS" ]; then \
-		echo "[P0] Found SPA-style navigation usage in web:"; \
-		echo "$$GOTO_HITS"; \
-		exit 1; \
-	fi
-	@echo '[P1] 没有检测到 goto 或 $$app/navigation'
-	@CN_HITS=$$(rg -n "[\\u4e00-\\u9fff]" web/src/routes web/src/lib --glob '!web/src/lib/i18n.ts' | sed -n '1,120p' || true); \
-	if [ -n "$$CN_HITS" ]; then \
-		echo "[P0] Found hardcoded Chinese text outside i18n dictionary:"; \
-		echo "$$CN_HITS"; \
-		exit 1; \
-	fi
-	@echo "[P1] 文案未检测到页面级中文硬编码（i18n 除外）"
-	@TABLE_HITS=$$(rg -n "<table\\b|</table>" web/src/routes web/src/lib --glob '*.svelte' --glob '*.ts' | sed -n '1,120p' || true); \
-	if [ -n "$$TABLE_HITS" ]; then \
-		echo "[P1] Found table markup in web pages (prefer Tailwind card/list composition):"; \
-		echo "$$TABLE_HITS"; \
-	else \
-		echo "[P1] 未检测到 table 标记，页面采用卡片/列表结构"; \
-	fi
-	@STRICT_MODE="$(WEB_CHECK_STRICT)"; \
-	if [ "$$STRICT_MODE" = "1" ]; then STRICT_MODE=error; fi; \
-	if [ "$$STRICT_MODE" != "0" ] && [ "$$STRICT_MODE" != "" ]; then \
-		echo "[P1] [web-check] Strict mode: checking React/non-SPA/Svelte-native/component-first constraints (mode=$$STRICT_MODE)"; \
-		if [ -n "$$TABLE_HITS" ]; then \
-			if [ "$$STRICT_MODE" = "error" ]; then \
-				echo "[P0] Found table markup in web pages (error mode):"; \
-				echo "$$TABLE_HITS"; \
-				exit 1; \
-			else \
-				echo "[P1] Found table markup in web pages (strict mode=warn):"; \
-				echo "$$TABLE_HITS"; \
-			fi; \
-		else \
-			echo "[P1] 未检测到 table 标记（Card/List 风格）"; \
-		fi; \
-		REACT_HITS=$$(rg -n "from ['\\\"]react['\\\"]|ReactDOM|\\bReact\\.|\\bclassName=" web/src --glob '*.svelte' --glob '*.ts' | sed -n '1,120p' || true); \
-		if [ -n "$$REACT_HITS" ]; then \
-			if [ "$$STRICT_MODE" = "error" ]; then \
-				echo "[P0] Found React-style usage in web (mode=error):"; \
-				echo "$$REACT_HITS"; \
-				exit 1; \
-			else \
-				echo "[P1] Found React-style usage in web (mode=warn):"; \
-				echo "$$REACT_HITS"; \
-			fi; \
-		else \
-			echo "[P1] 未检测到 React 风格代码"; \
-		fi; \
-		SPA_ROUTER_HITS=$$(rg -n "svelte-spa-router|from ['\\\"]@roxi/routify['\\\"]|\\bnavigate\\(" web/src/routes web/src/lib --glob '*.svelte' --glob '*.ts' | sed -n '1,120p' || true); \
-		if [ -n "$$SPA_ROUTER_HITS" ]; then \
-			if [ "$$STRICT_MODE" = "error" ]; then \
-				echo "[P0] Found SPA-only router usage in web:"; \
-				echo "$$SPA_ROUTER_HITS"; \
-				exit 1; \
-			else \
-				echo "[P1] Found SPA-only router hints in web (mode=warn):"; \
-				echo "$$SPA_ROUTER_HITS"; \
-			fi; \
-		else \
-			echo "[P1] 未检测到明显 SPA-only 路由器依赖"; \
-		fi; \
-		TAILWIND_STYLE_HITS=$$(rg -n "style=\\\"|style='" web/src/app.html web/src/routes web/src/lib web/src --glob '*.svelte' --glob '*.html' | sed -n '1,120p' || true); \
-		if [ -n "$$TAILWIND_STYLE_HITS" ]; then \
-			if [ "$$STRICT_MODE" = "error" ]; then \
-				echo "[P0] Found inline style usage in web components (error mode):"; \
-				echo "$$TAILWIND_STYLE_HITS"; \
-				exit 1; \
-			else \
-				echo "[P1] Found inline style usage in web components (mode=warn):"; \
-				echo "$$TAILWIND_STYLE_HITS"; \
-			fi; \
-		else \
-			echo "[P1] 未检测到行内样式风格写法"; \
-		fi; \
-		THEME_HITS=$$(rg -n "from ['\\\"]@skeletonlabs/skeleton['\\\"]|@skeletonlabs" web/src --glob '*.svelte' --glob '*.ts' | sed -n '1,120p' || true); \
-		if [ -n "$$THEME_HITS" ]; then \
-				echo "[P1] 检测到 Skeleton 组件/样式依赖（满足 Tailwind+Skeleton 组件优先约束）"; \
-		else \
-			if [ "$$STRICT_MODE" = "error" ]; then \
-				echo "[P0] 未检测到 Skeleton 组件或样式依赖：当前实现未满足 Tailwind component-first 约束"; \
-				echo "$$THEME_HITS"; \
-				exit 1; \
-			else \
-				echo "[P1] 未检测到明确的 Skeleton 组件或样式依赖（Tailwind+Skeleton 是核心规范，建议补齐）"; \
-			fi; \
-		fi; \
-	else \
-		echo "[P1] web-check strict checks disabled. Set WEB_CHECK_STRICT=warn|error for warning/error mode."; \
-	fi
-	@echo "[P1] web-check 完成"
-	@echo "[P1] 风格约束要点复核：Tailwind/Skeleton 为关键 UI 组件体系；主导航不得走 SPA 运行时状态机；采用 Svelte 原生语法与文件路由。"
+	@echo "[P1] [web-check] Checking React + Ant Design UI baseline..."
+	@cd web && npm run check:ui
+	@echo "[P1] web-check 完成：AntD 组件基线、主题 token、i18n 与遗留前端依赖检查通过"
 
 web-check-strict:
 	@$(MAKE) web-check WEB_CHECK_STRICT=error
 
 web-frontend-contract:
-	@echo "[P1] [web-frontend-contract] Verifying Svelte + Tailwind/Skeleton + non-SPA frontend contract..."
+	@echo "[P1] [web-frontend-contract] Verifying React + Vite + Ant Design frontend contract..."
 	@$(MAKE) web-check WEB_CHECK_STRICT=error
 	@echo "[P1] 前端合约检查通过："
-	@echo "  - 非 SPA 导航约束"
-	@echo "  - Session 跳转集中控制"
-	@echo "  - Tailwind + Skeleton 组件链路是项目关键 UI 组成部分，且仅做非核心场景补充"
-	@echo "  - SvelteKit 文件路由 + Svelte 原生能力承载主流程（非 SPA 运行时主导航）"
-	@echo "  - i18n 与默认英文基线检查"
-	@echo "  - 统一约束文档: docs/web-svelte-tailwind-contract.md ($(WEB_FRONTEND_CONTRACT_VERSION), $(WEB_FRONTEND_CONTRACT_DATE))"
+	@echo "  - React + Vite 入口"
+	@echo "  - Ant Design 组件与主题 token"
+	@echo "  - 明暗主题、语言切换、用户头像等通用能力"
+	@echo "  - 登录隔离：用户飞书 SSO 与管理员账号登录分离"
+	@echo "  - i18n 基线检查"
+	@echo "  - 统一约束文档: docs/web-react-antd-contract.md ($(WEB_FRONTEND_CONTRACT_VERSION), $(WEB_FRONTEND_CONTRACT_DATE))"
 
 web-contract-bump:
 	@if [ -z "$(NEW_VERSION)" ]; then \
-		echo "Usage: make web-contract-bump NEW_VERSION=<web-svelte-tailwind-contract-vX.Y>"; \
+		echo "Usage: make web-contract-bump NEW_VERSION=<web-react-antd-contract-vX.Y>"; \
 		exit 1; \
 	fi
 	@TODAY=$$(date +%Y-%m-%d); \
-	@if printf '%s\n' "$(NEW_VERSION)" | grep -qE '^web-svelte-tailwind-contract-v[0-9]+\.[0-9]+$$'; then :; else \
-		echo "Warning: NEW_VERSION should follow web-svelte-tailwind-contract-vX.Y, proceeding anyway."; \
+	@if printf '%s\n' "$(NEW_VERSION)" | grep -qE '^web-react-antd-contract-v[0-9]+\.[0-9]+$$'; then :; else \
+		echo "Warning: NEW_VERSION should follow web-react-antd-contract-vX.Y, proceeding anyway."; \
 	fi; \
 	echo "Bumping contract version from $(WEB_FRONTEND_CONTRACT_VERSION) to $(NEW_VERSION)"; \
 	tmp=$$(mktemp); \
 	awk -v v="$(NEW_VERSION)" -v d="$$TODAY" '{ if ($$0 ~ /^WEB_FRONTEND_CONTRACT_VERSION[[:space:]]*\\?=/) { print "WEB_FRONTEND_CONTRACT_VERSION ?= " v; next } if ($$0 ~ /^WEB_FRONTEND_CONTRACT_DATE[[:space:]]*\\?=/) { print "WEB_FRONTEND_CONTRACT_DATE ?= " d; next } { print $$0 }' Makefile > $$tmp && mv $$tmp Makefile; \
 	tmp=$$(mktemp); \
-	awk -v v="$(NEW_VERSION)" -v d="$$TODAY" '{ gsub(/\\*\\*版本\\*\\*：`[^`]*`/, "**版本**：`" v "`"); gsub(/\\*\\*更新日期\\*\\*：`[^`]*`/, "**更新日期**：`" d "`"); print; }' docs/web-svelte-tailwind-contract.md > $$tmp && mv $$tmp docs/web-svelte-tailwind-contract.md; \
+	awk -v v="$(NEW_VERSION)" -v d="$$TODAY" '{ gsub(/\\*\\*版本\\*\\*：`[^`]*`/, "**版本**：`" v "`"); gsub(/\\*\\*更新日期\\*\\*：`[^`]*`/, "**更新日期**：`" d "`"); print; }' docs/web-react-antd-contract.md > $$tmp && mv $$tmp docs/web-react-antd-contract.md; \
 	tmp=$$(mktemp); \
-	awk -v v="$(NEW_VERSION)" -v d="$$TODAY" '{ gsub(/\\*\\*版本\\*\\*：`[^`]*`/, "**版本**：`" v "`"); gsub(/\\*\\*更新日期\\*\\*：`[^`]*`/, "**更新日期**：`" d "`"); print; }' docs/web-svelte-tailwind-contract-brief.md > $$tmp && mv $$tmp docs/web-svelte-tailwind-contract-brief.md; \
+	awk -v v="$(NEW_VERSION)" -v d="$$TODAY" '{ gsub(/\\*\\*版本\\*\\*：`[^`]*`/, "**版本**：`" v "`"); gsub(/\\*\\*更新日期\\*\\*：`[^`]*`/, "**更新日期**：`" d "`"); print; }' docs/web-react-antd-contract-brief.md > $$tmp && mv $$tmp docs/web-react-antd-contract-brief.md; \
 	echo "Bump done. Current version: $(NEW_VERSION), date: $$TODAY"
 
 k8s-build-frontend:
