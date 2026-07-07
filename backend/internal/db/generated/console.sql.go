@@ -68,10 +68,23 @@ func (q *Queries) GetCurrentUserByID(ctx context.Context, arg GetCurrentUserByID
 
 const getDashboardSummary = `-- name: GetDashboardSummary :one
 
+WITH synced_users AS (
+    SELECT id, lifecycle_status, created_at
+    FROM users
+    WHERE entity_id = $1
+      AND primary_source_id IS NOT NULL
+      AND lifecycle_status <> 'deleted'
+)
 SELECT
-    count(*)::bigint AS users,
-    count(*) FILTER (WHERE lifecycle_status = 'active')::bigint AS active_users,
-    count(*) FILTER (WHERE created_at >= now() - interval '7 days')::bigint AS new_users,
+    (SELECT count(*)::bigint FROM synced_users) AS users,
+    (SELECT count(*)::bigint FROM synced_users WHERE lifecycle_status = 'active') AS active_users,
+    (SELECT count(*)::bigint FROM synced_users WHERE created_at >= now() - interval '7 days') AS new_users,
+    (
+        SELECT count(*)::bigint
+        FROM admin_users au
+        WHERE au.entity_id = $1::char(26)
+           OR au.entity_id IS NULL
+    ) AS admin_users,
     (
         SELECT count(*)::bigint
         FROM oauth_tokens ot
@@ -89,14 +102,13 @@ SELECT
         ) THEN 'degraded'
         ELSE 'ready'
     END AS sync_health
-FROM users
-WHERE entity_id = $1
 `
 
 type GetDashboardSummaryRow struct {
 	Users                int64  `json:"users"`
 	ActiveUsers          int64  `json:"active_users"`
 	NewUsers             int64  `json:"new_users"`
+	AdminUsers           int64  `json:"admin_users"`
 	ApplicationActivity  int64  `json:"application_activity"`
 	PendingAuthorization int64  `json:"pending_authorization"`
 	SyncHealth           string `json:"sync_health"`
@@ -110,6 +122,7 @@ func (q *Queries) GetDashboardSummary(ctx context.Context, entityID string) (Get
 		&i.Users,
 		&i.ActiveUsers,
 		&i.NewUsers,
+		&i.AdminUsers,
 		&i.ApplicationActivity,
 		&i.PendingAuthorization,
 		&i.SyncHealth,

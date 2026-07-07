@@ -258,6 +258,7 @@ func TestDashboardSummaryReturnsConsoleMetrics(t *testing.T) {
 		Users:                10,
 		ActiveUsers:          8,
 		NewUsers:             2,
+		AdminUsers:           1,
 		ApplicationActivity:  5,
 		PendingAuthorization: 1,
 		SyncHealth:           "ready",
@@ -275,7 +276,7 @@ func TestDashboardSummaryReturnsConsoleMetrics(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.Users != 10 || response.PendingAuthorization != 1 || response.SyncHealth != "ready" {
+	if response.Users != 10 || response.AdminUsers != 1 || response.PendingAuthorization != 1 || response.SyncHealth != "ready" {
 		t.Fatalf("response = %#v", response)
 	}
 }

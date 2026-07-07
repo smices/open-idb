@@ -35,6 +35,7 @@ type DashboardSummary struct {
 	Users                int64  `json:"users"`
 	ActiveUsers          int64  `json:"active_users"`
 	NewUsers             int64  `json:"new_users"`
+	AdminUsers           int64  `json:"admin_users"`
 	ApplicationActivity  int64  `json:"application_activity"`
 	PendingAuthorization int64  `json:"pending_authorization"`
 	SyncHealth           string `json:"sync_health"`

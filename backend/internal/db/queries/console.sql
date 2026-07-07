@@ -1,14 +1,27 @@
 -- SPDX-License-Identifier: MIT
 
 -- name: GetDashboardSummary :one
+WITH synced_users AS (
+    SELECT id, lifecycle_status, created_at
+    FROM users
+    WHERE entity_id = sqlc.arg('entity_id')
+      AND primary_source_id IS NOT NULL
+      AND lifecycle_status <> 'deleted'
+)
 SELECT
-    count(*)::bigint AS users,
-    count(*) FILTER (WHERE lifecycle_status = 'active')::bigint AS active_users,
-    count(*) FILTER (WHERE created_at >= now() - interval '7 days')::bigint AS new_users,
+    (SELECT count(*)::bigint FROM synced_users) AS users,
+    (SELECT count(*)::bigint FROM synced_users WHERE lifecycle_status = 'active') AS active_users,
+    (SELECT count(*)::bigint FROM synced_users WHERE created_at >= now() - interval '7 days') AS new_users,
+    (
+        SELECT count(*)::bigint
+        FROM admin_users au
+        WHERE au.entity_id = sqlc.arg('entity_id')::char(26)
+           OR au.entity_id IS NULL
+    ) AS admin_users,
     (
         SELECT count(*)::bigint
         FROM oauth_tokens ot
-        WHERE ot.entity_id = $1
+        WHERE ot.entity_id = sqlc.arg('entity_id')
           AND ot.created_at >= now() - interval '24 hours'
     ) AS application_activity,
     0::bigint AS pending_authorization,
@@ -16,14 +29,13 @@ SELECT
         WHEN EXISTS (
             SELECT 1
             FROM sync_jobs sj
-            WHERE sj.entity_id = $1
+            WHERE sj.entity_id = sqlc.arg('entity_id')
               AND sj.status = 'failed'
               AND sj.started_at >= now() - interval '24 hours'
         ) THEN 'degraded'
         ELSE 'ready'
     END AS sync_health
-FROM users
-WHERE entity_id = $1;
+;
 
 -- name: GetCurrentUserByID :one
 SELECT

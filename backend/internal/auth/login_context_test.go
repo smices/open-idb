@@ -51,6 +51,37 @@ func TestLoginContextAdminRoute(t *testing.T) {
 	}
 }
 
+func TestLoginContextEntityAdminRouteUsesIndependentAccount(t *testing.T) {
+	router := chi.NewRouter()
+	NewHandler(fakeLoginService{}).RegisterRoutes(router)
+
+	req := httptest.NewRequest(http.MethodGet, "/sapi/auth/context?path=/t/acme/admin/login&return_to=/admin", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var ctx LoginContext
+	if err := json.NewDecoder(rec.Body).Decode(&ctx); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if ctx.Mode != LoginModeEntityAdmin {
+		t.Fatalf("mode = %q, want %q", ctx.Mode, LoginModeEntityAdmin)
+	}
+	if ctx.Entity == nil || ctx.Entity.Slug != "acme" {
+		t.Fatalf("entity = %#v, want slug acme", ctx.Entity)
+	}
+	if len(ctx.Methods) != 1 || ctx.Methods[0] != "password" {
+		t.Fatalf("methods = %#v, want password only", ctx.Methods)
+	}
+	if ctx.PreferredProvider != "" || ctx.AutoRedirectURL != "" {
+		t.Fatalf("provider = %q redirect = %q, want no SSO", ctx.PreferredProvider, ctx.AutoRedirectURL)
+	}
+}
+
 func TestLoginContextDoesNotExposeSystemAdminRoute(t *testing.T) {
 	router := chi.NewRouter()
 	NewHandler(fakeLoginService{}).RegisterRoutes(router)

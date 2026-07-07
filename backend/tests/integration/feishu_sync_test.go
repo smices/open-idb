@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/smices/open-idb/internal/db/generated"
 	"github.com/smices/open-idb/internal/idp"
@@ -142,6 +143,135 @@ func TestFeishuFullSyncCreatesAndUpdatesIdentityRecords(t *testing.T) {
 	}
 	assertSingleString(t, ctx, pool, "select display_name from users where entity_id=$1", "张三-更新", entity.ID)
 	assertSingleString(t, ctx, pool, "select lifecycle_status from users where entity_id=$1", "disabled", entity.ID)
+}
+
+func TestFeishuFullSyncMergesExistingUserAndSoftDeletesMissing(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	container, err := postgres.Run(ctx,
+		"postgres:16-alpine",
+		postgres.WithDatabase("idbridge"),
+		postgres.WithUsername("postgres"),
+		postgres.WithPassword("postgres"),
+		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
+	)
+	if err != nil {
+		t.Fatalf("start postgres container: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if err := container.Terminate(cleanupCtx); err != nil {
+			t.Errorf("terminate postgres container: %v", err)
+		}
+	})
+
+	conn, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("connection string: %v", err)
+	}
+	applyMigrations(ctx, t, conn)
+
+	pool, err := pgxpool.New(ctx, conn)
+	if err != nil {
+		t.Fatalf("open pgx pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	queries := generated.New(pool)
+
+	entity, err := queries.CreateEntity(ctx, generated.CreateEntityParams{
+		Name:          "Merge Entity",
+		Slug:          "merge",
+		DefaultLocale: "en-US",
+	})
+	if err != nil {
+		t.Fatalf("create entity: %v", err)
+	}
+	source, err := queries.CreateIdentitySource(ctx, generated.CreateIdentitySourceParams{
+		EntityID:    entity.ID,
+		Type:        "feishu",
+		Name:        "飞书",
+		SyncEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	existing, err := queries.CreateManagedUser(ctx, generated.CreateManagedUserParams{
+		EntityID:        entity.ID,
+		Username:        "merge@example.test",
+		DisplayName:     "旧用户",
+		LifecycleStatus: "active",
+		UserType:        "employee",
+		Locale:          pgtype.Text{String: "zh-CN", Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("create existing user: %v", err)
+	}
+
+	provider := &fakeDirectoryProvider{data: idp.FullSyncData{
+		Users: []idp.DirectoryUser{
+			{
+				ExternalUserID:  "ou_merge",
+				ExternalUnionID: "on_merge",
+				ExternalOpenID:  "open_merge",
+				Name:            "飞书用户",
+				Email:           "merge@example.test",
+				Status:          "active",
+				RawProfile:      []byte(`{"name":"飞书用户"}`),
+			},
+			{
+				ExternalUserID:  "ou_merge",
+				ExternalUnionID: "on_merge",
+				ExternalOpenID:  "open_merge",
+				Name:            "飞书用户",
+				Email:           "merge@example.test",
+				Status:          "active",
+				RawProfile:      []byte(`{"name":"飞书用户","duplicate":true}`),
+			},
+		},
+	}}
+	service, err := idp.NewSyncService(idp.SyncServiceConfig{
+		Queries:  queries,
+		Provider: provider,
+		TraceID:  func() string { return "trace-merge-sync" },
+	})
+	if err != nil {
+		t.Fatalf("new sync service: %v", err)
+	}
+
+	first, err := service.RunFullSync(ctx, idp.FullSyncInput{
+		EntityID: pgULIDString(entity.ID),
+		SourceID: pgULIDString(source.ID),
+		Provider: "feishu",
+	})
+	if err != nil {
+		t.Fatalf("run first sync: %v", err)
+	}
+	if first.UsersUpserted != 1 || first.ManagedUsersCreated != 0 || first.ManagedUsersUpdated != 1 || first.BindingsCreated != 1 {
+		t.Fatalf("first result = %#v", first)
+	}
+	assertSingleString(t, ctx, pool, "select id from users where entity_id=$1", existing.ID, entity.ID)
+	assertSingleString(t, ctx, pool, "select display_name from users where entity_id=$1", "飞书用户", entity.ID)
+	assertSingleString(t, ctx, pool, "select provider_uid from account_bindings where entity_id=$1 and source_id=$2", "ou_merge", entity.ID, source.ID)
+
+	provider.data.Users = nil
+	second, err := service.RunFullSync(ctx, idp.FullSyncInput{
+		EntityID: pgULIDString(entity.ID),
+		SourceID: pgULIDString(source.ID),
+		Provider: "feishu",
+	})
+	if err != nil {
+		t.Fatalf("run second sync: %v", err)
+	}
+	if second.DirectoryUsersDeleted != 1 || second.ManagedUsersDeleted != 1 {
+		t.Fatalf("second result = %#v", second)
+	}
+	assertSingleString(t, ctx, pool, "select status from directory_users where entity_id=$1 and source_id=$2", "deleted", entity.ID, source.ID)
+	assertSingleString(t, ctx, pool, "select lifecycle_status from users where entity_id=$1", "deleted", entity.ID)
+	assertSingleString(t, ctx, pool, "select id from users where entity_id=$1", existing.ID, entity.ID)
 }
 
 func TestFeishuFullSyncMarksJobFailedOnProviderError(t *testing.T) {

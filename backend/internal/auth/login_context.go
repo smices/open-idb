@@ -78,12 +78,9 @@ func resolveLoginContext(path string, returnTo string) LoginContext {
 
 	if len(parts) >= 4 && parts[0] == "t" && parts[2] == "admin" && parts[3] == "login" {
 		return LoginContext{
-			Mode:   LoginModeEntityAdmin,
-			Entity: &LoginContextEntity{Slug: strings.TrimSpace(parts[1])},
-			Methods: []string{
-				"password",
-				"feishu",
-			},
+			Mode:                 LoginModeEntityAdmin,
+			Entity:               &LoginContextEntity{Slug: strings.TrimSpace(parts[1])},
+			Methods:              []string{"password"},
 			AllowEntitySelection: false,
 			Reason:               "path",
 			ReturnTo:             safeReturn,

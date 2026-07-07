@@ -2,7 +2,7 @@
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
-const API_TARGET = import.meta.env.PUBLIC_API_TARGET || '';
+const API_TARGET = import.meta.env.VITE_API_TARGET || import.meta.env.PUBLIC_API_TARGET || '';
 
 type JsonLike = Record<string, unknown>;
 
@@ -165,6 +165,7 @@ export interface DashboardSummary {
   users: number;
   active_users: number;
   new_users: number;
+  admin_users: number;
   application_activity: number;
   pending_authorization: number;
   sync_health: string;

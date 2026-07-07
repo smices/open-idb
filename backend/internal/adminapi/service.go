@@ -37,6 +37,7 @@ func (s *Service) DashboardSummary(ctx context.Context, session auth.Session) (D
 		Users:                row.Users,
 		ActiveUsers:          row.ActiveUsers,
 		NewUsers:             row.NewUsers,
+		AdminUsers:           row.AdminUsers,
 		ApplicationActivity:  row.ApplicationActivity,
 		PendingAuthorization: row.PendingAuthorization,
 		SyncHealth:           row.SyncHealth,

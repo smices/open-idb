@@ -5,29 +5,25 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview",
+    "preview": "vite preview --host 0.0.0.0",
     "check:ui": "node scripts/check-ui-baseline.mjs",
-    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
-  },
-  "devDependencies": {
-    "@skeletonlabs/skeleton": "^4.15.2",
-    "@skeletonlabs/skeleton-svelte": "^4.15.2",
-    "@sveltejs/adapter-static": "^3.0.8",
-    "@sveltejs/kit": "^2.21.1",
-    "@sveltejs/vite-plugin-svelte": "^5.0.3",
-    "@tailwindcss/vite": "^4.1.7",
-    "@types/node": "^22.7.4",
-    "lucide-svelte": "^0.511.0",
-    "svelte": "^5.29.0",
-    "svelte-check": "^4.2.1",
-    "svelte-i18n": "^4.0.1",
-    "tailwindcss": "^4.1.7",
-    "typescript": "^5.8.3",
-    "vite": "^6.3.5"
+    "check": "npm run build"
   },
   "dependencies": {
-    "open-avatar": "^0.1.1"
+    "@vitejs/plugin-react": "^5.0.0",
+    "antd": "^5.29.3",
+    "i18next": "^26.3.4",
+    "lucide-react": "^0.468.0",
+    "open-avatar": "^0.1.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-i18next": "^17.0.8",
+    "vite": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "typescript": "^5.8.3"
   }
 }

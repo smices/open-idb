@@ -138,10 +138,31 @@ SELECT id, entity_id, user_id, source_id, directory_user_id, provider_uid, provi
 FROM account_bindings
 WHERE entity_id = $1 AND source_id = $2 AND provider_uid = $3;
 
+-- name: GetAccountBindingByProviderUnionID :one
+SELECT id, entity_id, user_id, source_id, directory_user_id, provider_uid, provider_union_id, is_primary, bound_at
+FROM account_bindings
+WHERE entity_id = $1 AND source_id = $2 AND provider_union_id = $3 AND provider_union_id <> ''
+LIMIT 1;
+
+-- name: UpdateAccountBindingFromDirectory :one
+UPDATE account_bindings
+SET directory_user_id = $4,
+    provider_uid = $5,
+    provider_union_id = $6,
+    is_primary = true
+WHERE entity_id = $1 AND source_id = $2 AND id = $3
+RETURNING id, entity_id, user_id, source_id, directory_user_id, provider_uid, provider_union_id, is_primary, bound_at;
+
 -- name: GetDirectoryUserByExternalID :one
 SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
 FROM directory_users
 WHERE entity_id = $1 AND source_id = $2 AND external_user_id = $3;
+
+-- name: GetManagedUserByUsername :one
+SELECT id, entity_id, username, display_name, english_name, employee_no, job_title, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at
+FROM users
+WHERE entity_id = $1 AND username = $2
+LIMIT 1;
 
 -- name: GetManagedUserByBinding :one
 SELECT u.id, u.entity_id, u.username, u.display_name, u.english_name, u.employee_no, u.job_title, u.email, u.phone, u.avatar_url, u.lifecycle_status, u.user_type, u.primary_source_id, u.locale, u.created_at, u.updated_at
@@ -151,14 +172,44 @@ WHERE ab.entity_id = $1 AND ab.source_id = $2 AND ab.provider_uid = $3;
 
 -- name: UpdateManagedUserFromDirectory :one
 UPDATE users
-SET display_name = $4,
-    english_name = $5,
-    employee_no = $6,
-    job_title = $7,
-    email = $8,
-    phone = $9,
-    avatar_url = $10,
-    lifecycle_status = $11,
+SET username = $4,
+    display_name = $5,
+    english_name = $6,
+    employee_no = $7,
+    job_title = $8,
+    email = $9,
+    phone = $10,
+    avatar_url = $11,
+    lifecycle_status = $12,
+    primary_source_id = $3,
     updated_at = now()
-WHERE entity_id = $1 AND id = $2 AND primary_source_id = $3
+WHERE entity_id = $1 AND id = $2
 RETURNING id, entity_id, username, display_name, english_name, employee_no, job_title, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at;
+
+-- name: MarkMissingDirectoryUsersDeleted :many
+UPDATE directory_users
+SET status = 'deleted',
+    last_synced_at = now(),
+    updated_at = now()
+WHERE entity_id = $1
+  AND source_id = $2
+  AND status <> 'deleted'
+  AND NOT (external_user_id = ANY(sqlc.arg('present_external_user_ids')::text[]))
+RETURNING id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at;
+
+-- name: SoftDeleteManagedUsersByDirectoryStatus :many
+UPDATE users u
+SET lifecycle_status = 'deleted',
+    updated_at = now()
+FROM account_bindings ab
+JOIN directory_users du
+  ON du.entity_id = ab.entity_id
+ AND du.source_id = ab.source_id
+ AND du.id = ab.directory_user_id
+WHERE u.entity_id = $1
+  AND u.id = ab.user_id
+  AND ab.entity_id = $1
+  AND ab.source_id = $2
+  AND du.status = 'deleted'
+  AND u.lifecycle_status <> 'deleted'
+RETURNING u.id, u.entity_id, u.username, u.display_name, u.english_name, u.employee_no, u.job_title, u.email, u.phone, u.avatar_url, u.lifecycle_status, u.user_type, u.primary_source_id, u.locale, u.created_at, u.updated_at;

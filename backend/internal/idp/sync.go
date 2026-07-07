@@ -46,12 +46,14 @@ type FullSyncInput struct {
 }
 
 type FullSyncResult struct {
-	JobID               string `json:"job_id"`
-	DepartmentsUpserted int    `json:"departments_upserted"`
-	UsersUpserted       int    `json:"users_upserted"`
-	ManagedUsersCreated int    `json:"managed_users_created"`
-	ManagedUsersUpdated int    `json:"managed_users_updated"`
-	BindingsCreated     int    `json:"bindings_created"`
+	JobID                 string `json:"job_id"`
+	DepartmentsUpserted   int    `json:"departments_upserted"`
+	UsersUpserted         int    `json:"users_upserted"`
+	ManagedUsersCreated   int    `json:"managed_users_created"`
+	ManagedUsersUpdated   int    `json:"managed_users_updated"`
+	DirectoryUsersDeleted int    `json:"directory_users_deleted"`
+	ManagedUsersDeleted   int    `json:"managed_users_deleted"`
+	BindingsCreated       int    `json:"bindings_created"`
 }
 
 func NewSyncService(cfg SyncServiceConfig) (*SyncService, error) {
@@ -261,7 +263,10 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 	// Step 8: Map directory_departments to organizational departments
 	s.mapDepartments(ctx, input, entityID, sourceID, data.Departments, traceID)
 
-	for _, user := range data.Users {
+	users := uniqueDirectoryUsers(data.Users)
+	presentExternalUserIDs := make([]string, 0, len(users))
+	for _, user := range users {
+		presentExternalUserIDs = append(presentExternalUserIDs, user.ExternalUserID)
 		directoryUser, err := s.queries.UpsertDirectoryUser(ctx, generated.UpsertDirectoryUserParams{
 			EntityID:        entityID,
 			SourceID:        sourceID,
@@ -285,27 +290,16 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 		}
 		result.UsersUpserted++
 
-		binding, err := s.queries.GetAccountBindingByProviderUID(ctx, generated.GetAccountBindingByProviderUIDParams{
-			EntityID:    entityID,
-			SourceID:    sourceID,
-			ProviderUid: user.ExternalUserID,
-		})
-		if err == nil {
+		binding, hasBinding, err := s.resolveAccountBinding(ctx, entityID, sourceID, directoryUser.ID, user)
+		if err != nil {
+			_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
+			_ = s.failJob(ctx, entityID, job.ID, result, err)
+			return result, err
+		}
+		if hasBinding {
 			// Existing user — update and check for lifecycle changes
 			newLifecycle := lifecycleForDirectoryStatus(user.Status)
-			if _, err := s.queries.UpdateManagedUserFromDirectory(ctx, generated.UpdateManagedUserFromDirectoryParams{
-				EntityID:        entityID,
-				ID:              binding.UserID,
-				PrimarySourceID: textValue(sourceID),
-				DisplayName:     user.Name,
-				EnglishName:     user.EnglishName,
-				EmployeeNo:      user.EmployeeNo,
-				JobTitle:        user.JobTitle,
-				Email:           textValue(user.Email),
-				Phone:           textValue(user.Phone),
-				AvatarUrl:       textValue(user.AvatarURL),
-				LifecycleStatus: newLifecycle,
-			}); err != nil {
+			if _, err := s.updateManagedUserFromDirectory(ctx, entityID, sourceID, binding.UserID, user, newLifecycle); err != nil {
 				_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
 				_ = s.failJob(ctx, entityID, job.ID, result, err)
 				return result, err
@@ -324,6 +318,44 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 					TraceID:      traceID,
 				})
 			}
+			continue
+		}
+
+		mergedUser, err := s.queries.GetManagedUserByUsername(ctx, generated.GetManagedUserByUsernameParams{
+			EntityID: entityID,
+			Username: usernameForDirectoryUser(user),
+		})
+		if err == nil {
+			newLifecycle := lifecycleForDirectoryStatus(user.Status)
+			if _, err := s.updateManagedUserFromDirectory(ctx, entityID, sourceID, mergedUser.ID, user, newLifecycle); err != nil {
+				_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
+				_ = s.failJob(ctx, entityID, job.ID, result, err)
+				return result, err
+			}
+			if err := s.queries.AssignRoleToUserByCode(ctx, generated.AssignRoleToUserByCodeParams{
+				EntityID: entityID,
+				UserID:   mergedUser.ID,
+				Code:     "employee",
+			}); err != nil {
+				_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
+				_ = s.failJob(ctx, entityID, job.ID, result, err)
+				return result, err
+			}
+			result.ManagedUsersUpdated++
+			if _, err := s.queries.CreateAccountBinding(ctx, generated.CreateAccountBindingParams{
+				EntityID:        entityID,
+				UserID:          mergedUser.ID,
+				SourceID:        sourceID,
+				DirectoryUserID: directoryUser.ID,
+				ProviderUid:     user.ExternalUserID,
+				ProviderUnionID: textValue(user.ExternalUnionID),
+				IsPrimary:       true,
+			}); err != nil {
+				_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
+				_ = s.failJob(ctx, entityID, job.ID, result, err)
+				return result, err
+			}
+			result.BindingsCreated++
 			continue
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
@@ -394,6 +426,41 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 		})
 	}
 
+	if input.SyncType == SyncModeFull {
+		deletedDirectoryUsers, err := s.queries.MarkMissingDirectoryUsersDeleted(ctx, generated.MarkMissingDirectoryUsersDeletedParams{
+			EntityID:               entityID,
+			SourceID:               sourceID,
+			PresentExternalUserIds: presentExternalUserIDs,
+		})
+		if err != nil {
+			_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
+			_ = s.failJob(ctx, entityID, job.ID, result, err)
+			return result, err
+		}
+		result.DirectoryUsersDeleted = len(deletedDirectoryUsers)
+		deletedManagedUsers, err := s.queries.SoftDeleteManagedUsersByDirectoryStatus(ctx, generated.SoftDeleteManagedUsersByDirectoryStatusParams{
+			EntityID: entityID,
+			SourceID: sourceID,
+		})
+		if err != nil {
+			_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
+			_ = s.failJob(ctx, entityID, job.ID, result, err)
+			return result, err
+		}
+		result.ManagedUsersDeleted = len(deletedManagedUsers)
+		for _, deletedUser := range deletedManagedUsers {
+			s.writeAudit(ctx, audit.Event{
+				EntityID:     input.EntityID,
+				ActorType:    "sync_job",
+				Action:       audit.ActionSyncUserDisabled,
+				ResourceType: "user",
+				ResourceID:   ulidString(deletedUser.ID),
+				After:        map[string]string{"username": deletedUser.Username, "lifecycle_status": deletedUser.LifecycleStatus},
+				TraceID:      traceID,
+			})
+		}
+	}
+
 	if _, err := s.queries.FinishSyncJob(ctx, generated.FinishSyncJobParams{
 		EntityID: entityID,
 		ID:       job.ID,
@@ -417,6 +484,129 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 	})
 
 	return result, nil
+}
+
+func (s *SyncService) resolveAccountBinding(ctx context.Context, entityID, sourceID, directoryUserID string, user DirectoryUser) (generated.AccountBinding, bool, error) {
+	binding, err := s.queries.GetAccountBindingByProviderUID(ctx, generated.GetAccountBindingByProviderUIDParams{
+		EntityID:    entityID,
+		SourceID:    sourceID,
+		ProviderUid: user.ExternalUserID,
+	})
+	if err == nil {
+		return s.ensureAccountBindingMatchesDirectory(ctx, entityID, sourceID, directoryUserID, binding, user)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return generated.AccountBinding{}, false, err
+	}
+
+	if strings.TrimSpace(user.ExternalUnionID) == "" {
+		return generated.AccountBinding{}, false, nil
+	}
+	binding, err = s.queries.GetAccountBindingByProviderUnionID(ctx, generated.GetAccountBindingByProviderUnionIDParams{
+		EntityID:        entityID,
+		SourceID:        sourceID,
+		ProviderUnionID: textValue(user.ExternalUnionID),
+	})
+	if err == nil {
+		return s.ensureAccountBindingMatchesDirectory(ctx, entityID, sourceID, directoryUserID, binding, user)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return generated.AccountBinding{}, false, nil
+	}
+	return generated.AccountBinding{}, false, err
+}
+
+func (s *SyncService) ensureAccountBindingMatchesDirectory(ctx context.Context, entityID, sourceID, directoryUserID string, binding generated.AccountBinding, user DirectoryUser) (generated.AccountBinding, bool, error) {
+	if binding.DirectoryUserID == directoryUserID &&
+		binding.ProviderUid == user.ExternalUserID &&
+		textMatches(binding.ProviderUnionID, user.ExternalUnionID) {
+		return binding, true, nil
+	}
+	updated, err := s.queries.UpdateAccountBindingFromDirectory(ctx, generated.UpdateAccountBindingFromDirectoryParams{
+		EntityID:        entityID,
+		SourceID:        sourceID,
+		ID:              binding.ID,
+		DirectoryUserID: directoryUserID,
+		ProviderUid:     user.ExternalUserID,
+		ProviderUnionID: textValue(user.ExternalUnionID),
+	})
+	if err != nil {
+		return generated.AccountBinding{}, false, err
+	}
+	return updated, true, nil
+}
+
+func (s *SyncService) updateManagedUserFromDirectory(ctx context.Context, entityID, sourceID, userID string, user DirectoryUser, lifecycle string) (generated.User, error) {
+	return s.queries.UpdateManagedUserFromDirectory(ctx, generated.UpdateManagedUserFromDirectoryParams{
+		EntityID:        entityID,
+		ID:              userID,
+		PrimarySourceID: textValue(sourceID),
+		Username:        usernameForDirectoryUser(user),
+		DisplayName:     user.Name,
+		EnglishName:     user.EnglishName,
+		EmployeeNo:      user.EmployeeNo,
+		JobTitle:        user.JobTitle,
+		Email:           textValue(user.Email),
+		Phone:           textValue(user.Phone),
+		AvatarUrl:       textValue(user.AvatarURL),
+		LifecycleStatus: lifecycle,
+	})
+}
+
+func uniqueDirectoryUsers(users []DirectoryUser) []DirectoryUser {
+	result := make([]DirectoryUser, 0, len(users))
+	seen := make(map[string]int, len(users))
+	for _, user := range users {
+		key := strings.TrimSpace(user.ExternalUserID)
+		if key == "" {
+			continue
+		}
+		user.ExternalUserID = key
+		if index, ok := seen[key]; ok {
+			result[index] = mergeDirectoryUser(result[index], user)
+			continue
+		}
+		seen[key] = len(result)
+		result = append(result, user)
+	}
+	return result
+}
+
+func mergeDirectoryUser(existing, next DirectoryUser) DirectoryUser {
+	if existing.ExternalUnionID == "" {
+		existing.ExternalUnionID = next.ExternalUnionID
+	}
+	if existing.ExternalOpenID == "" {
+		existing.ExternalOpenID = next.ExternalOpenID
+	}
+	if existing.Name == "" {
+		existing.Name = next.Name
+	}
+	if existing.EnglishName == "" {
+		existing.EnglishName = next.EnglishName
+	}
+	if existing.EmployeeNo == "" {
+		existing.EmployeeNo = next.EmployeeNo
+	}
+	if existing.JobTitle == "" {
+		existing.JobTitle = next.JobTitle
+	}
+	if existing.Email == "" {
+		existing.Email = next.Email
+	}
+	if existing.Phone == "" {
+		existing.Phone = next.Phone
+	}
+	if existing.AvatarURL == "" {
+		existing.AvatarURL = next.AvatarURL
+	}
+	if existing.Status == "" || existing.Status == "unknown" {
+		existing.Status = next.Status
+	}
+	if len(existing.RawProfile) == 0 || string(existing.RawProfile) == "{}" {
+		existing.RawProfile = next.RawProfile
+	}
+	return existing
 }
 
 func (s *SyncService) loadDataByMode(ctx context.Context, provider DirectoryProvider, entityID string, mode SyncMode, webhookJobs []generated.SyncJob) (FullSyncData, []generated.SyncJob, error) {
@@ -700,4 +890,12 @@ func ulidString(value string) string {
 
 func textValue(value string) pgtype.Text {
 	return pgtype.Text{String: value, Valid: value != ""}
+}
+
+func textMatches(value pgtype.Text, expected string) bool {
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return !value.Valid || strings.TrimSpace(value.String) == ""
+	}
+	return value.Valid && strings.TrimSpace(value.String) == expected
 }
