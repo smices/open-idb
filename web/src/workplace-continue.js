@@ -7,16 +7,53 @@ const FEISHU_H5_SDK_URLS = [
   'https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.35.js',
 ].filter(Boolean);
 
-const steps = [
-  { key: 'context', label: '解析访问上下文', detail: '正在确认应用与企业身份' },
-  { key: 'feishu', label: '获取飞书授权', detail: '正在连接飞书工作台' },
-  { key: 'enter', label: '进入应用', detail: '正在完成登录并跳转' },
-];
+const THEME_KEY = 'idb-theme-mode';
+const MESSAGES = {
+  'zh-CN': {
+    eyebrow: '飞书工作台 SSO',
+    title: '正在进入应用',
+    titleDocument: '正在进入应用 - IdBridge',
+    error: '进入应用失败，正在返回登录页。',
+    steps: [
+      { key: 'context', label: '解析访问上下文', detail: '正在确认应用与企业身份' },
+      { key: 'feishu', label: '获取飞书授权', detail: '正在连接飞书工作台' },
+      { key: 'enter', label: '进入应用', detail: '正在完成登录并跳转' },
+    ],
+  },
+  'en-US': {
+    eyebrow: 'Feishu Workplace SSO',
+    title: 'Opening your app',
+    titleDocument: 'Opening your app - IdBridge',
+    error: 'Unable to open the app. Returning to sign-in.',
+    steps: [
+      { key: 'context', label: 'Resolving access context', detail: 'Checking the application and organization identity' },
+      { key: 'feishu', label: 'Requesting Feishu authorization', detail: 'Connecting to Feishu Workplace' },
+      { key: 'enter', label: 'Entering the app', detail: 'Completing sign-in and redirecting' },
+    ],
+  },
+};
+
+const locale = resolveLocale();
+const copy = MESSAGES[locale];
+const steps = copy.steps;
 
 function normalizeWorkplaceProvider(provider) {
   const value = (provider || '').trim().toLowerCase();
   if (value === 'lark') return 'feishu';
   return value === 'feishu' ? value : '';
+}
+
+function resolveLocale() {
+  return navigator.language?.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US';
+}
+
+function resolveThemeMode() {
+  try {
+    const stored = localStorage.getItem(THEME_KEY);
+    return stored === 'dark' || stored === 'light' ? stored : 'system';
+  } catch {
+    return 'system';
+  }
 }
 
 function returnToParam(returnToValue, name) {
@@ -200,13 +237,83 @@ async function feishuAuthCodeFromBridge(appId) {
 }
 
 function injectStyles() {
+  document.documentElement.lang = locale;
+  document.documentElement.dataset.workplaceTheme = resolveThemeMode();
+
   const style = document.createElement('style');
   style.textContent = `
     :root {
-      color-scheme: light;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f5f7f6;
-      color: #111827;
+      color-scheme: light;
+      --workplace-bg: #f5f7f6;
+      --workplace-panel: rgba(255, 255, 255, 0.92);
+      --workplace-panel-solid: #ffffff;
+      --workplace-text: #111827;
+      --workplace-muted: #4b5563;
+      --workplace-soft: #6b7280;
+      --workplace-line: rgba(17, 24, 39, 0.12);
+      --workplace-frame: rgba(17, 24, 39, 0.08);
+      --workplace-accent: #0f766e;
+      --workplace-accent-strong: #0d9488;
+      --workplace-accent-soft: #ecfdf5;
+      --workplace-accent-frame: rgba(15, 118, 110, 0.16);
+      --workplace-active-border: rgba(15, 118, 110, 0.32);
+      --workplace-check: #ffffff;
+      --workplace-track: #e5e7eb;
+      --workplace-shadow: 0 24px 80px rgba(17, 24, 39, 0.13);
+      --workplace-error-bg: #fffbeb;
+      --workplace-error-border: rgba(217, 119, 6, 0.28);
+      --workplace-error-text: #92400e;
+      background: var(--workplace-bg);
+      color: var(--workplace-text);
+    }
+
+    :root[data-workplace-theme="dark"] {
+      color-scheme: dark;
+      --workplace-bg: #0d1110;
+      --workplace-panel: rgba(18, 25, 24, 0.92);
+      --workplace-panel-solid: #121918;
+      --workplace-text: #f8fafc;
+      --workplace-muted: #cbd5e1;
+      --workplace-soft: #94a3b8;
+      --workplace-line: rgba(226, 232, 240, 0.14);
+      --workplace-frame: rgba(226, 232, 240, 0.1);
+      --workplace-accent: #5eead4;
+      --workplace-accent-strong: #2dd4bf;
+      --workplace-accent-soft: rgba(45, 212, 191, 0.16);
+      --workplace-accent-frame: rgba(94, 234, 212, 0.16);
+      --workplace-active-border: rgba(94, 234, 212, 0.34);
+      --workplace-check: #ffffff;
+      --workplace-track: rgba(148, 163, 184, 0.22);
+      --workplace-shadow: 0 24px 90px rgba(0, 0, 0, 0.38);
+      --workplace-error-bg: rgba(120, 53, 15, 0.2);
+      --workplace-error-border: rgba(251, 191, 36, 0.3);
+      --workplace-error-text: #fde68a;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root[data-workplace-theme="system"] {
+        color-scheme: dark;
+        --workplace-bg: #0d1110;
+        --workplace-panel: rgba(18, 25, 24, 0.92);
+        --workplace-panel-solid: #121918;
+        --workplace-text: #f8fafc;
+        --workplace-muted: #cbd5e1;
+        --workplace-soft: #94a3b8;
+        --workplace-line: rgba(226, 232, 240, 0.14);
+        --workplace-frame: rgba(226, 232, 240, 0.1);
+        --workplace-accent: #5eead4;
+        --workplace-accent-strong: #2dd4bf;
+        --workplace-accent-soft: rgba(45, 212, 191, 0.16);
+        --workplace-accent-frame: rgba(94, 234, 212, 0.16);
+        --workplace-active-border: rgba(94, 234, 212, 0.34);
+        --workplace-check: #ffffff;
+        --workplace-track: rgba(148, 163, 184, 0.22);
+        --workplace-shadow: 0 24px 90px rgba(0, 0, 0, 0.38);
+        --workplace-error-bg: rgba(120, 53, 15, 0.2);
+        --workplace-error-border: rgba(251, 191, 36, 0.3);
+        --workplace-error-text: #fde68a;
+      }
     }
 
     * {
@@ -217,7 +324,7 @@ function injectStyles() {
       margin: 0;
       min-width: 320px;
       min-height: 100dvh;
-      background: #f5f7f6;
+      background: var(--workplace-bg);
     }
 
     .workplace-loading {
@@ -227,13 +334,14 @@ function injectStyles() {
       overflow: hidden;
       padding: 28px;
       place-items: center;
+      background: var(--workplace-bg);
     }
 
     .workplace-loading::before,
     .workplace-loading::after {
       position: absolute;
       content: "";
-      border: 1px solid rgba(17, 24, 39, 0.08);
+      border: 1px solid var(--workplace-frame);
       pointer-events: none;
     }
 
@@ -243,7 +351,7 @@ function injectStyles() {
 
     .workplace-loading::after {
       inset: 36px;
-      border-color: rgba(15, 118, 110, 0.16);
+      border-color: var(--workplace-accent-frame);
     }
 
     .workplace-panel {
@@ -251,10 +359,40 @@ function injectStyles() {
       z-index: 1;
       width: min(520px, 100%);
       padding: 36px;
-      border: 1px solid rgba(17, 24, 39, 0.12);
+      overflow: hidden;
+      border: 1px solid var(--workplace-line);
       border-radius: 8px;
-      background: rgba(255, 255, 255, 0.88);
-      box-shadow: 0 24px 80px rgba(17, 24, 39, 0.12);
+      background: var(--workplace-panel);
+      box-shadow: var(--workplace-shadow);
+    }
+
+    .workplace-panel::before {
+      position: absolute;
+      inset: 0 0 auto;
+      height: 3px;
+      background: var(--workplace-accent);
+      content: "";
+    }
+
+    .workplace-panel::after {
+      position: absolute;
+      inset: 16px;
+      border: 1px solid var(--workplace-frame);
+      border-radius: 6px;
+      content: "";
+      pointer-events: none;
+    }
+
+    .workplace-panel > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .workplace-topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
     }
 
     .workplace-brand {
@@ -262,7 +400,7 @@ function injectStyles() {
       align-items: center;
       gap: 12px;
       min-width: 0;
-      color: #111827;
+      color: var(--workplace-text);
       font-size: 15px;
       font-weight: 650;
     }
@@ -273,6 +411,40 @@ function injectStyles() {
       flex: 0 0 auto;
       border-radius: 7px;
       object-fit: contain;
+    }
+
+    .workplace-signal {
+      display: inline-flex;
+      align-items: end;
+      gap: 3px;
+      height: 26px;
+      padding: 6px 8px;
+      border: 1px solid var(--workplace-line);
+      border-radius: 999px;
+      background: var(--workplace-panel-solid);
+    }
+
+    .workplace-signal span {
+      width: 3px;
+      border-radius: 999px;
+      background: var(--workplace-accent);
+      opacity: 0.72;
+      transform-origin: bottom;
+      animation: idb-workplace-signal 1.15s ease-in-out infinite;
+    }
+
+    .workplace-signal span:nth-child(1) {
+      height: 7px;
+    }
+
+    .workplace-signal span:nth-child(2) {
+      height: 11px;
+      animation-delay: 120ms;
+    }
+
+    .workplace-signal span:nth-child(3) {
+      height: 15px;
+      animation-delay: 240ms;
     }
 
     .workplace-brand span {
@@ -288,14 +460,14 @@ function injectStyles() {
 
     .workplace-eyebrow {
       margin: 0 0 10px;
-      color: #0f766e;
+      color: var(--workplace-accent);
       font-size: 13px;
       font-weight: 700;
     }
 
     .workplace-title {
       margin: 0;
-      color: #111827;
+      color: var(--workplace-text);
       font-size: 30px;
       font-weight: 760;
       letter-spacing: 0;
@@ -306,7 +478,7 @@ function injectStyles() {
     .workplace-detail {
       min-height: 52px;
       margin: 14px 0 0;
-      color: #4b5563;
+      color: var(--workplace-muted);
       font-size: 16px;
       line-height: 1.65;
       text-wrap: pretty;
@@ -318,7 +490,7 @@ function injectStyles() {
       margin: 34px 0 26px;
       overflow: hidden;
       border-radius: 999px;
-      background: #e5e7eb;
+      background: var(--workplace-track);
     }
 
     .workplace-progress span {
@@ -326,7 +498,7 @@ function injectStyles() {
       inset: 0 auto 0 0;
       width: 38%;
       border-radius: inherit;
-      background: #0f766e;
+      background: var(--workplace-accent);
       transform: translateX(-100%);
       animation: idb-workplace-progress 1.35s ease-in-out infinite;
     }
@@ -345,7 +517,7 @@ function injectStyles() {
       gap: 10px;
       align-items: center;
       min-height: 30px;
-      color: #6b7280;
+      color: var(--workplace-soft);
       font-size: 14px;
     }
 
@@ -354,41 +526,41 @@ function injectStyles() {
       width: 22px;
       height: 22px;
       place-items: center;
-      border: 1px solid #d1d5db;
+      border: 1px solid var(--workplace-line);
       border-radius: 999px;
-      background: #fff;
+      background: var(--workplace-panel-solid);
     }
 
     .workplace-step-dot::after {
       width: 6px;
       height: 6px;
       border-radius: 999px;
-      background: #d1d5db;
+      background: var(--workplace-line);
       content: "";
     }
 
     .workplace-step.is-active {
-      color: #111827;
+      color: var(--workplace-text);
       font-weight: 650;
     }
 
     .workplace-step.is-active .workplace-step-dot {
-      border-color: rgba(15, 118, 110, 0.32);
-      background: #ecfdf5;
+      border-color: var(--workplace-active-border);
+      background: var(--workplace-accent-soft);
     }
 
     .workplace-step.is-active .workplace-step-dot::after {
-      background: #0f766e;
+      background: var(--workplace-accent);
       animation: idb-workplace-pulse 1.2s ease-in-out infinite;
     }
 
     .workplace-step.is-done {
-      color: #374151;
+      color: var(--workplace-muted);
     }
 
     .workplace-step.is-done .workplace-step-dot {
-      border-color: #0f766e;
-      background: #0f766e;
+      border-color: var(--workplace-accent-strong);
+      background: var(--workplace-accent-strong);
     }
 
     .workplace-step.is-done .workplace-step-dot::after {
@@ -396,8 +568,8 @@ function injectStyles() {
       height: 8px;
       border-radius: 0;
       background: transparent;
-      border-right: 2px solid #fff;
-      border-bottom: 2px solid #fff;
+      border-right: 2px solid var(--workplace-check);
+      border-bottom: 2px solid var(--workplace-check);
       transform: translateY(-1px) rotate(45deg);
     }
 
@@ -405,10 +577,10 @@ function injectStyles() {
       display: none;
       margin-top: 22px;
       padding: 12px 14px;
-      border: 1px solid rgba(217, 119, 6, 0.28);
+      border: 1px solid var(--workplace-error-border);
       border-radius: 8px;
-      background: #fffbeb;
-      color: #92400e;
+      background: var(--workplace-error-bg);
+      color: var(--workplace-error-text);
       font-size: 14px;
       line-height: 1.55;
     }
@@ -421,6 +593,11 @@ function injectStyles() {
       0% { transform: translateX(-100%); }
       52% { transform: translateX(92%); }
       100% { transform: translateX(264%); }
+    }
+
+    @keyframes idb-workplace-signal {
+      0%, 100% { transform: scaleY(0.68); opacity: 0.58; }
+      50% { transform: scaleY(1); opacity: 1; }
     }
 
     @keyframes idb-workplace-pulse {
@@ -456,6 +633,7 @@ function injectStyles() {
 
     @media (prefers-reduced-motion: reduce) {
       .workplace-progress span,
+      .workplace-signal span,
       .workplace-step.is-active .workplace-step-dot::after {
         animation: none;
       }
@@ -470,17 +648,25 @@ function injectStyles() {
 
 function renderShell() {
   injectStyles();
+  document.title = copy.titleDocument;
   const root = document.getElementById('root') || document.body.appendChild(document.createElement('div'));
   root.innerHTML = `
     <main class="workplace-loading" aria-busy="true">
       <section class="workplace-panel" aria-labelledby="workplace-loading-title">
-        <div class="workplace-brand">
-          <img data-brand-logo src="/logo.svg" alt="" />
-          <span data-brand-name>IdBridge</span>
+        <div class="workplace-topline">
+          <div class="workplace-brand">
+            <img data-brand-logo src="/logo.svg" alt="" />
+            <span data-brand-name>IdBridge</span>
+          </div>
+          <span class="workplace-signal" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </span>
         </div>
         <div class="workplace-copy">
-          <p class="workplace-eyebrow">飞书工作台 SSO</p>
-          <h1 class="workplace-title" id="workplace-loading-title">正在进入应用</h1>
+          <p class="workplace-eyebrow">${copy.eyebrow}</p>
+          <h1 class="workplace-title" id="workplace-loading-title">${copy.title}</h1>
           <p class="workplace-detail" data-workplace-detail>${steps[0].detail}</p>
         </div>
         <div class="workplace-progress" aria-hidden="true"><span></span></div>
@@ -573,7 +759,7 @@ async function runWorkplaceContinue() {
     });
     window.location.replace(returnTo);
   } catch (error) {
-    showError('进入应用失败，正在返回登录页。');
+    showError(copy.error);
     window.setTimeout(() => {
       const message = error instanceof Error ? error.message : '';
       const loginError = message.includes('configured') ? 'workplace_not_configured' : 'workplace_not_available';
