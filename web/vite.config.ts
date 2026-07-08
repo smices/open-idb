@@ -6,6 +6,7 @@ const apiTarget = process.env.PUBLIC_API_TARGET || process.env.VITE_API_TARGET |
 export default defineConfig({
   plugins: [react()],
   build: {
+    modulePreload: false,
     chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
