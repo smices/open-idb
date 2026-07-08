@@ -92,7 +92,7 @@ Recommended infrastructure:
 - Migrations: Goose or Atlas
 - Logging: Zap
 - API documentation: OpenAPI
-- Admin UI: SvelteKit + Skeleton + Tailwind CSS
+- Admin UI: superseded by `docs/web-react-antd-contract.md`; production web is React + Vite + Ant Design.
 
 ## I18n Baseline
 

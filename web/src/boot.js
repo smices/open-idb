@@ -1,18 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-function normalizeWorkplaceProvider(provider) {
-  const value = (provider || '').trim().toLowerCase();
-  if (value === 'lark') return 'feishu';
-  return value === 'feishu' ? value : '';
-}
-
-function returnToParam(returnToValue, name) {
-  try {
-    return new URL(returnToValue, window.location.origin).searchParams.get(name) || '';
-  } catch {
-    return '';
-  }
-}
+import { normalizeWorkplaceProvider, returnToParam } from './lib/feishu-workplace.js';
 
 function workplaceProvider(params) {
   const returnTo = params.get('return_to') || '';

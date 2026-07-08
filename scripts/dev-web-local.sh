@@ -187,11 +187,11 @@ ensure_service_or_reuse() {
   return 1
 }
 
-warn_legacy_react_frontend() {
-  local react_pid
-  react_pid="$(port_listen_pid 5173)"
-  if [ -n "$react_pid" ] && [ "$WEB_PORT" != "5173" ]; then
-    echo "[dev-web-local] note: port 5173 is already in use; this script starts Svelte web on ${WEB_PORT} and does not manage the old frontend"
+warn_unmanaged_vite_default_port() {
+  local vite_pid
+  vite_pid="$(port_listen_pid 5173)"
+  if [ -n "$vite_pid" ] && [ "$WEB_PORT" != "5173" ]; then
+    echo "[dev-web-local] note: port 5173 is already in use; this script starts the React/Vite web app on ${WEB_PORT} and does not manage that process"
   fi
 }
 
@@ -271,7 +271,7 @@ start_web() {
   echo "  backend: http://localhost:${BACKEND_PORT}/healthz"
   echo "  logs:    ${LOCAL_DIR}/dev-web-local-*.log"
   echo
-  echo "[dev-web-local] starting Svelte web in foreground; press Ctrl+C to stop"
+  echo "[dev-web-local] starting React/Vite web in foreground; press Ctrl+C to stop"
   (
     cd "${ROOT_DIR}/web"
     PUBLIC_API_TARGET="http://localhost:${BACKEND_PORT}" \
@@ -291,7 +291,7 @@ start_all() {
   kubectl version --request-timeout=5s >/dev/null
   kubectl -n "$NAMESPACE" get svc postgres >/dev/null
 
-  warn_legacy_react_frontend
+  warn_unmanaged_vite_default_port
   start_postgres_forward
   run_migrations
   start_backend

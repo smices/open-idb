@@ -13,6 +13,7 @@ Applies to the production `web/` frontend.
 - Avatar: use the shared avatar implementation in `web/src/components/UserMenu.jsx`.
 - i18n: user-facing copy must come from `web/src/i18n/index.js`.
 - Theme: light/dark mode must use the shared AntD theme token flow in `web/src/main.jsx` and `web/src/styles.css`.
+- Lightweight workplace continue entry: `web/src/workplace-continue.js` is the deliberate small-bundle exception for Feishu workplace SSO. It must not import React, AntD, or `web/src/i18n/index.js`; it may use a local zh/en dictionary and CSS tokens while following the shared `idb-theme-mode` preference.
 
 ## Product Boundaries
 
