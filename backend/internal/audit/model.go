@@ -23,6 +23,7 @@ const (
 	ActionSyncDepartmentUpdated = model.ActionSyncDepartmentUpdated
 	ActionUserUpdated           = model.ActionUserUpdated
 	ActionUserDisabled          = model.ActionUserDisabled
+	ActionUserArchived          = model.ActionUserArchived
 	ActionUserBoundIdentity     = model.ActionUserBoundIdentity
 	ActionUserUnboundIdentity   = model.ActionUserUnboundIdentity
 	ActionRoleCreated           = model.ActionRoleCreated

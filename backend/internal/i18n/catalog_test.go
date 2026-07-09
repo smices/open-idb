@@ -33,6 +33,17 @@ func TestCatalogLabelsSyncArchivedUser(t *testing.T) {
 	}
 }
 
+func TestCatalogLabelsAdminArchivedUser(t *testing.T) {
+	catalog := NewCatalog()
+
+	if got := catalog.Message("en-US", "user.archived"); got != "User archived" {
+		t.Fatalf("expected English admin archive label, got %q", got)
+	}
+	if got := catalog.Message("zh-CN", "user.archived"); got != "用户已归档" {
+		t.Fatalf("expected Chinese admin archive label, got %q", got)
+	}
+}
+
 func TestCatalogFallsBackToEnglish(t *testing.T) {
 	catalog := NewCatalog()
 

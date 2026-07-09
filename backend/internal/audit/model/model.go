@@ -23,6 +23,7 @@ const (
 	ActionSyncDepartmentUpdated = "sync.department.updated"
 	ActionUserUpdated           = "user.updated"
 	ActionUserDisabled          = "user.disabled"
+	ActionUserArchived          = "user.archived"
 	ActionUserBoundIdentity     = "user.bound_identity"
 	ActionUserUnboundIdentity   = "user.unbound_identity"
 	ActionRoleCreated           = "role.created"

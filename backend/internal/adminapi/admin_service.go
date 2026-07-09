@@ -222,7 +222,7 @@ func (s *AdminService) ArchiveUser(ctx context.Context, entityID, userID, actorU
 		EntityID:     entityID,
 		ActorUserID:  actorUserID,
 		ActorType:    "user",
-		Action:       "user.archived",
+		Action:       audit.ActionUserArchived,
 		ResourceType: "archived_user",
 		Before:       before,
 	}

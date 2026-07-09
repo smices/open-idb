@@ -42,6 +42,7 @@ func NewCatalog() Catalog {
 				// Audit action labels — user management
 				"user.updated":          "User updated",
 				"user.disabled":         "User disabled",
+				"user.archived":         "User archived",
 				"user.bound_identity":   "Identity bound to user",
 				"user.unbound_identity": "Identity unbound from user",
 
@@ -123,6 +124,7 @@ func NewCatalog() Catalog {
 				// Audit action labels — user management
 				"user.updated":          "用户已更新",
 				"user.disabled":         "用户已禁用",
+				"user.archived":         "用户已归档",
 				"user.bound_identity":   "已绑定身份",
 				"user.unbound_identity": "已解绑身份",
 
