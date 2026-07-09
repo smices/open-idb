@@ -21,6 +21,7 @@ import {
   Typography,
 } from 'antd';
 import {
+  Archive,
   AppWindow,
   Building2,
   ChevronLeft,
@@ -143,6 +144,7 @@ function adminItems(t) {
       children: [
         { key: '/admin/organization', path: '/admin/organization', label: t('layout.menu.organization'), icon: <Network size={17} />, description: t('nav.admin.organizationDescription') },
         { key: '/admin/users', path: '/admin/users', label: t('layout.menu.users'), icon: <UsersRound size={17} />, description: t('nav.admin.usersDescription') },
+        { key: '/admin/archived-users', path: '/admin/archived-users', label: t('archivedUsers.title'), icon: <Archive size={17} />, description: t('nav.admin.archivedUsersDescription') },
         { key: '/admin/applications', path: '/admin/applications', label: t('layout.menu.applications'), icon: <AppWindow size={17} />, description: t('nav.admin.applicationsDescription') },
         { key: '/admin/roles', path: '/admin/roles', label: t('layout.menu.roles'), icon: <ShieldCheck size={17} />, description: t('nav.admin.rolesDescription') },
       ],

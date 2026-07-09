@@ -20,7 +20,7 @@ import {
   Tag,
   Tree,
 } from 'antd';
-import { Plus, RefreshCw, Save, Search, Settings } from 'lucide-react';
+import { Archive, Plus, RefreshCw, Save, Search, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from './lib/api.ts';
 
@@ -54,6 +54,7 @@ export function AdminRouter() {
   if (pathname === '/admin/sync-jobs') return <SyncJobsPage />;
   if (pathname === '/admin/organization') return <OrganizationPage />;
   if (pathname === '/admin/users') return <UsersPage />;
+  if (pathname === '/admin/archived-users') return <ArchivedUsersPage />;
   if (/^\/admin\/users\/[^/]+$/.test(pathname)) return <UserDetailPage id={decodeURIComponent(pathname.split('/').pop())} />;
   if (pathname === '/admin/applications') return <ApplicationsPage />;
   if (pathname === '/admin/roles') return <RolesPage />;
@@ -310,6 +311,83 @@ function UsersPage() {
           <Button size="small" onClick={async () => { await (row.lifecycle_status === 'active' ? api.disableUser(row.id) : api.enableUser(row.id)); message.success(t('common.updateSuccess')); reload(); }}>{row.lifecycle_status === 'active' ? t('common.disable') : t('common.enable')}</Button>
         </Space> },
       ]} />
+    </div>
+  );
+}
+
+function ArchivedUsersPage() {
+  const { t } = useTranslation();
+  const { message } = AntApp.useApp();
+  const [filters, setFilters] = useState({});
+  const [selectedId, setSelectedId] = useState('');
+  const [selected, setSelected] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const { loading, data, reload } = useLoader(() => api.listArchivedUsers({ ...filters, limit: 100 }), [JSON.stringify(filters)]);
+
+  const openDetail = async (id) => {
+    setSelectedId(id);
+    setDetailLoading(true);
+    try {
+      const detail = await api.getArchivedUser(id);
+      setSelected(detail);
+    } catch (err) {
+      setSelectedId('');
+      message.error(errorMessage(err));
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const closeDetail = () => {
+    setSelectedId('');
+    setSelected(null);
+    setDetailLoading(false);
+  };
+
+  const copySelected = async () => {
+    if (!selected) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(selected, null, 2));
+      message.success(t('common.copied'));
+    } catch (err) {
+      message.error(errorMessage(err));
+    }
+  };
+
+  return (
+    <div className="page-stack">
+      <div className="toolbar-left">
+        <Input
+          allowClear
+          placeholder={t('archivedUsers.username')}
+          prefix={<Archive size={14} />}
+          style={{ width: 220 }}
+          onChange={(e) => setFilters((current) => ({ ...current, username: e.target.value || undefined }))}
+        />
+        <Button icon={<RefreshCw size={16} />} onClick={reload}>{t('common.refresh')}</Button>
+      </div>
+      <Table
+        rowKey="id"
+        loading={loading}
+        dataSource={data?.items || []}
+        columns={[
+          { title: t('archivedUsers.username'), dataIndex: 'username' },
+          { title: t('archivedUsers.displayName'), dataIndex: 'display_name' },
+          { title: t('archivedUsers.email'), dataIndex: 'email', render: (value) => value || '-' },
+          { title: t('archivedUsers.reason'), dataIndex: 'archive_reason', ellipsis: true, render: (value) => value || '-' },
+          { title: t('archivedUsers.archivedAt'), dataIndex: 'archived_at', render: formatDate },
+          { title: t('common.actions'), render: (_, row) => <Button size="small" onClick={() => openDetail(row.id)}>{t('archivedUsers.json')}</Button> },
+        ]}
+      />
+      <Drawer
+        width={720}
+        open={Boolean(selectedId)}
+        onClose={closeDetail}
+        title={t('archivedUsers.detailTitle')}
+        extra={<Button disabled={!selected} onClick={copySelected}>{t('common.copy')}</Button>}
+      >
+        {detailLoading ? <Skeleton active paragraph={{ rows: 8 }} /> : <pre className="json-box">{selected ? JSON.stringify(selected, null, 2) : ''}</pre>}
+      </Drawer>
     </div>
   );
 }

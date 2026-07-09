@@ -194,6 +194,30 @@ export interface AuditLogListResponse {
   offset: number;
 }
 
+export type ArchivedUser = {
+  id: string;
+  entity_id: string;
+  original_user_id: string;
+  username: string;
+  display_name: string;
+  email: string;
+  phone: string;
+  user_type: string;
+  archived_at: string;
+  archived_by_user_id: string;
+  archive_reason: string;
+  user_snapshot: Record<string, string | number | boolean | null>;
+  bindings_snapshot: Array<Record<string, string | number | boolean | null>>;
+  roles_snapshot: Array<Record<string, string | number | boolean | null>>;
+};
+
+export type ArchivedUserListResponse = {
+  items: ArchivedUser[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
 export interface SyncJob {
   id: string;
   entity_id: string;
@@ -664,6 +688,16 @@ export const api = {
     });
     return apiRequest<UserListResponse>(`/sapi/users${suffix}`);
   },
+  listArchivedUsers: (params?: { username?: string; limit?: number; offset?: number }) => {
+    const suffix = queryString({
+      username: params?.username,
+      limit: params?.limit,
+      offset: params?.offset,
+    });
+    return apiRequest<ArchivedUserListResponse>(`/sapi/archived-users${suffix}`);
+  },
+  getArchivedUser: (id: string) =>
+    apiRequest<ArchivedUser>(`/sapi/archived-users/${encodeURIComponent(id)}`),
   getUser: (id: string) => apiRequest<User>(`/sapi/users/${encodeURIComponent(id)}`),
   updateUser: (id: string, payload: UpdateUserRequest) =>
     apiRequest<User>(`/sapi/users/${encodeURIComponent(id)}`, { method: 'PUT', body: payload }),
