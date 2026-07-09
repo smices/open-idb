@@ -136,6 +136,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 			closeFn()
 			return nil, err
 		}
+		adminCRUDService.SetTxStarter(pool)
 		organizationTreeCache := adminapi.NewOrganizationTreeCache(ephemeralStore)
 		adminCRUDService.SetOrganizationTreeCache(organizationTreeCache)
 		entityHandler := adminapi.NewEntityHandler(adminCRUDService)

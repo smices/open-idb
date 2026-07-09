@@ -21,6 +21,10 @@ type mockUserService struct {
 	listUsersFn           func(ctx context.Context, entityID string, status pgtype.Text, limit, offset int32) ([]UserResponse, error)
 	countUsersFn          func(ctx context.Context, entityID string, status pgtype.Text) (int64, error)
 	getUserByIDFn         func(ctx context.Context, entityID, id string) (UserResponse, error)
+	listArchivedUsersFn   func(ctx context.Context, entityID, username string, limit, offset int32) ([]ArchivedUserResponse, error)
+	countArchivedUsersFn  func(ctx context.Context, entityID, username string) (int64, error)
+	getArchivedUserFn     func(ctx context.Context, entityID, id string) (ArchivedUserResponse, error)
+	archiveUserFn         func(ctx context.Context, entityID, userID, actorUserID, reason string) (ArchivedUserResponse, error)
 	updateUserLifecycleFn func(ctx context.Context, entityID, id string, status string) (UserResponse, error)
 	updateUserFn          func(ctx context.Context, entityID, id string, displayName, email, phone, locale pgtype.Text) (UserResponse, error)
 }
@@ -42,6 +46,30 @@ func (m *mockUserService) GetUserByID(ctx context.Context, entityID, id string) 
 		return m.getUserByIDFn(ctx, entityID, id)
 	}
 	return UserResponse{}, nil
+}
+func (m *mockUserService) ListArchivedUsers(ctx context.Context, entityID, username string, limit, offset int32) ([]ArchivedUserResponse, error) {
+	if m.listArchivedUsersFn != nil {
+		return m.listArchivedUsersFn(ctx, entityID, username, limit, offset)
+	}
+	return nil, nil
+}
+func (m *mockUserService) CountArchivedUsers(ctx context.Context, entityID, username string) (int64, error) {
+	if m.countArchivedUsersFn != nil {
+		return m.countArchivedUsersFn(ctx, entityID, username)
+	}
+	return 0, nil
+}
+func (m *mockUserService) GetArchivedUser(ctx context.Context, entityID, id string) (ArchivedUserResponse, error) {
+	if m.getArchivedUserFn != nil {
+		return m.getArchivedUserFn(ctx, entityID, id)
+	}
+	return ArchivedUserResponse{}, nil
+}
+func (m *mockUserService) ArchiveUser(ctx context.Context, entityID, userID, actorUserID, reason string) (ArchivedUserResponse, error) {
+	if m.archiveUserFn != nil {
+		return m.archiveUserFn(ctx, entityID, userID, actorUserID, reason)
+	}
+	return ArchivedUserResponse{}, nil
 }
 func (m *mockUserService) UpdateUserLifecycle(ctx context.Context, entityID, id string, status string) (UserResponse, error) {
 	if m.updateUserLifecycleFn != nil {
@@ -131,6 +159,24 @@ func sampleUserResponse() UserResponse {
 	}
 }
 
+func sampleArchivedUserResponse() ArchivedUserResponse {
+	return ArchivedUserResponse{
+		ID:               "01HZZZZZZZ0000000000000010",
+		EntityID:         "01HZZZZZZZ0000000000000099",
+		OriginalUserID:   "01HZZZZZZZ0000000000000001",
+		Username:         "testuser",
+		DisplayName:      "Test User",
+		Email:            "test@example.com",
+		UserType:         "local",
+		ArchivedAt:       "2025-01-01T00:00:00Z",
+		ArchivedByUserID: "01HZZZZZZZ0000000000000002",
+		ArchiveReason:    "admin deleted user",
+		UserSnapshot:     json.RawMessage(`{"id":"01HZZZZZZZ0000000000000001"}`),
+		BindingsSnapshot: json.RawMessage(`[]`),
+		RolesSnapshot:    json.RawMessage(`[]`),
+	}
+}
+
 func newUserTestRouter(handler UserHandler) *chi.Mux {
 	r := chi.NewRouter()
 	handler.RegisterRoutes(r)
@@ -140,7 +186,7 @@ func newUserTestRouter(handler UserHandler) *chi.Mux {
 func adminTestSessionCookie() *http.Cookie {
 	session, _ := auth.EncodeAdminSession(auth.AdminSession{
 		AdminID:     "01HZZZZZZZ0000000000000002",
-		EntityID:     "01HZZZZZZZ0000000000000099",
+		EntityID:    "01HZZZZZZZ0000000000000099",
 		Username:    "admin",
 		DisplayName: "Administrator",
 		Role:        "enterprise_admin",
@@ -325,5 +371,113 @@ func TestEnableUser_Success(t *testing.T) {
 	}
 	if user.LifecycleStatus != "active" {
 		t.Errorf("expected lifecycle_status active, got %s", user.LifecycleStatus)
+	}
+}
+
+func TestDeleteUser_ArchivesUser(t *testing.T) {
+	mock := &mockUserService{
+		archiveUserFn: func(_ context.Context, _, _ string, actorUserID, reason string) (ArchivedUserResponse, error) {
+			if actorUserID != "01HZZZZZZZ0000000000000002" {
+				t.Fatalf("expected actor 01HZZZZZZZ0000000000000002, got %s", actorUserID)
+			}
+			if reason != "admin deleted user" {
+				t.Fatalf("expected archive reason, got %s", reason)
+			}
+			return sampleArchivedUserResponse(), nil
+		},
+		updateUserLifecycleFn: func(_ context.Context, _, _, status string) (UserResponse, error) {
+			t.Fatalf("unexpected lifecycle update call with status %s", status)
+			return UserResponse{}, nil
+		},
+	}
+	handler := NewUserHandler(mock)
+	router := newUserTestRouter(handler)
+
+	req := httptest.NewRequest("POST", "/sapi/users/01HZZZZZZZ0000000000000001/delete", nil)
+	req.AddCookie(adminTestSessionCookie())
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var archived ArchivedUserResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &archived); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if archived.OriginalUserID != "01HZZZZZZZ0000000000000001" {
+		t.Fatalf("expected original_user_id to match deleted user, got %s", archived.OriginalUserID)
+	}
+}
+
+func TestListArchivedUsers_ReturnsProperJSON(t *testing.T) {
+	mock := &mockUserService{
+		listArchivedUsersFn: func(_ context.Context, _, username string, _, _ int32) ([]ArchivedUserResponse, error) {
+			if username != "test" {
+				t.Fatalf("expected username filter test, got %s", username)
+			}
+			return []ArchivedUserResponse{sampleArchivedUserResponse()}, nil
+		},
+		countArchivedUsersFn: func(_ context.Context, _, username string) (int64, error) {
+			if username != "test" {
+				t.Fatalf("expected username filter test, got %s", username)
+			}
+			return 1, nil
+		},
+	}
+	handler := NewUserHandler(mock)
+	router := newUserTestRouter(handler)
+
+	req := httptest.NewRequest("GET", "/sapi/archived-users?username=test&limit=10&offset=0", nil)
+	req.AddCookie(adminTestSessionCookie())
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp struct {
+		Items  []ArchivedUserResponse `json:"items"`
+		Total  int64                  `json:"total"`
+		Limit  int                    `json:"limit"`
+		Offset int                    `json:"offset"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Total != 1 || len(resp.Items) != 1 {
+		t.Fatalf("expected one archived user, got total=%d items=%d", resp.Total, len(resp.Items))
+	}
+	if resp.Items[0].Username != "testuser" {
+		t.Fatalf("expected username testuser, got %s", resp.Items[0].Username)
+	}
+}
+
+func TestGetArchivedUser_Success(t *testing.T) {
+	mock := &mockUserService{
+		getArchivedUserFn: func(_ context.Context, _, _ string) (ArchivedUserResponse, error) {
+			return sampleArchivedUserResponse(), nil
+		},
+	}
+	handler := NewUserHandler(mock)
+	router := newUserTestRouter(handler)
+
+	req := httptest.NewRequest("GET", "/sapi/archived-users/01HZZZZZZZ0000000000000010", nil)
+	req.AddCookie(adminTestSessionCookie())
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var archived ArchivedUserResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &archived); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if archived.ID != "01HZZZZZZZ0000000000000010" {
+		t.Fatalf("expected archived id 01HZZZZZZZ0000000000000010, got %s", archived.ID)
 	}
 }

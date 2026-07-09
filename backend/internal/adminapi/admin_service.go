@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/smices/open-idb/internal/audit"
 	"github.com/smices/open-idb/internal/db/generated"
@@ -20,6 +21,11 @@ type AdminService struct {
 	queries               *generated.Queries
 	audit                 *auditWriter
 	organizationTreeCache *OrganizationTreeCache
+	txStarter             txStarter
+}
+
+type txStarter interface {
+	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
 }
 
 var enabledIdentitySourceTypes = map[string]bool{
@@ -42,6 +48,10 @@ func NewAdminService(queries *generated.Queries, auditLogger ...AuditLogger) (*A
 		svc.audit = &auditWriter{logger: auditLogger[0]}
 	}
 	return svc, nil
+}
+
+func (s *AdminService) SetTxStarter(starter txStarter) {
+	s.txStarter = starter
 }
 
 // --- Platform settings ---
@@ -162,6 +172,126 @@ func (s *AdminService) GetUserByID(ctx context.Context, entityID, id string) (Us
 		return UserResponse{}, err
 	}
 	return userFromRow(row), nil
+}
+
+func (s *AdminService) ListArchivedUsers(ctx context.Context, entityID, username string, limit, offset int32) ([]ArchivedUserResponse, error) {
+	rows, err := s.queries.ListArchivedUsers(ctx, generated.ListArchivedUsersParams{
+		EntityID: entityID,
+		Username: optionalText(username),
+		Offset:   offset,
+		Limit:    limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]ArchivedUserResponse, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, archivedUserFromRow(row))
+	}
+	return items, nil
+}
+
+func (s *AdminService) CountArchivedUsers(ctx context.Context, entityID, username string) (int64, error) {
+	return s.queries.CountArchivedUsers(ctx, generated.CountArchivedUsersParams{
+		EntityID: entityID,
+		Username: optionalText(username),
+	})
+}
+
+func (s *AdminService) GetArchivedUser(ctx context.Context, entityID, id string) (ArchivedUserResponse, error) {
+	row, err := s.queries.GetArchivedUserByID(ctx, generated.GetArchivedUserByIDParams{
+		EntityID: entityID,
+		ID:       id,
+	})
+	if err != nil {
+		return ArchivedUserResponse{}, err
+	}
+	return archivedUserFromRow(row), nil
+}
+
+func (s *AdminService) ArchiveUser(ctx context.Context, entityID, userID, actorUserID, reason string) (ArchivedUserResponse, error) {
+	before, err := s.GetUserByID(ctx, entityID, userID)
+	if err != nil {
+		return ArchivedUserResponse{}, err
+	}
+	if reason == "" {
+		reason = "admin deleted user"
+	}
+	actor := optionalText(actorUserID)
+	event := audit.Event{
+		EntityID:     entityID,
+		ActorUserID:  actorUserID,
+		ActorType:    "user",
+		Action:       "user.archived",
+		ResourceType: "archived_user",
+		Before:       before,
+	}
+
+	if s.txStarter == nil {
+		return ArchivedUserResponse{}, fmt.Errorf("admin service transaction starter is not configured")
+	}
+	tx, err := s.txStarter.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ArchivedUserResponse{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	txQueries := s.queries.WithTx(tx)
+	archive, err := txQueries.ArchiveUser(ctx, generated.ArchiveUserParams{
+		EntityID:         entityID,
+		UserID:           userID,
+		ArchivedByUserID: actor,
+		ArchiveReason:    reason,
+	})
+	if err != nil {
+		return ArchivedUserResponse{}, err
+	}
+	if err := txQueries.DeleteUserActiveDependents(ctx, generated.DeleteUserActiveDependentsParams{
+		EntityID: entityID,
+		UserID:   userID,
+	}); err != nil {
+		return ArchivedUserResponse{}, err
+	}
+	if err := txQueries.DeleteUserActiveRow(ctx, generated.DeleteUserActiveRowParams{
+		EntityID: entityID,
+		UserID:   userID,
+	}); err != nil {
+		return ArchivedUserResponse{}, err
+	}
+	resp := archivedUserFromRow(archive)
+	event.ResourceID = resp.ID
+	event.After = resp
+	if auditService, ok := s.auditTxLogger(txQueries); ok {
+		if err := auditService.Write(ctx, event); err != nil {
+			return ArchivedUserResponse{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ArchivedUserResponse{}, err
+	}
+	committed = true
+
+	if _, ok := s.auditTxLogger(txQueries); !ok {
+		if err := s.audit.logAction(ctx, event); err != nil {
+			return ArchivedUserResponse{}, err
+		}
+	}
+	return resp, nil
+}
+
+func (s *AdminService) auditTxLogger(txQueries *generated.Queries) (*audit.Service, bool) {
+	if s.audit == nil || s.audit.logger == nil {
+		return nil, false
+	}
+	if _, ok := s.audit.logger.(*audit.Service); !ok {
+		return nil, false
+	}
+	return audit.NewService(txQueries), true
 }
 
 func (s *AdminService) UpdateUserLifecycle(ctx context.Context, entityID, id string, status string) (UserResponse, error) {

@@ -42,6 +42,23 @@ type UserResponse struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+type ArchivedUserResponse struct {
+	ID               string          `json:"id"`
+	EntityID         string          `json:"entity_id"`
+	OriginalUserID   string          `json:"original_user_id"`
+	Username         string          `json:"username"`
+	DisplayName      string          `json:"display_name"`
+	Email            string          `json:"email"`
+	Phone            string          `json:"phone"`
+	UserType         string          `json:"user_type"`
+	ArchivedAt       string          `json:"archived_at"`
+	ArchivedByUserID string          `json:"archived_by_user_id"`
+	ArchiveReason    string          `json:"archive_reason"`
+	UserSnapshot     json.RawMessage `json:"user_snapshot"`
+	BindingsSnapshot json.RawMessage `json:"bindings_snapshot"`
+	RolesSnapshot    json.RawMessage `json:"roles_snapshot"`
+}
+
 // DirectoryUserResponse represents a directory user in API responses.
 type DirectoryUserResponse struct {
 	ID              string    `json:"id"`
@@ -130,6 +147,10 @@ type userService interface {
 	ListUsers(ctx context.Context, entityID string, status pgtype.Text, limit, offset int32) ([]UserResponse, error)
 	CountUsers(ctx context.Context, entityID string, status pgtype.Text) (int64, error)
 	GetUserByID(ctx context.Context, entityID, id string) (UserResponse, error)
+	ListArchivedUsers(ctx context.Context, entityID, username string, limit, offset int32) ([]ArchivedUserResponse, error)
+	CountArchivedUsers(ctx context.Context, entityID, username string) (int64, error)
+	GetArchivedUser(ctx context.Context, entityID, id string) (ArchivedUserResponse, error)
+	ArchiveUser(ctx context.Context, entityID, userID, actorUserID, reason string) (ArchivedUserResponse, error)
 	UpdateUserLifecycle(ctx context.Context, entityID, id string, status string) (UserResponse, error)
 	UpdateUser(ctx context.Context, entityID, id string, displayName, email, phone, locale pgtype.Text) (UserResponse, error)
 	GetDirectoryUserByID(ctx context.Context, entityID, id string) (DirectoryUserResponse, error)
@@ -163,9 +184,12 @@ func NewUserHandler(service userService) UserHandler {
 func (h UserHandler) RegisterRoutes(r chi.Router) {
 	r.Get("/sapi/users", h.listUsers)
 	r.Get("/sapi/users/{id}", h.getUser)
+	r.Get("/sapi/archived-users", h.listArchivedUsers)
+	r.Get("/sapi/archived-users/{id}", h.getArchivedUser)
 	r.Put("/sapi/users/{id}", h.updateUser)
 	r.Post("/sapi/users/{id}/disable", h.disableUser)
 	r.Post("/sapi/users/{id}/enable", h.enableUser)
+	r.Post("/sapi/users/{id}/delete", h.deleteUser)
 }
 
 // parsePagination extracts limit and offset from query params with sensible defaults.
@@ -250,6 +274,60 @@ func (h UserHandler) getUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, user)
 }
 
+func (h UserHandler) listArchivedUsers(w http.ResponseWriter, r *http.Request) {
+	session, ok := readSession(w, r)
+	if !ok {
+		return
+	}
+	entityID, err := ulidValue(session.EntityID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_entity_id", err.Error())
+		return
+	}
+	limit, offset := parsePagination(r)
+	username := r.URL.Query().Get("username")
+
+	items, err := h.service.ListArchivedUsers(r.Context(), entityID, username, limit, offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "archived_users_list_failed", err.Error())
+		return
+	}
+	total, err := h.service.CountArchivedUsers(r.Context(), entityID, username)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "archived_users_count_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, PagedResponse{
+		Items:  items,
+		Total:  total,
+		Limit:  int(limit),
+		Offset: int(offset),
+	})
+}
+
+func (h UserHandler) getArchivedUser(w http.ResponseWriter, r *http.Request) {
+	session, ok := readSession(w, r)
+	if !ok {
+		return
+	}
+	entityID, err := ulidValue(session.EntityID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_entity_id", err.Error())
+		return
+	}
+	id, err := ulidValue(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_archived_user_id", err.Error())
+		return
+	}
+	item, err := h.service.GetArchivedUser(r.Context(), entityID, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "archived_user_not_found", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
 func (h UserHandler) updateUser(w http.ResponseWriter, r *http.Request) {
 	session, ok := readSession(w, r)
 	if !ok {
@@ -296,6 +374,10 @@ func (h UserHandler) enableUser(w http.ResponseWriter, r *http.Request) {
 	h.setLifecycle(w, r, "active")
 }
 
+func (h UserHandler) deleteUser(w http.ResponseWriter, r *http.Request) {
+	h.setLifecycle(w, r, "deleted")
+}
+
 func (h UserHandler) setLifecycle(w http.ResponseWriter, r *http.Request, status string) {
 	session, ok := readSession(w, r)
 	if !ok {
@@ -309,6 +391,15 @@ func (h UserHandler) setLifecycle(w http.ResponseWriter, r *http.Request, status
 	id, err := ulidValue(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_user_id", err.Error())
+		return
+	}
+	if status == "deleted" {
+		archived, err := h.service.ArchiveUser(r.Context(), entityID, id, session.UserID, "admin deleted user")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "user_archive_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, archived)
 		return
 	}
 	user, err := h.service.UpdateUserLifecycle(r.Context(), entityID, id, status)
@@ -339,6 +430,25 @@ func userFromRow(row generated.User) UserResponse {
 		Locale:          textString(row.Locale),
 		CreatedAt:       row.CreatedAt.Time,
 		UpdatedAt:       row.UpdatedAt.Time,
+	}
+}
+
+func archivedUserFromRow(row generated.ArchivedUser) ArchivedUserResponse {
+	return ArchivedUserResponse{
+		ID:               ulidString(row.ID),
+		EntityID:         ulidString(row.EntityID),
+		OriginalUserID:   ulidString(row.OriginalUserID),
+		Username:         row.Username,
+		DisplayName:      row.DisplayName,
+		Email:            textString(row.Email),
+		Phone:            textString(row.Phone),
+		UserType:         row.UserType,
+		ArchivedAt:       row.ArchivedAt.Time.Format(time.RFC3339),
+		ArchivedByUserID: textString(row.ArchivedByUserID),
+		ArchiveReason:    row.ArchiveReason,
+		UserSnapshot:     json.RawMessage(row.UserSnapshot),
+		BindingsSnapshot: json.RawMessage(row.BindingsSnapshot),
+		RolesSnapshot:    json.RawMessage(row.RolesSnapshot),
 	}
 }
 
