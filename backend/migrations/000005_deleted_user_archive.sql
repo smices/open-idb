@@ -93,11 +93,29 @@ inserted AS (
     FROM deleted_users u
     ON CONFLICT (entity_id, original_user_id) DO NOTHING
     RETURNING entity_id, original_user_id
+),
+migrated_users AS (
+    SELECT i.entity_id, i.original_user_id
+    FROM inserted i
+    UNION
+    SELECT du.entity_id, du.id AS original_user_id
+    FROM deleted_users du
+    JOIN archived_users au
+      ON au.entity_id = du.entity_id
+     AND au.original_user_id = du.id
+),
+deleted_application_assignments AS (
+    DELETE FROM application_assignments aa
+    USING migrated_users mu
+    WHERE aa.entity_id = mu.entity_id
+      AND aa.subject_type = 'user'
+      AND aa.subject_id = mu.original_user_id
+    RETURNING aa.entity_id, aa.subject_id
 )
 DELETE FROM users u
-USING inserted i
-WHERE u.entity_id = i.entity_id
-  AND u.id = i.original_user_id
+USING migrated_users mu
+WHERE u.entity_id = mu.entity_id
+  AND u.id = mu.original_user_id
   AND u.lifecycle_status = 'deleted';
 
 -- +goose Down
