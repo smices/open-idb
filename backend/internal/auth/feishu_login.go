@@ -802,12 +802,19 @@ func classifyFeishuLoginError(err error) string {
 	case strings.Contains(message, "invalid entity_id"),
 		strings.Contains(message, "invalid source_id"):
 		return "feishu_profile_error"
-	case strings.Contains(message, "upsert directory user"),
-		strings.Contains(message, "lookup binding"),
-		strings.Contains(message, "update managed user"),
-		strings.Contains(message, "create managed user"),
-		strings.Contains(message, "assign default employee role"),
-		strings.Contains(message, "create binding"):
+	case strings.Contains(message, "upsert directory user"):
+		return "feishu_directory_user_upsert_failed"
+	case strings.Contains(message, "lookup binding"):
+		return "feishu_binding_lookup_failed"
+	case strings.Contains(message, "update managed user"):
+		return "feishu_managed_user_update_failed"
+	case strings.Contains(message, "create managed user"):
+		return "feishu_managed_user_create_failed"
+	case strings.Contains(message, "assign default employee role"):
+		return "feishu_role_assign_failed"
+	case strings.Contains(message, "create binding"):
+		return "feishu_binding_create_failed"
+	case strings.Contains(message, "account"):
 		return "feishu_account_error"
 	case strings.Contains(message, "create session"):
 		return "feishu_session_failed"
