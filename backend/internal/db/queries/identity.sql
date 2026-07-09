@@ -172,18 +172,18 @@ WHERE ab.entity_id = $1 AND ab.source_id = $2 AND ab.provider_uid = $3;
 
 -- name: UpdateManagedUserFromDirectory :one
 UPDATE users
-SET username = $4,
-    display_name = $5,
-    english_name = $6,
-    employee_no = $7,
-    job_title = $8,
-    email = $9,
-    phone = $10,
-    avatar_url = $11,
-    lifecycle_status = $12,
-    primary_source_id = $3,
+SET username = COALESCE(sqlc.narg('username'), username),
+    display_name = sqlc.arg('display_name'),
+    english_name = sqlc.arg('english_name'),
+    employee_no = sqlc.arg('employee_no'),
+    job_title = sqlc.arg('job_title'),
+    email = sqlc.arg('email'),
+    phone = sqlc.arg('phone'),
+    avatar_url = sqlc.arg('avatar_url'),
+    lifecycle_status = sqlc.arg('lifecycle_status'),
+    primary_source_id = sqlc.arg('primary_source_id'),
     updated_at = now()
-WHERE entity_id = $1 AND id = $2
+WHERE entity_id = sqlc.arg('entity_id') AND id = sqlc.arg('id')
 RETURNING id, entity_id, username, display_name, english_name, employee_no, job_title, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at;
 
 -- name: MarkMissingDirectoryUsersDeleted :many

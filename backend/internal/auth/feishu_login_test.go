@@ -244,6 +244,9 @@ func TestFeishuLoginExistingUserUpdatesAndCreatesSession(t *testing.T) {
 	if gotUpdateParams.DisplayName != "张三" {
 		t.Fatalf("update DisplayName = %q", gotUpdateParams.DisplayName)
 	}
+	if gotUpdateParams.Username.Valid {
+		t.Fatalf("update Username should be null for existing bindings, got %q", gotUpdateParams.Username.String)
+	}
 	if result.UserID != "01HZZZZZZZ0000000000000003" {
 		t.Fatalf("UserID = %q", result.UserID)
 	}

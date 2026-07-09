@@ -699,26 +699,23 @@ func (q *Queries) UpdateEntity(ctx context.Context, arg UpdateEntityParams) (Bus
 
 const updateManagedUserFromDirectory = `-- name: UpdateManagedUserFromDirectory :one
 UPDATE users
-SET username = $4,
-    display_name = $5,
-    english_name = $6,
-    employee_no = $7,
-    job_title = $8,
-    email = $9,
-    phone = $10,
-    avatar_url = $11,
-    lifecycle_status = $12,
-    primary_source_id = $3,
+SET username = COALESCE($1, username),
+    display_name = $2,
+    english_name = $3,
+    employee_no = $4,
+    job_title = $5,
+    email = $6,
+    phone = $7,
+    avatar_url = $8,
+    lifecycle_status = $9,
+    primary_source_id = $10,
     updated_at = now()
-WHERE entity_id = $1 AND id = $2
+WHERE entity_id = $11 AND id = $12
 RETURNING id, entity_id, username, display_name, english_name, employee_no, job_title, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at
 `
 
 type UpdateManagedUserFromDirectoryParams struct {
-	EntityID        string      `json:"entity_id"`
-	ID              string      `json:"id"`
-	PrimarySourceID pgtype.Text `json:"primary_source_id"`
-	Username        string      `json:"username"`
+	Username        pgtype.Text `json:"username"`
 	DisplayName     string      `json:"display_name"`
 	EnglishName     string      `json:"english_name"`
 	EmployeeNo      string      `json:"employee_no"`
@@ -727,13 +724,13 @@ type UpdateManagedUserFromDirectoryParams struct {
 	Phone           pgtype.Text `json:"phone"`
 	AvatarUrl       pgtype.Text `json:"avatar_url"`
 	LifecycleStatus string      `json:"lifecycle_status"`
+	PrimarySourceID pgtype.Text `json:"primary_source_id"`
+	EntityID        string      `json:"entity_id"`
+	ID              string      `json:"id"`
 }
 
 func (q *Queries) UpdateManagedUserFromDirectory(ctx context.Context, arg UpdateManagedUserFromDirectoryParams) (User, error) {
 	row := q.db.QueryRow(ctx, updateManagedUserFromDirectory,
-		arg.EntityID,
-		arg.ID,
-		arg.PrimarySourceID,
 		arg.Username,
 		arg.DisplayName,
 		arg.EnglishName,
@@ -743,6 +740,9 @@ func (q *Queries) UpdateManagedUserFromDirectory(ctx context.Context, arg Update
 		arg.Phone,
 		arg.AvatarUrl,
 		arg.LifecycleStatus,
+		arg.PrimarySourceID,
+		arg.EntityID,
+		arg.ID,
 	)
 	var i User
 	err := row.Scan(

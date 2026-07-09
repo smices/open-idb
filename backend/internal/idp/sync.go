@@ -541,7 +541,7 @@ func (s *SyncService) updateManagedUserFromDirectory(ctx context.Context, entity
 		EntityID:        entityID,
 		ID:              userID,
 		PrimarySourceID: textValue(sourceID),
-		Username:        usernameForDirectoryUser(user),
+		Username:        textValue(usernameForDirectoryUser(user)),
 		DisplayName:     user.Name,
 		EnglishName:     user.EnglishName,
 		EmployeeNo:      user.EmployeeNo,
