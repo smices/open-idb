@@ -9,12 +9,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	auditmodel "github.com/smices/open-idb/internal/audit/model"
 	"github.com/smices/open-idb/internal/db/generated"
 	"github.com/smices/open-idb/internal/ephemeral"
 	"github.com/smices/open-idb/internal/id"
@@ -25,6 +27,15 @@ import (
 type mockFeishuProvider struct {
 	userInfo FeishuUserInfo
 	err      error
+}
+
+type fakeFeishuAuditWriter struct {
+	events []auditmodel.Event
+}
+
+func (f *fakeFeishuAuditWriter) Write(_ context.Context, event auditmodel.Event) error {
+	f.events = append(f.events, event)
+	return nil
 }
 
 func TestFeishuOAuthStateUsesEphemeralStore(t *testing.T) {
@@ -554,6 +565,33 @@ func TestFeishuLoginInvalidEntityID(t *testing.T) {
 	}
 }
 
+func TestClassifyFeishuLoginError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "disabled user", err: errors.New("user_disabled"), want: "user_disabled"},
+		{name: "no account", err: errors.New("no_account"), want: "no_account"},
+		{name: "config", err: errors.New("feishu client is not configured"), want: "feishu_config_error"},
+		{name: "app token", err: errors.New("feishu oauth: feishu app token failed: code=999 msg=bad secret"), want: "feishu_app_token_failed"},
+		{name: "oidc token", err: errors.New("feishu oauth: feishu oidc token exchange failed: code=20027 msg=invalid code"), want: "feishu_oidc_token_failed"},
+		{name: "app code", err: errors.New("feishu app code: feishu app token exchange failed: code=400 msg=invalid auth code"), want: "feishu_app_code_failed"},
+		{name: "user info", err: errors.New("feishu oauth: feishu user info failed: code=99991663 msg=permission denied"), want: "feishu_user_info_failed"},
+		{name: "account write", err: errors.New("create binding: duplicate key value violates unique constraint"), want: "feishu_account_error"},
+		{name: "session", err: errors.New("create session: database unavailable"), want: "feishu_session_failed"},
+		{name: "fallback", err: errors.New("unexpected provider outage"), want: "feishu_login_failed"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyFeishuLoginError(tt.err); got != tt.want {
+				t.Fatalf("classifyFeishuLoginError() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // --- Handler tests ---
 
 func TestFeishuCallbackSetsSessionAndRedirects(t *testing.T) {
@@ -694,6 +732,69 @@ func TestFeishuCallbackRedirectsBrowserToConfiguredWebBaseURL(t *testing.T) {
 	}
 	if location := rec.Header().Get("Location"); location != "http://localhost:5180/portal" {
 		t.Fatalf("Location = %q, want http://localhost:5180/portal", location)
+	}
+}
+
+func TestFeishuCallbackFailureRedirectIncludesReasonAndTraceID(t *testing.T) {
+	audit := &fakeFeishuAuditWriter{}
+	loginSvc := &FeishuLoginService{
+		queries:      &mockLoginQueries{},
+		feishuClient: &mockFeishuProvider{err: errors.New("feishu user info failed: code=99991663 msg=permission denied")},
+		sessionTTL:   24 * time.Hour,
+		policy:       LoginProvisionPolicy{AutoCreateManagedUsers: true},
+	}
+	providerSvc := &LoginProviderService{
+		queries:     &mockProviderQueries{},
+		feishuAppID: "test-app",
+	}
+	handler := NewFeishuLoginHandler(loginSvc, providerSvc, "test-app", "https://example.test/callback", audit)
+
+	state := oauthState{
+		EntityID: "01HZZZZZZZ0000000000000001",
+		SourceID: "01HZZZZZZZ0000000000000002",
+		ReturnTo: "/portal",
+	}
+	stateBytes, _ := json.Marshal(state)
+	stateEncoded := base64.RawURLEncoding.EncodeToString(stateBytes)
+
+	router := chiRouter()
+	handler.RegisterRoutes(router)
+
+	req := httptest.NewRequest(http.MethodGet, "/auth/feishu/callback?code=test-code&state="+stateEncoded, nil)
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusSeeOther)
+	}
+	location := rec.Header().Get("Location")
+	parsed, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse redirect Location %q: %v", location, err)
+	}
+	if got := parsed.Query().Get("login_error"); got != "feishu_user_info_failed" {
+		t.Fatalf("login_error = %q, want feishu_user_info_failed", got)
+	}
+	traceID := parsed.Query().Get("trace_id")
+	if err := id.ValidateULID(traceID); err != nil {
+		t.Fatalf("trace_id = %q is not a ULID: %v", traceID, err)
+	}
+	if len(audit.events) != 1 {
+		t.Fatalf("audit event count = %d, want 1", len(audit.events))
+	}
+	after, ok := audit.events[0].After.(map[string]string)
+	if !ok {
+		t.Fatalf("audit After type = %T, want map[string]string", audit.events[0].After)
+	}
+	if after["reason_code"] != "feishu_user_info_failed" {
+		t.Fatalf("audit reason_code = %q, want feishu_user_info_failed", after["reason_code"])
+	}
+	if after["trace_id"] != traceID || audit.events[0].TraceID != traceID {
+		t.Fatalf("audit trace mismatch: after=%q event=%q redirect=%q", after["trace_id"], audit.events[0].TraceID, traceID)
+	}
+	if !strings.Contains(after["reason"], "permission denied") {
+		t.Fatalf("audit reason = %q, want provider details", after["reason"])
 	}
 }
 

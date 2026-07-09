@@ -266,6 +266,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		feishuLoginHandler := auth.NewFeishuLoginHandler(feishuLoginService, providerService, cfg.FeishuAppID, cfg.FeishuRedirectURI, auditService)
 		feishuLoginHandler.SetWebBaseURL(cfg.WebBaseURL)
 		feishuLoginHandler.SetEphemeralStore(ephemeralStore)
+		feishuLoginHandler.SetLogger(logger)
 		routerOptions = append(routerOptions, feishuLoginHandler.RegisterRoutes)
 	}
 

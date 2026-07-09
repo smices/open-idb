@@ -21,6 +21,7 @@ import (
 	"github.com/smices/open-idb/internal/db/generated"
 	"github.com/smices/open-idb/internal/ephemeral"
 	"github.com/smices/open-idb/internal/id"
+	"go.uber.org/zap"
 )
 
 // FeishuUserProvider abstracts Feishu OAuth user info retrieval for testability.
@@ -331,6 +332,7 @@ type FeishuLoginHandler struct {
 	webBaseURL      string
 	audit           AuditEventWriter
 	ephemeral       ephemeral.Store
+	logger          *zap.Logger
 }
 
 // NewFeishuLoginHandler creates a FeishuLoginHandler. An optional
@@ -351,6 +353,10 @@ func NewFeishuLoginHandler(login *FeishuLoginService, providers *LoginProviderSe
 
 func (h *FeishuLoginHandler) SetEphemeralStore(store ephemeral.Store) {
 	h.ephemeral = store
+}
+
+func (h *FeishuLoginHandler) SetLogger(logger *zap.Logger) {
+	h.logger = logger
 }
 
 // SetWebBaseURL configures the browser redirect target after a successful
@@ -517,6 +523,7 @@ func (h FeishuLoginHandler) loginCallback(w http.ResponseWriter, r *http.Request
 	traceID := id.NewULID()
 	result, err := h.loginService.LoginViaOAuth(r.Context(), state.EntityID, sourceID, code)
 	if err != nil {
+		reasonCode := classifyFeishuLoginError(err)
 		h.writeAudit(r, auditmodel.Event{
 			EntityID:  state.EntityID,
 			Action:    auditmodel.ActionLoginFailed,
@@ -524,17 +531,24 @@ func (h FeishuLoginHandler) loginCallback(w http.ResponseWriter, r *http.Request
 			IP:        r.RemoteAddr,
 			UserAgent: r.UserAgent(),
 			TraceID:   traceID,
-			After:     map[string]string{"login_method": "feishu", "reason": err.Error()},
+			After: map[string]string{
+				"login_method": "feishu",
+				"reason_code":  reasonCode,
+				"reason":       err.Error(),
+				"source_id":    sourceID,
+				"trace_id":     traceID,
+			},
 		})
+		h.logLoginFailure(r, state.EntityID, sourceID, traceID, reasonCode, err)
 		if acceptsHTML(r) {
-			http.Redirect(w, r, "/?login_error=feishu_login_failed", http.StatusSeeOther)
+			http.Redirect(w, r, browserLoginErrorURL(reasonCode, traceID), http.StatusSeeOther)
 			return
 		}
-		if err.Error() == "user_disabled" {
-			writeError(w, http.StatusForbidden, "user_disabled", "user account is disabled or locked")
+		if reasonCode == "user_disabled" {
+			writeFeishuLoginError(w, http.StatusForbidden, reasonCode, "user account is disabled or locked", traceID)
 			return
 		}
-		writeError(w, http.StatusUnauthorized, "feishu_login_failed", err.Error())
+		writeFeishuLoginError(w, http.StatusUnauthorized, reasonCode, err.Error(), traceID)
 		return
 	}
 
@@ -629,6 +643,18 @@ func (h FeishuLoginHandler) browserReturnTo(returnTo string) string {
 	return h.webBaseURL + returnTo
 }
 
+func browserLoginErrorURL(reasonCode string, traceID string) string {
+	if reasonCode == "" {
+		reasonCode = "feishu_login_failed"
+	}
+	params := url.Values{}
+	params.Set("login_error", reasonCode)
+	if traceID != "" {
+		params.Set("trace_id", traceID)
+	}
+	return "/?" + params.Encode()
+}
+
 func (h FeishuLoginHandler) loginExchange(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		AuthCode string `json:"auth_code"`
@@ -667,6 +693,7 @@ func (h FeishuLoginHandler) loginExchange(w http.ResponseWriter, r *http.Request
 	traceID := id.NewULID()
 	result, err := h.loginService.LoginViaAppCode(r.Context(), entityID, sourceID, body.AuthCode, body.ClientID)
 	if err != nil {
+		reasonCode := classifyFeishuLoginError(err)
 		h.writeAudit(r, auditmodel.Event{
 			EntityID:  entityID,
 			Action:    auditmodel.ActionLoginFailed,
@@ -674,13 +701,20 @@ func (h FeishuLoginHandler) loginExchange(w http.ResponseWriter, r *http.Request
 			IP:        r.RemoteAddr,
 			UserAgent: r.UserAgent(),
 			TraceID:   traceID,
-			After:     map[string]string{"login_method": "feishu", "reason": err.Error()},
+			After: map[string]string{
+				"login_method": "feishu",
+				"reason_code":  reasonCode,
+				"reason":       err.Error(),
+				"source_id":    sourceID,
+				"trace_id":     traceID,
+			},
 		})
-		if err.Error() == "user_disabled" {
-			writeError(w, http.StatusForbidden, "user_disabled", "user account is disabled or locked")
+		h.logLoginFailure(r, entityID, sourceID, traceID, reasonCode, err)
+		if reasonCode == "user_disabled" {
+			writeFeishuLoginError(w, http.StatusForbidden, reasonCode, "user account is disabled or locked", traceID)
 			return
 		}
-		writeError(w, http.StatusUnauthorized, "exchange_failed", err.Error())
+		writeFeishuLoginError(w, http.StatusUnauthorized, reasonCode, err.Error(), traceID)
 		return
 	}
 
@@ -722,6 +756,77 @@ func (h FeishuLoginHandler) writeAudit(r *http.Request, event auditmodel.Event) 
 		return
 	}
 	_ = h.audit.Write(r.Context(), event)
+}
+
+func (h FeishuLoginHandler) logLoginFailure(r *http.Request, entityID string, sourceID string, traceID string, reasonCode string, err error) {
+	if h.logger == nil {
+		return
+	}
+	h.logger.Warn("feishu login failed",
+		zap.String("trace_id", traceID),
+		zap.String("reason_code", reasonCode),
+		zap.String("entity_id", entityID),
+		zap.String("source_id", sourceID),
+		zap.String("path", r.URL.Path),
+		zap.String("ip", r.RemoteAddr),
+		zap.String("user_agent", r.UserAgent()),
+		zap.Error(err),
+	)
+}
+
+func classifyFeishuLoginError(err error) string {
+	if err == nil {
+		return "feishu_login_failed"
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case message == "user_disabled":
+		return "user_disabled"
+	case message == "no_account":
+		return "no_account"
+	case strings.Contains(message, "feishu client is not configured"),
+		strings.Contains(message, "invalid_feishu_config"):
+		return "feishu_config_error"
+	case strings.Contains(message, "feishu app token failed"),
+		strings.Contains(message, "feishu app token response missing token"):
+		return "feishu_app_token_failed"
+	case strings.Contains(message, "feishu oidc token exchange failed"),
+		strings.Contains(message, "feishu oidc token response missing access_token"):
+		return "feishu_oidc_token_failed"
+	case strings.Contains(message, "feishu app token exchange failed"),
+		strings.Contains(message, "feishu app token response missing access_token"):
+		return "feishu_app_code_failed"
+	case strings.Contains(message, "feishu user info failed"),
+		strings.Contains(message, "feishu user info parse failed"):
+		return "feishu_user_info_failed"
+	case strings.Contains(message, "invalid entity_id"),
+		strings.Contains(message, "invalid source_id"):
+		return "feishu_profile_error"
+	case strings.Contains(message, "upsert directory user"),
+		strings.Contains(message, "lookup binding"),
+		strings.Contains(message, "update managed user"),
+		strings.Contains(message, "create managed user"),
+		strings.Contains(message, "assign default employee role"),
+		strings.Contains(message, "create binding"):
+		return "feishu_account_error"
+	case strings.Contains(message, "create session"):
+		return "feishu_session_failed"
+	default:
+		return "feishu_login_failed"
+	}
+}
+
+func writeFeishuLoginError(w http.ResponseWriter, status int, code string, message string, traceID string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	payload := map[string]string{
+		"error":             code,
+		"error_description": message,
+	}
+	if traceID != "" {
+		payload["trace_id"] = traceID
+	}
+	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func (h FeishuLoginHandler) listProviders(w http.ResponseWriter, r *http.Request) {
