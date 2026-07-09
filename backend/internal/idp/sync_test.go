@@ -173,6 +173,133 @@ func TestFullSyncArchivesMissingManagedUsers(t *testing.T) {
 	}
 }
 
+func TestFullSyncProviderReturnedDeletedUserArchivesWithoutDisabledAudit(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	pool := newSyncTestPool(ctx, t)
+	queries := generated.New(pool)
+
+	entity, err := queries.CreateEntity(ctx, generated.CreateEntityParams{
+		Name:          "Sync Provider Deleted Entity",
+		Slug:          "sync-provider-deleted",
+		DefaultLocale: "en-US",
+	})
+	if err != nil {
+		t.Fatalf("create entity: %v", err)
+	}
+	source, err := queries.CreateIdentitySource(ctx, generated.CreateIdentitySourceParams{
+		EntityID:    entity.ID,
+		Type:        "feishu",
+		Name:        "Feishu",
+		SyncEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create identity source: %v", err)
+	}
+	directoryUser, err := queries.UpsertDirectoryUser(ctx, generated.UpsertDirectoryUserParams{
+		EntityID:       entity.ID,
+		SourceID:       source.ID,
+		ExternalUserID: "ou_deleted_1",
+		Name:           "Deleted User",
+		Status:         "active",
+		RawProfile:     []byte(`{"name":"Deleted User"}`),
+	})
+	if err != nil {
+		t.Fatalf("create directory user: %v", err)
+	}
+	managedUser, err := queries.CreateManagedUser(ctx, generated.CreateManagedUserParams{
+		EntityID:        entity.ID,
+		Username:        "deleted.user@example.test",
+		DisplayName:     "Deleted User",
+		Email:           pgtype.Text{String: "deleted.user@example.test", Valid: true},
+		LifecycleStatus: "active",
+		UserType:        "employee",
+		PrimarySourceID: pgtype.Text{String: source.ID, Valid: true},
+		Locale:          pgtype.Text{String: "en-US", Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("create managed user: %v", err)
+	}
+	if _, err := queries.CreateAccountBinding(ctx, generated.CreateAccountBindingParams{
+		EntityID:        entity.ID,
+		UserID:          managedUser.ID,
+		SourceID:        source.ID,
+		DirectoryUserID: directoryUser.ID,
+		ProviderUid:     "ou_deleted_1",
+		IsPrimary:       true,
+	}); err != nil {
+		t.Fatalf("create account binding: %v", err)
+	}
+
+	service, err := NewSyncService(SyncServiceConfig{
+		Queries: queries,
+		Provider: fakeSyncDirectoryProvider{data: FullSyncData{
+			Users: []DirectoryUser{{
+				ExternalUserID: "ou_deleted_1",
+				Name:           "Deleted User",
+				Email:          "deleted.user@example.test",
+				Status:         "deleted",
+				RawProfile:     []byte(`{"name":"Deleted User","status":"deleted"}`),
+			}},
+		}},
+		Audit:     &capturingAuditWriter{},
+		TraceID:   func() string { return "trace-sync-provider-deleted" },
+		TxStarter: pool,
+	})
+	if err != nil {
+		t.Fatalf("new sync service: %v", err)
+	}
+	auditWriter := service.audit.(*capturingAuditWriter)
+
+	result, err := service.RunFullSync(ctx, FullSyncInput{
+		EntityID: entity.ID,
+		SourceID: source.ID,
+		Provider: "feishu",
+	})
+	if err != nil {
+		t.Fatalf("run full sync: %v", err)
+	}
+
+	if result.ManagedUsersDeleted != 1 {
+		t.Fatalf("ManagedUsersDeleted = %d, want 1", result.ManagedUsersDeleted)
+	}
+
+	_, err = queries.GetUserByID(ctx, generated.GetUserByIDParams{
+		EntityID: entity.ID,
+		ID:       managedUser.ID,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected active user row to be deleted, got %v", err)
+	}
+
+	archive, err := queries.GetArchivedUserByOriginalID(ctx, generated.GetArchivedUserByOriginalIDParams{
+		EntityID:       entity.ID,
+		OriginalUserID: managedUser.ID,
+	})
+	if err != nil {
+		t.Fatalf("get archived user: %v", err)
+	}
+	if archive.Username != managedUser.Username {
+		t.Fatalf("archived username = %q, want %q", archive.Username, managedUser.Username)
+	}
+
+	foundArchivedAction := false
+	for _, event := range auditWriter.events {
+		if event.Action == audit.ActionSyncUserDisabled {
+			t.Fatalf("unexpected disabled audit action for provider-returned deleted user: %+v", event)
+		}
+		if event.ResourceType == "archived_user" && event.Action == audit.ActionSyncUserArchived {
+			foundArchivedAction = true
+		}
+	}
+	if !foundArchivedAction {
+		t.Fatal("expected archived_user audit event with sync.user.archived action")
+	}
+}
+
 type fakeSyncDirectoryProvider struct {
 	data FullSyncData
 	err  error

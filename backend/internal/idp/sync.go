@@ -277,6 +277,7 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 	users := uniqueDirectoryUsers(data.Users)
 	presentExternalUserIDs := make([]string, 0, len(users))
 	for _, user := range users {
+		normalizedStatus := normalizeDirectoryStatus(user.Status)
 		presentExternalUserIDs = append(presentExternalUserIDs, user.ExternalUserID)
 		directoryUser, err := s.queries.UpsertDirectoryUser(ctx, generated.UpsertDirectoryUserParams{
 			EntityID:        entityID,
@@ -291,7 +292,7 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 			Email:           textValue(user.Email),
 			Phone:           textValue(user.Phone),
 			AvatarUrl:       textValue(user.AvatarURL),
-			Status:          normalizeDirectoryStatus(user.Status),
+			Status:          normalizedStatus,
 			RawProfile:      user.RawProfile,
 		})
 		if err != nil {
@@ -308,6 +309,9 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 			return result, err
 		}
 		if hasBinding {
+			if normalizedStatus == "deleted" {
+				continue
+			}
 			// Existing user — update and check for lifecycle changes
 			newLifecycle := lifecycleForDirectoryStatus(user.Status)
 			if _, err := s.updateManagedUserFromDirectory(ctx, entityID, sourceID, binding.UserID, user, newLifecycle); err != nil {

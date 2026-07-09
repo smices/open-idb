@@ -67,3 +67,17 @@
 ### Test results
 - `cd backend && DOCKER_HOST=unix:///Users/jacky/.orbstack/run/docker.sock go test ./internal/idp`
   - Result: `ok  	github.com/smices/open-idb/internal/idp`
+
+## Fix for review finding: provider-returned deleted users skip disabled audit
+- Updated `backend/internal/idp/sync.go` so an existing binding for a provider-returned directory user with normalized status `deleted` skips the managed-user update/disable-audit branch and is left for the archive pass.
+- Added `TestFullSyncProviderReturnedDeletedUserArchivesWithoutDisabledAudit` in `backend/internal/idp/sync_test.go` to prove the path archives the managed user, increments `ManagedUsersDeleted`, emits `sync.user.archived`, and does not emit `sync.user.disabled`.
+
+### Changed files
+- `backend/internal/idp/sync.go`
+- `backend/internal/idp/sync_test.go`
+
+### Test results
+- `cd backend && go test ./internal/idp`
+  - Result: `ok  	github.com/smices/open-idb/internal/idp	0.536s`
+- `cd backend && DOCKER_HOST=unix:///Users/jacky/.orbstack/run/docker.sock go test ./internal/idp`
+  - Result: `ok  	github.com/smices/open-idb/internal/idp	3.766s`
