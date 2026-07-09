@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import { feishuAuthCodeFromBridge, normalizeWorkplaceProvider, queryAuthCode, returnToParam } from './lib/feishu-workplace.js';
+import { feishuAuthCodeFromBridge, isFeishuClient, normalizeWorkplaceProvider, queryAuthCode, returnToParam } from './lib/feishu-workplace.js';
 
 const API_TARGET = import.meta.env.VITE_API_TARGET || import.meta.env.PUBLIC_API_TARGET || '';
 
@@ -570,6 +570,17 @@ function redirectToLogin(returnTo, loginError = 'workplace_not_available') {
   window.location.replace(`/login?${params.toString()}`);
 }
 
+function redirectToOAuth(provider, entityRef, returnTo) {
+  if (provider?.oauth_url) {
+    window.location.replace(provider.oauth_url);
+    return;
+  }
+  const params = new URLSearchParams();
+  params.set('entity_id', entityRef);
+  params.set('return_to', returnTo || '/portal');
+  window.location.replace(`/api/auth/feishu/login?${params.toString()}`);
+}
+
 async function runWorkplaceContinue() {
   const params = new URLSearchParams(window.location.search);
   const returnTo = params.get('return_to') || '/portal';
@@ -604,11 +615,17 @@ async function runWorkplaceContinue() {
       throw new Error('workplace_not_configured');
     }
 
-    const authCode = queryAuthCode(params, true) || (await feishuAuthCodeFromBridge(provider.app_id));
+    const authCode = queryAuthCode(params, true);
+    if (!authCode && !isFeishuClient()) {
+      redirectToOAuth(provider, entityRef, returnTo);
+      return;
+    }
+
+    const resolvedAuthCode = authCode || (await feishuAuthCodeFromBridge(provider.app_id));
     setStep(2);
     await apiRequest('/api/auth/feishu/exchange', {
       method: 'POST',
-      body: { auth_code: authCode, entity_id: entityRef, client_id: oidcClientId },
+      body: { auth_code: resolvedAuthCode, entity_id: entityRef, client_id: oidcClientId },
     });
     window.location.replace(returnTo);
   } catch (error) {

@@ -39,7 +39,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from './lib/api.ts';
-import { feishuAuthCodeFromBridge, normalizeWorkplaceProvider, queryAuthCode, returnToParam } from './lib/feishu-workplace.js';
+import { feishuAuthCodeFromBridge, isFeishuClient, normalizeWorkplaceProvider, queryAuthCode, returnToParam } from './lib/feishu-workplace.js';
 import { UserMenu } from './components/UserMenu.jsx';
 import './i18n/index.js';
 import 'antd/dist/reset.css';
@@ -395,6 +395,7 @@ function LoginPage({ branding }) {
       returnToParam(returnTo, 'sso_provider'),
   );
   const isWorkplaceLogin = workplaceProvider === 'feishu';
+  const canUseWorkplaceBridge = isWorkplaceLogin && isFeishuClient();
   const loginErrorParam = params.get('login_error') || '';
   const mode = context?.mode || pathMode;
   const isAdminAccountLogin = mode === 'admin' || mode === 'entity_admin';
@@ -432,7 +433,7 @@ function LoginPage({ branding }) {
         setContext(next);
         const loginError = loginErrorText(loginErrorParam);
         if (loginError) setError(loginError);
-        if (!loginError && next?.auto_redirect_url && !isWorkplaceLogin) {
+        if (!loginError && next?.auto_redirect_url && !canUseWorkplaceBridge) {
           setAutoRedirecting(true);
           navigate(next.auto_redirect_url);
           return;
@@ -447,7 +448,7 @@ function LoginPage({ branding }) {
           setProvidersLoading(false);
         }
 
-        if (!loginError && !isAdminAccountLogin && isWorkplaceLogin && ref) {
+        if (!loginError && !isAdminAccountLogin && canUseWorkplaceBridge && ref) {
           const provider = providerList.find((item) => item.provider === 'feishu');
           if (!provider?.workplace_exchange_url || !provider.app_id) {
             setError(t('login.error.generic'));
