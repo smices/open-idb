@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pressly/goose/v3"
+	"github.com/smices/open-idb/internal/audit"
 	"github.com/smices/open-idb/internal/db/generated"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -111,12 +112,14 @@ func TestFullSyncArchivesMissingManagedUsers(t *testing.T) {
 	service, err := NewSyncService(SyncServiceConfig{
 		Queries:   queries,
 		Provider:  fakeSyncDirectoryProvider{data: FullSyncData{}},
+		Audit:     &capturingAuditWriter{},
 		TraceID:   func() string { return "trace-sync-archive" },
 		TxStarter: pool,
 	})
 	if err != nil {
 		t.Fatalf("new sync service: %v", err)
 	}
+	auditWriter := service.audit.(*capturingAuditWriter)
 
 	result, err := service.RunFullSync(ctx, FullSyncInput{
 		EntityID: entity.ID,
@@ -152,11 +155,36 @@ func TestFullSyncArchivesMissingManagedUsers(t *testing.T) {
 	if archive.Username != managedUser.Username {
 		t.Fatalf("archived username = %q, want %q", archive.Username, managedUser.Username)
 	}
+
+	foundArchivedAction := false
+	for _, event := range auditWriter.events {
+		if event.ResourceType != "archived_user" {
+			continue
+		}
+		if event.Action == audit.ActionSyncUserDisabled {
+			t.Fatalf("archived_user audit action = %q, do not want disabled action", event.Action)
+		}
+		if event.Action == audit.ActionSyncUserArchived {
+			foundArchivedAction = true
+		}
+	}
+	if !foundArchivedAction {
+		t.Fatal("expected archived_user audit event with sync.user.archived action")
+	}
 }
 
 type fakeSyncDirectoryProvider struct {
 	data FullSyncData
 	err  error
+}
+
+type capturingAuditWriter struct {
+	events []audit.Event
+}
+
+func (w *capturingAuditWriter) Write(_ context.Context, event audit.Event) error {
+	w.events = append(w.events, event)
+	return nil
 }
 
 func (f fakeSyncDirectoryProvider) FullSync(context.Context) (FullSyncData, error) {

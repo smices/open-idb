@@ -19,6 +19,7 @@ const (
 	ActionSyncFailed            = "sync.feishu.failed"
 	ActionSyncUserCreated       = "sync.user.created"
 	ActionSyncUserDisabled      = "sync.user.disabled"
+	ActionSyncUserArchived      = "sync.user.archived"
 	ActionSyncDepartmentUpdated = "sync.department.updated"
 	ActionUserUpdated           = "user.updated"
 	ActionUserDisabled          = "user.disabled"

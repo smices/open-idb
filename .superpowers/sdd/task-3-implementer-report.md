@@ -52,3 +52,18 @@
 
 ## Issues or concerns
 - In this environment, plain container-backed Go tests do not see Docker automatically. Setting `DOCKER_HOST=unix:///Users/jacky/.orbstack/run/docker.sock` was required to collect real RED/GREEN evidence instead of a skipped test.
+
+## Fix for review finding: Directory Sync Archive Path audit action
+- Replaced the deleted-user full sync archive audit action in `backend/internal/idp/sync.go` from `sync.user.disabled` to a distinct `sync.user.archived` action.
+- Added `ActionSyncUserArchived` in `backend/internal/audit/model/model.go` and re-exported it from `backend/internal/audit/model.go`.
+- Extended `backend/internal/idp/sync_test.go` with a focused captured-audit assertion proving the archived-user sync path emits `sync.user.archived` and does not emit `sync.user.disabled`.
+
+### Changed files
+- `backend/internal/audit/model/model.go`
+- `backend/internal/audit/model.go`
+- `backend/internal/idp/sync.go`
+- `backend/internal/idp/sync_test.go`
+
+### Test results
+- `cd backend && DOCKER_HOST=unix:///Users/jacky/.orbstack/run/docker.sock go test ./internal/idp`
+  - Result: `ok  	github.com/smices/open-idb/internal/idp`

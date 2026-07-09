@@ -469,7 +469,7 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 			s.writeAudit(ctx, audit.Event{
 				EntityID:     input.EntityID,
 				ActorType:    "sync_job",
-				Action:       audit.ActionSyncUserDisabled,
+				Action:       audit.ActionSyncUserArchived,
 				ResourceType: "archived_user",
 				ResourceID:   ulidString(archive.ID),
 				After:        map[string]string{"username": deletedUser.Username, "archive_reason": "directory full sync removed user"},

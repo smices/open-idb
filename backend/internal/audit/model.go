@@ -19,6 +19,7 @@ const (
 	ActionSyncFailed            = model.ActionSyncFailed
 	ActionSyncUserCreated       = model.ActionSyncUserCreated
 	ActionSyncUserDisabled      = model.ActionSyncUserDisabled
+	ActionSyncUserArchived      = model.ActionSyncUserArchived
 	ActionSyncDepartmentUpdated = model.ActionSyncDepartmentUpdated
 	ActionUserUpdated           = model.ActionUserUpdated
 	ActionUserDisabled          = model.ActionUserDisabled
