@@ -81,3 +81,18 @@
   - Result: `ok  	github.com/smices/open-idb/internal/idp	0.536s`
 - `cd backend && DOCKER_HOST=unix:///Users/jacky/.orbstack/run/docker.sock go test ./internal/idp`
   - Result: `ok  	github.com/smices/open-idb/internal/idp	3.766s`
+
+## Fix for review finding: provider-returned deleted users skip unbound merge/create paths
+- Updated `backend/internal/idp/sync.go` so a provider-returned directory user with normalized status `deleted` short-circuits immediately after the `directory_users` upsert, before binding resolution, username merge, managed-user creation, or binding creation.
+- Preserved the full-sync archive sweep for already-bound deleted users and missing users by leaving the post-loop deletion/archive pass unchanged.
+- Added focused regression coverage in `backend/internal/idp/sync_test.go` for the two unbound deleted-user cases called out in review.
+
+### Changed files
+- `backend/internal/idp/sync.go`
+- `backend/internal/idp/sync_test.go`
+
+### Test results
+- `cd backend && go test ./internal/idp`
+  - Result: `ok  	github.com/smices/open-idb/internal/idp	0.529s`
+- `cd backend && DOCKER_HOST=unix:///Users/jacky/.orbstack/run/docker.sock go test ./internal/idp`
+  - Result: `ok  	github.com/smices/open-idb/internal/idp	6.436s`

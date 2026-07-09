@@ -301,6 +301,9 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 			return result, err
 		}
 		result.UsersUpserted++
+		if normalizedStatus == "deleted" {
+			continue
+		}
 
 		binding, hasBinding, err := s.resolveAccountBinding(ctx, entityID, sourceID, directoryUser.ID, user)
 		if err != nil {
@@ -309,9 +312,6 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 			return result, err
 		}
 		if hasBinding {
-			if normalizedStatus == "deleted" {
-				continue
-			}
 			// Existing user — update and check for lifecycle changes
 			newLifecycle := lifecycleForDirectoryStatus(user.Status)
 			if _, err := s.updateManagedUserFromDirectory(ctx, entityID, sourceID, binding.UserID, user, newLifecycle); err != nil {

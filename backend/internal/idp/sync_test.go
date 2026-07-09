@@ -300,6 +300,228 @@ func TestFullSyncProviderReturnedDeletedUserArchivesWithoutDisabledAudit(t *test
 	}
 }
 
+func TestFullSyncProviderReturnedDeletedUserWithoutBindingDoesNotMergeByUsername(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	pool := newSyncTestPool(ctx, t)
+	queries := generated.New(pool)
+
+	entity, err := queries.CreateEntity(ctx, generated.CreateEntityParams{
+		Name:          "Sync Deleted Merge Guard Entity",
+		Slug:          "sync-deleted-merge-guard",
+		DefaultLocale: "en-US",
+	})
+	if err != nil {
+		t.Fatalf("create entity: %v", err)
+	}
+	source, err := queries.CreateIdentitySource(ctx, generated.CreateIdentitySourceParams{
+		EntityID:    entity.ID,
+		Type:        "feishu",
+		Name:        "Feishu",
+		SyncEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create identity source: %v", err)
+	}
+	managedUser, err := queries.CreateManagedUser(ctx, generated.CreateManagedUserParams{
+		EntityID:        entity.ID,
+		Username:        "preserve.user@example.test",
+		DisplayName:     "Preserve Me",
+		Email:           pgtype.Text{String: "preserve.user@example.test", Valid: true},
+		LifecycleStatus: "active",
+		UserType:        "employee",
+		PrimarySourceID: pgtype.Text{String: source.ID, Valid: true},
+		Locale:          pgtype.Text{String: "en-US", Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("create managed user: %v", err)
+	}
+
+	service, err := NewSyncService(SyncServiceConfig{
+		Queries: queries,
+		Provider: fakeSyncDirectoryProvider{data: FullSyncData{
+			Users: []DirectoryUser{{
+				ExternalUserID: "ou_deleted_unbound_match",
+				Name:           "Directory Deleted Name",
+				Email:          managedUser.Username,
+				Status:         "deleted",
+				RawProfile:     []byte(`{"name":"Directory Deleted Name","status":"deleted"}`),
+			}},
+		}},
+		Audit:     &capturingAuditWriter{},
+		TraceID:   func() string { return "trace-sync-deleted-merge-guard" },
+		TxStarter: pool,
+	})
+	if err != nil {
+		t.Fatalf("new sync service: %v", err)
+	}
+
+	result, err := service.RunFullSync(ctx, FullSyncInput{
+		EntityID: entity.ID,
+		SourceID: source.ID,
+		Provider: "feishu",
+	})
+	if err != nil {
+		t.Fatalf("run full sync: %v", err)
+	}
+
+	if result.ManagedUsersUpdated != 0 {
+		t.Fatalf("ManagedUsersUpdated = %d, want 0", result.ManagedUsersUpdated)
+	}
+	if result.ManagedUsersCreated != 0 {
+		t.Fatalf("ManagedUsersCreated = %d, want 0", result.ManagedUsersCreated)
+	}
+	if result.ManagedUsersDeleted != 0 {
+		t.Fatalf("ManagedUsersDeleted = %d, want 0", result.ManagedUsersDeleted)
+	}
+	if result.BindingsCreated != 0 {
+		t.Fatalf("BindingsCreated = %d, want 0", result.BindingsCreated)
+	}
+
+	gotUser, err := queries.GetUserByID(ctx, generated.GetUserByIDParams{
+		EntityID: entity.ID,
+		ID:       managedUser.ID,
+	})
+	if err != nil {
+		t.Fatalf("get managed user: %v", err)
+	}
+	if gotUser.DisplayName != managedUser.DisplayName {
+		t.Fatalf("display_name = %q, want %q", gotUser.DisplayName, managedUser.DisplayName)
+	}
+	if gotUser.LifecycleStatus != "active" {
+		t.Fatalf("lifecycle_status = %q, want active", gotUser.LifecycleStatus)
+	}
+
+	bindings, err := queries.ListAccountBindingsByUser(ctx, generated.ListAccountBindingsByUserParams{
+		EntityID: entity.ID,
+		UserID:   managedUser.ID,
+	})
+	if err != nil {
+		t.Fatalf("list account bindings: %v", err)
+	}
+	if len(bindings) != 0 {
+		t.Fatalf("account bindings = %d, want 0", len(bindings))
+	}
+
+	_, err = queries.GetArchivedUserByOriginalID(ctx, generated.GetArchivedUserByOriginalIDParams{
+		EntityID:       entity.ID,
+		OriginalUserID: managedUser.ID,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected no archived user row, got %v", err)
+	}
+
+	directoryUser, err := queries.GetDirectoryUserByExternalID(ctx, generated.GetDirectoryUserByExternalIDParams{
+		EntityID:       entity.ID,
+		SourceID:       source.ID,
+		ExternalUserID: "ou_deleted_unbound_match",
+	})
+	if err != nil {
+		t.Fatalf("get directory user: %v", err)
+	}
+	if directoryUser.Status != "deleted" {
+		t.Fatalf("directory user status = %q, want deleted", directoryUser.Status)
+	}
+}
+
+func TestFullSyncProviderReturnedDeletedUserWithoutBindingDoesNotCreateManagedUser(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	pool := newSyncTestPool(ctx, t)
+	queries := generated.New(pool)
+
+	entity, err := queries.CreateEntity(ctx, generated.CreateEntityParams{
+		Name:          "Sync Deleted Create Guard Entity",
+		Slug:          "sync-deleted-create-guard",
+		DefaultLocale: "en-US",
+	})
+	if err != nil {
+		t.Fatalf("create entity: %v", err)
+	}
+	source, err := queries.CreateIdentitySource(ctx, generated.CreateIdentitySourceParams{
+		EntityID:    entity.ID,
+		Type:        "feishu",
+		Name:        "Feishu",
+		SyncEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create identity source: %v", err)
+	}
+
+	service, err := NewSyncService(SyncServiceConfig{
+		Queries: queries,
+		Provider: fakeSyncDirectoryProvider{data: FullSyncData{
+			Users: []DirectoryUser{{
+				ExternalUserID: "ou_deleted_unbound_new",
+				Name:           "Deleted User",
+				Email:          "deleted.unbound.new@example.test",
+				Status:         "deleted",
+				RawProfile:     []byte(`{"name":"Deleted User","status":"deleted"}`),
+			}},
+		}},
+		Audit:     &capturingAuditWriter{},
+		TraceID:   func() string { return "trace-sync-deleted-create-guard" },
+		TxStarter: pool,
+	})
+	if err != nil {
+		t.Fatalf("new sync service: %v", err)
+	}
+
+	result, err := service.RunFullSync(ctx, FullSyncInput{
+		EntityID: entity.ID,
+		SourceID: source.ID,
+		Provider: "feishu",
+	})
+	if err != nil {
+		t.Fatalf("run full sync: %v", err)
+	}
+
+	if result.ManagedUsersCreated != 0 {
+		t.Fatalf("ManagedUsersCreated = %d, want 0", result.ManagedUsersCreated)
+	}
+	if result.ManagedUsersDeleted != 0 {
+		t.Fatalf("ManagedUsersDeleted = %d, want 0", result.ManagedUsersDeleted)
+	}
+	if result.BindingsCreated != 0 {
+		t.Fatalf("BindingsCreated = %d, want 0", result.BindingsCreated)
+	}
+
+	_, err = queries.GetManagedUserByUsername(ctx, generated.GetManagedUserByUsernameParams{
+		EntityID: entity.ID,
+		Username: "deleted.unbound.new@example.test",
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected no managed user row, got %v", err)
+	}
+
+	_, err = queries.GetAccountBindingByProviderUID(ctx, generated.GetAccountBindingByProviderUIDParams{
+		EntityID:    entity.ID,
+		SourceID:    source.ID,
+		ProviderUid: "ou_deleted_unbound_new",
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected no account binding row, got %v", err)
+	}
+
+	directoryUser, err := queries.GetDirectoryUserByExternalID(ctx, generated.GetDirectoryUserByExternalIDParams{
+		EntityID:       entity.ID,
+		SourceID:       source.ID,
+		ExternalUserID: "ou_deleted_unbound_new",
+	})
+	if err != nil {
+		t.Fatalf("get directory user: %v", err)
+	}
+	if directoryUser.Status != "deleted" {
+		t.Fatalf("directory user status = %q, want deleted", directoryUser.Status)
+	}
+}
+
 type fakeSyncDirectoryProvider struct {
 	data FullSyncData
 	err  error
