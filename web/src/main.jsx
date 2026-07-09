@@ -395,6 +395,7 @@ function LoginPage({ branding }) {
       returnToParam(returnTo, 'sso_provider'),
   );
   const isWorkplaceLogin = workplaceProvider === 'feishu';
+  const loginErrorParam = params.get('login_error') || '';
   const mode = context?.mode || pathMode;
   const isAdminAccountLogin = mode === 'admin' || mode === 'entity_admin';
   const loginAction = isAdminAccountLogin ? '/sapi/login/account' : '/api/login/account';
@@ -429,7 +430,7 @@ function LoginPage({ branding }) {
           ? await api.getAdminLoginContext({ path: pathname, return_to: returnTo })
           : await api.getLoginContext({ path: pathname, return_to: returnTo });
         setContext(next);
-        const loginError = loginErrorText(params.get('login_error'));
+        const loginError = loginErrorText(loginErrorParam);
         if (loginError) setError(loginError);
         if (!loginError && next?.auto_redirect_url && !isWorkplaceLogin) {
           setAutoRedirecting(true);
@@ -446,7 +447,7 @@ function LoginPage({ branding }) {
           setProvidersLoading(false);
         }
 
-        if (!isAdminAccountLogin && isWorkplaceLogin && ref) {
+        if (!loginError && !isAdminAccountLogin && isWorkplaceLogin && ref) {
           const provider = providerList.find((item) => item.provider === 'feishu');
           if (!provider?.workplace_exchange_url || !provider.app_id) {
             setError(t('login.error.generic'));
@@ -458,15 +459,15 @@ function LoginPage({ branding }) {
           }
         }
       } catch (err) {
-        const loginError = loginErrorText(params.get('login_error'));
-        if (loginError) setError(loginError);
+        const loginError = loginErrorText(loginErrorParam);
+        setError(loginError || t('login.error.generic'));
       } finally {
         setLoading(false);
         setProvidersLoading(false);
       }
     }
     load();
-  }, [isAdminAccountPath, isAdminAccountLogin, pathname, returnTo, isWorkplaceLogin, oidcClientId, t]);
+  }, [isAdminAccountPath, isAdminAccountLogin, pathname, returnTo, isWorkplaceLogin, oidcClientId, loginErrorParam, t]);
 
   const feishu = providers.find((item) => item.provider === 'feishu' && (item.oauth_url || item.workplace_exchange_url));
   const providerLoginUrl = context?.auto_redirect_url || feishu?.oauth_url || getFeishuLoginUrl(entityRef, returnTo);

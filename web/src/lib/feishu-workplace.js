@@ -3,6 +3,7 @@
 const FEISHU_H5_SDK_URLS = [
   import.meta.env.VITE_FEISHU_H5_SDK_URL?.trim(),
   import.meta.env.PUBLIC_FEISHU_H5_SDK_URL?.trim(),
+  'https://lf-scm-cn.feishucdn.com/lark/op/h5-js-sdk-1.5.44.js',
   'https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.35.js',
 ].filter(Boolean);
 
@@ -24,6 +25,11 @@ export function queryAuthCode(params, includeOAuthCode = false) {
   return params.get('auth_code') || params.get('feishu_auth_code') || (includeOAuthCode ? params.get('code') || '' : '');
 }
 
+export function isFeishuClient() {
+  const userAgent = window.navigator?.userAgent?.toLowerCase() || '';
+  return userAgent.includes('feishu') || userAgent.includes('lark');
+}
+
 function errorDetail(error) {
   if (!error) return '';
   if (typeof error === 'string') return error;
@@ -35,18 +41,46 @@ function errorDetail(error) {
   }
 }
 
-function feishuBridgeHandler(bridgeWindow) {
-  return (
-    bridgeWindow.tt?.requestAuthCode ||
-    bridgeWindow.tt?.getAuthCode ||
-    bridgeWindow.h5sdk?.requestAuthCode ||
-    bridgeWindow.h5sdk?.getAuthCode ||
-    bridgeWindow.h5sdk?.biz?.auth?.getAuthCode
-  );
+function feishuBridgeHandlers(bridgeWindow) {
+  const handlers = [];
+  const tt = bridgeWindow.tt;
+  const h5sdk = bridgeWindow.h5sdk;
+
+  if (tt?.requestAccess) {
+    handlers.push({
+      kind: 'requestAccess',
+      handler: tt.requestAccess,
+      owner: tt,
+      options: (appId) => ({ appID: appId, scopeList: [] }),
+    });
+  }
+
+  for (const entry of [
+    [tt, tt?.requestAuthCode],
+    [tt, tt?.getAuthCode],
+    [h5sdk, h5sdk?.requestAuthCode],
+    [h5sdk, h5sdk?.getAuthCode],
+    [h5sdk?.biz?.auth, h5sdk?.biz?.auth?.getAuthCode],
+  ]) {
+    const [owner, handler] = entry;
+    if (!handler) continue;
+    handlers.push({
+      kind: 'requestAuthCode',
+      handler,
+      owner,
+      options: (appId) => ({ appId }),
+    });
+  }
+
+  return handlers;
 }
 
 function hasFeishuBridge(bridgeWindow) {
-  return Boolean(feishuBridgeHandler(bridgeWindow) || bridgeWindow.h5sdk?.ready);
+  return feishuBridgeHandlers(bridgeWindow).length > 0;
+}
+
+function shouldFallbackFromRequestAccess(error) {
+  return Number(error?.errno) === 103 || /not support|unsupported/i.test(errorDetail(error));
 }
 
 function loadScript(src) {
@@ -93,6 +127,7 @@ function waitForFeishuBridge(timeoutMs = 3000) {
 }
 
 async function ensureFeishuH5Sdk() {
+  if (!isFeishuClient()) throw new Error('bridge_unavailable');
   if (hasFeishuBridge(window)) return;
   let lastError = null;
   for (const src of FEISHU_H5_SDK_URLS) {
@@ -109,31 +144,42 @@ async function ensureFeishuH5Sdk() {
 
 export async function feishuAuthCodeFromBridge(appId) {
   await ensureFeishuH5Sdk();
-  const requestCode = () =>
+  const requestCode = (handlerIndex = 0) =>
     new Promise((resolve, reject) => {
-      const handler = feishuBridgeHandler(window);
-      if (!handler) {
+      const handlers = feishuBridgeHandlers(window);
+      const bridge = handlers[handlerIndex];
+      if (!bridge) {
         reject(new Error('bridge_unavailable'));
         return;
       }
-      handler({
-        appId,
-        success: (response) => {
-          const code = response.code || response.auth_code || response.authCode || '';
-          if (code) resolve(code);
-          else reject(new Error(`auth_code_empty: ${errorDetail(response)}`));
-        },
-        fail: (error) => reject(new Error(`auth_code_failed: ${errorDetail(error)}`)),
-      });
+      try {
+        bridge.handler.call(bridge.owner, {
+          ...bridge.options(appId),
+          success: (response) => {
+            const code = response.code || response.auth_code || response.authCode || '';
+            if (code) resolve(code);
+            else reject(new Error(`auth_code_empty: ${errorDetail(response)}`));
+          },
+          fail: (error) => {
+            if (bridge.kind === 'requestAccess' && handlers[handlerIndex + 1] && shouldFallbackFromRequestAccess(error)) {
+              requestCode(handlerIndex + 1).then(resolve).catch(reject);
+              return;
+            }
+            reject(new Error(`auth_code_failed: ${errorDetail(error)}`));
+          },
+        });
+      } catch (error) {
+        if (bridge.kind === 'requestAccess' && handlers[handlerIndex + 1] && shouldFallbackFromRequestAccess(error)) {
+          requestCode(handlerIndex + 1).then(resolve).catch(reject);
+          return;
+        }
+        reject(error);
+      }
     });
 
   if (window.h5sdk?.ready) {
     return new Promise((resolve, reject) => {
       const timer = window.setTimeout(() => reject(new Error('bridge_timeout')), 10000);
-      window.h5sdk?.error?.((error) => {
-        window.clearTimeout(timer);
-        reject(new Error(`auth_code_failed: ${errorDetail(error)}`));
-      });
       window.h5sdk.ready(() => {
         requestCode()
           .then((code) => {
