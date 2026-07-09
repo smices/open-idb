@@ -197,19 +197,18 @@ WHERE entity_id = $1
   AND NOT (external_user_id = ANY(sqlc.arg('present_external_user_ids')::text[]))
 RETURNING id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at;
 
--- name: SoftDeleteManagedUsersByDirectoryStatus :many
-UPDATE users u
-SET lifecycle_status = 'deleted',
-    updated_at = now()
-FROM account_bindings ab
+-- name: ListManagedUsersForDeletedDirectoryUsers :many
+SELECT DISTINCT u.id, u.entity_id, u.username, u.display_name, u.english_name, u.employee_no, u.job_title, u.email, u.phone, u.avatar_url, u.lifecycle_status, u.user_type, u.primary_source_id, u.locale, u.created_at, u.updated_at
+FROM users u
+JOIN account_bindings ab
+  ON ab.entity_id = u.entity_id
+ AND ab.user_id = u.id
 JOIN directory_users du
   ON du.entity_id = ab.entity_id
  AND du.source_id = ab.source_id
  AND du.id = ab.directory_user_id
 WHERE u.entity_id = $1
-  AND u.id = ab.user_id
   AND ab.entity_id = $1
   AND ab.source_id = $2
   AND du.status = 'deleted'
-  AND u.lifecycle_status <> 'deleted'
-RETURNING u.id, u.entity_id, u.username, u.display_name, u.english_name, u.employee_no, u.job_title, u.email, u.phone, u.avatar_url, u.lifecycle_status, u.user_type, u.primary_source_id, u.locale, u.created_at, u.updated_at;
+;

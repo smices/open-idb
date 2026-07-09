@@ -28,6 +28,7 @@ type SyncService struct {
 	providerFactory func(ctx context.Context, entityID string, sourceID string, provider string) (DirectoryProvider, error)
 	audit           auditWriter
 	traceID         func() string
+	txStarter       txStarter
 }
 
 type SyncServiceConfig struct {
@@ -36,6 +37,11 @@ type SyncServiceConfig struct {
 	ProviderFactory func(ctx context.Context, entityID string, sourceID string, provider string) (DirectoryProvider, error)
 	Audit           auditWriter
 	TraceID         func() string
+	TxStarter       txStarter
+}
+
+type txStarter interface {
+	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
 }
 
 type FullSyncInput struct {
@@ -72,7 +78,12 @@ func NewSyncService(cfg SyncServiceConfig) (*SyncService, error) {
 		providerFactory: cfg.ProviderFactory,
 		audit:           cfg.Audit,
 		traceID:         cfg.TraceID,
+		txStarter:       cfg.TxStarter,
 	}, nil
+}
+
+func (s *SyncService) SetTxStarter(starter txStarter) {
+	s.txStarter = starter
 }
 
 func (s *SyncService) RunFullSync(ctx context.Context, input FullSyncInput) (FullSyncResult, error) {
@@ -438,7 +449,7 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 			return result, err
 		}
 		result.DirectoryUsersDeleted = len(deletedDirectoryUsers)
-		deletedManagedUsers, err := s.queries.SoftDeleteManagedUsersByDirectoryStatus(ctx, generated.SoftDeleteManagedUsersByDirectoryStatusParams{
+		deletedManagedUsers, err := s.queries.ListManagedUsersForDeletedDirectoryUsers(ctx, generated.ListManagedUsersForDeletedDirectoryUsersParams{
 			EntityID: entityID,
 			SourceID: sourceID,
 		})
@@ -447,15 +458,21 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 			_ = s.failJob(ctx, entityID, job.ID, result, err)
 			return result, err
 		}
-		result.ManagedUsersDeleted = len(deletedManagedUsers)
 		for _, deletedUser := range deletedManagedUsers {
+			archive, err := s.archiveManagedUser(ctx, entityID, deletedUser.ID, "directory full sync removed user")
+			if err != nil {
+				_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
+				_ = s.failJob(ctx, entityID, job.ID, result, err)
+				return result, err
+			}
+			result.ManagedUsersDeleted++
 			s.writeAudit(ctx, audit.Event{
 				EntityID:     input.EntityID,
 				ActorType:    "sync_job",
 				Action:       audit.ActionSyncUserDisabled,
-				ResourceType: "user",
-				ResourceID:   ulidString(deletedUser.ID),
-				After:        map[string]string{"username": deletedUser.Username, "lifecycle_status": deletedUser.LifecycleStatus},
+				ResourceType: "archived_user",
+				ResourceID:   ulidString(archive.ID),
+				After:        map[string]string{"username": deletedUser.Username, "archive_reason": "directory full sync removed user"},
 				TraceID:      traceID,
 			})
 		}
@@ -551,6 +568,50 @@ func (s *SyncService) updateManagedUserFromDirectory(ctx context.Context, entity
 		AvatarUrl:       textValue(user.AvatarURL),
 		LifecycleStatus: lifecycle,
 	})
+}
+
+func (s *SyncService) archiveManagedUser(ctx context.Context, entityID, userID, reason string) (generated.ArchivedUser, error) {
+	if s.txStarter == nil {
+		return generated.ArchivedUser{}, fmt.Errorf("sync service transaction starter is not configured")
+	}
+	tx, err := s.txStarter.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return generated.ArchivedUser{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	txQueries := s.queries.WithTx(tx)
+	archive, err := txQueries.ArchiveUser(ctx, generated.ArchiveUserParams{
+		EntityID:         entityID,
+		UserID:           userID,
+		ArchivedByUserID: pgtype.Text{},
+		ArchiveReason:    reason,
+	})
+	if err != nil {
+		return generated.ArchivedUser{}, err
+	}
+	if err := txQueries.DeleteUserActiveDependents(ctx, generated.DeleteUserActiveDependentsParams{
+		EntityID: entityID,
+		UserID:   userID,
+	}); err != nil {
+		return generated.ArchivedUser{}, err
+	}
+	if err := txQueries.DeleteUserActiveRow(ctx, generated.DeleteUserActiveRowParams{
+		EntityID: entityID,
+		UserID:   userID,
+	}); err != nil {
+		return generated.ArchivedUser{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return generated.ArchivedUser{}, err
+	}
+	committed = true
+	return archive, nil
 }
 
 func uniqueDirectoryUsers(users []DirectoryUser) []DirectoryUser {

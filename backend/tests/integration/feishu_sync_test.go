@@ -95,9 +95,10 @@ func TestFeishuFullSyncCreatesAndUpdatesIdentityRecords(t *testing.T) {
 		},
 	}}
 	service, err := idp.NewSyncService(idp.SyncServiceConfig{
-		Queries:  queries,
-		Provider: provider,
-		TraceID:  func() string { return "trace-feishu-sync" },
+		Queries:   queries,
+		Provider:  provider,
+		TraceID:   func() string { return "trace-feishu-sync" },
+		TxStarter: pool,
 	})
 	if err != nil {
 		t.Fatalf("new sync service: %v", err)
@@ -145,7 +146,7 @@ func TestFeishuFullSyncCreatesAndUpdatesIdentityRecords(t *testing.T) {
 	assertSingleString(t, ctx, pool, "select lifecycle_status from users where entity_id=$1", "disabled", entity.ID)
 }
 
-func TestFeishuFullSyncMergesExistingUserAndSoftDeletesMissing(t *testing.T) {
+func TestFeishuFullSyncMergesExistingUserAndArchivesMissing(t *testing.T) {
 	testcontainers.SkipIfProviderIsNotHealthy(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -234,9 +235,10 @@ func TestFeishuFullSyncMergesExistingUserAndSoftDeletesMissing(t *testing.T) {
 		},
 	}}
 	service, err := idp.NewSyncService(idp.SyncServiceConfig{
-		Queries:  queries,
-		Provider: provider,
-		TraceID:  func() string { return "trace-merge-sync" },
+		Queries:   queries,
+		Provider:  provider,
+		TraceID:   func() string { return "trace-merge-sync" },
+		TxStarter: pool,
 	})
 	if err != nil {
 		t.Fatalf("new sync service: %v", err)
@@ -270,8 +272,8 @@ func TestFeishuFullSyncMergesExistingUserAndSoftDeletesMissing(t *testing.T) {
 		t.Fatalf("second result = %#v", second)
 	}
 	assertSingleString(t, ctx, pool, "select status from directory_users where entity_id=$1 and source_id=$2", "deleted", entity.ID, source.ID)
-	assertSingleString(t, ctx, pool, "select lifecycle_status from users where entity_id=$1", "deleted", entity.ID)
-	assertSingleString(t, ctx, pool, "select id from users where entity_id=$1", existing.ID, entity.ID)
+	assertSingleInt(t, ctx, pool, "select count(*) from users where entity_id=$1", 0, entity.ID)
+	assertSingleString(t, ctx, pool, "select original_user_id from archived_users where entity_id=$1", existing.ID, entity.ID)
 }
 
 func TestFeishuFullSyncMarksJobFailedOnProviderError(t *testing.T) {
@@ -316,9 +318,10 @@ func TestFeishuFullSyncMarksJobFailedOnProviderError(t *testing.T) {
 		t.Fatalf("create source: %v", err)
 	}
 	service, err := idp.NewSyncService(idp.SyncServiceConfig{
-		Queries:  queries,
-		Provider: fakeDirectoryProvider{err: errProviderDown{}},
-		TraceID:  func() string { return "trace-failed" },
+		Queries:   queries,
+		Provider:  fakeDirectoryProvider{err: errProviderDown{}},
+		TraceID:   func() string { return "trace-failed" },
+		TxStarter: pool,
 	})
 	if err != nil {
 		t.Fatalf("new sync service: %v", err)

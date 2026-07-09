@@ -489,6 +489,64 @@ func (q *Queries) ListEntities(ctx context.Context, arg ListEntitiesParams) ([]B
 	return items, nil
 }
 
+const listManagedUsersForDeletedDirectoryUsers = `-- name: ListManagedUsersForDeletedDirectoryUsers :many
+SELECT DISTINCT u.id, u.entity_id, u.username, u.display_name, u.english_name, u.employee_no, u.job_title, u.email, u.phone, u.avatar_url, u.lifecycle_status, u.user_type, u.primary_source_id, u.locale, u.created_at, u.updated_at
+FROM users u
+JOIN account_bindings ab
+  ON ab.entity_id = u.entity_id
+ AND ab.user_id = u.id
+JOIN directory_users du
+  ON du.entity_id = ab.entity_id
+ AND du.source_id = ab.source_id
+ AND du.id = ab.directory_user_id
+WHERE u.entity_id = $1
+  AND ab.entity_id = $1
+  AND ab.source_id = $2
+  AND du.status = 'deleted'
+`
+
+type ListManagedUsersForDeletedDirectoryUsersParams struct {
+	EntityID string `json:"entity_id"`
+	SourceID string `json:"source_id"`
+}
+
+func (q *Queries) ListManagedUsersForDeletedDirectoryUsers(ctx context.Context, arg ListManagedUsersForDeletedDirectoryUsersParams) ([]User, error) {
+	rows, err := q.db.Query(ctx, listManagedUsersForDeletedDirectoryUsers, arg.EntityID, arg.SourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []User{}
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.Username,
+			&i.DisplayName,
+			&i.EnglishName,
+			&i.EmployeeNo,
+			&i.JobTitle,
+			&i.Email,
+			&i.Phone,
+			&i.AvatarUrl,
+			&i.LifecycleStatus,
+			&i.UserType,
+			&i.PrimarySourceID,
+			&i.Locale,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markMissingDirectoryUsersDeleted = `-- name: MarkMissingDirectoryUsersDeleted :many
 UPDATE directory_users
 SET status = 'deleted',
@@ -533,66 +591,6 @@ func (q *Queries) MarkMissingDirectoryUsersDeleted(ctx context.Context, arg Mark
 			&i.Status,
 			&i.RawProfile,
 			&i.LastSyncedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const softDeleteManagedUsersByDirectoryStatus = `-- name: SoftDeleteManagedUsersByDirectoryStatus :many
-UPDATE users u
-SET lifecycle_status = 'deleted',
-    updated_at = now()
-FROM account_bindings ab
-JOIN directory_users du
-  ON du.entity_id = ab.entity_id
- AND du.source_id = ab.source_id
- AND du.id = ab.directory_user_id
-WHERE u.entity_id = $1
-  AND u.id = ab.user_id
-  AND ab.entity_id = $1
-  AND ab.source_id = $2
-  AND du.status = 'deleted'
-  AND u.lifecycle_status <> 'deleted'
-RETURNING u.id, u.entity_id, u.username, u.display_name, u.english_name, u.employee_no, u.job_title, u.email, u.phone, u.avatar_url, u.lifecycle_status, u.user_type, u.primary_source_id, u.locale, u.created_at, u.updated_at
-`
-
-type SoftDeleteManagedUsersByDirectoryStatusParams struct {
-	EntityID string `json:"entity_id"`
-	SourceID string `json:"source_id"`
-}
-
-func (q *Queries) SoftDeleteManagedUsersByDirectoryStatus(ctx context.Context, arg SoftDeleteManagedUsersByDirectoryStatusParams) ([]User, error) {
-	rows, err := q.db.Query(ctx, softDeleteManagedUsersByDirectoryStatus, arg.EntityID, arg.SourceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []User{}
-	for rows.Next() {
-		var i User
-		if err := rows.Scan(
-			&i.ID,
-			&i.EntityID,
-			&i.Username,
-			&i.DisplayName,
-			&i.EnglishName,
-			&i.EmployeeNo,
-			&i.JobTitle,
-			&i.Email,
-			&i.Phone,
-			&i.AvatarUrl,
-			&i.LifecycleStatus,
-			&i.UserType,
-			&i.PrimarySourceID,
-			&i.Locale,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {

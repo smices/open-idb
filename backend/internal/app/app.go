@@ -255,6 +255,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 			closeFn()
 			return nil, err
 		}
+		syncService.SetTxStarter(pool)
 		syncHandler := adminapi.NewHandler(syncService, nil)
 		routerOptions = append(routerOptions, syncHandler.RegisterRoutes)
 
