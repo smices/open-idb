@@ -131,6 +131,38 @@ CREATE INDEX idx_directory_users_entity_source ON directory_users(entity_id, sou
 CREATE INDEX idx_users_entity_status ON users(entity_id, lifecycle_status);
 CREATE INDEX idx_account_bindings_user ON account_bindings(entity_id, user_id);
 
+CREATE TABLE archived_users (
+    id CHAR(26) PRIMARY KEY DEFAULT idb_generate_ulid() CHECK (id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
+    entity_id CHAR(26) NOT NULL CHECK (entity_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$') REFERENCES business_entities(id) ON DELETE CASCADE,
+    original_user_id CHAR(26) NOT NULL CHECK (original_user_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
+    username TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    english_name TEXT NOT NULL DEFAULT '',
+    employee_no TEXT NOT NULL DEFAULT '',
+    job_title TEXT NOT NULL DEFAULT '',
+    email TEXT,
+    phone TEXT,
+    avatar_url TEXT,
+    user_type TEXT NOT NULL,
+    primary_source_id CHAR(26) CHECK (primary_source_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
+    locale TEXT,
+    original_created_at TIMESTAMPTZ NOT NULL,
+    original_updated_at TIMESTAMPTZ NOT NULL,
+    archived_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    archived_by_user_id CHAR(26) CHECK (archived_by_user_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
+    archive_reason TEXT NOT NULL DEFAULT '',
+    user_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    bindings_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
+    roles_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
+    UNIQUE (entity_id, original_user_id)
+);
+
+CREATE INDEX idx_archived_users_entity_archived
+    ON archived_users(entity_id, archived_at DESC);
+
+CREATE INDEX idx_archived_users_entity_username
+    ON archived_users(entity_id, username);
+
 CREATE TABLE applications (
     id CHAR(26) PRIMARY KEY DEFAULT idb_generate_ulid() CHECK (id ~ '^[0-9A-HJKMNP-TV-Z]{26}$'),
     entity_id CHAR(26) NOT NULL CHECK (entity_id ~ '^[0-9A-HJKMNP-TV-Z]{26}$') REFERENCES business_entities(id) ON DELETE CASCADE,
@@ -683,6 +715,7 @@ DROP TABLE IF EXISTS oauth_tokens;
 DROP TABLE IF EXISTS oauth_authorization_codes;
 DROP TABLE IF EXISTS oidc_clients;
 DROP TABLE IF EXISTS applications;
+DROP TABLE IF EXISTS archived_users;
 DROP TABLE IF EXISTS account_bindings;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS directory_users;

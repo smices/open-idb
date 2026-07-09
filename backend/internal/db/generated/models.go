@@ -76,6 +76,31 @@ type ApplicationAssignment struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
+type ArchivedUser struct {
+	ID                string             `json:"id"`
+	EntityID          string             `json:"entity_id"`
+	OriginalUserID    string             `json:"original_user_id"`
+	Username          string             `json:"username"`
+	DisplayName       string             `json:"display_name"`
+	EnglishName       string             `json:"english_name"`
+	EmployeeNo        string             `json:"employee_no"`
+	JobTitle          string             `json:"job_title"`
+	Email             pgtype.Text        `json:"email"`
+	Phone             pgtype.Text        `json:"phone"`
+	AvatarUrl         pgtype.Text        `json:"avatar_url"`
+	UserType          string             `json:"user_type"`
+	PrimarySourceID   pgtype.Text        `json:"primary_source_id"`
+	Locale            pgtype.Text        `json:"locale"`
+	OriginalCreatedAt pgtype.Timestamptz `json:"original_created_at"`
+	OriginalUpdatedAt pgtype.Timestamptz `json:"original_updated_at"`
+	ArchivedAt        pgtype.Timestamptz `json:"archived_at"`
+	ArchivedByUserID  pgtype.Text        `json:"archived_by_user_id"`
+	ArchiveReason     string             `json:"archive_reason"`
+	UserSnapshot      []byte             `json:"user_snapshot"`
+	BindingsSnapshot  []byte             `json:"bindings_snapshot"`
+	RolesSnapshot     []byte             `json:"roles_snapshot"`
+}
+
 type AuditLog struct {
 	ID           string             `json:"id"`
 	EntityID     string             `json:"entity_id"`

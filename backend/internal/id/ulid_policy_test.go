@@ -103,6 +103,37 @@ func TestDatabaseIDsUseChar26(t *testing.T) {
 	}
 }
 
+func TestSchemaDefinesArchivedUsersTable(t *testing.T) {
+	content := readSchema(t)
+	required := []string{
+		"CREATE TABLE archived_users",
+		"original_user_id CHAR(26) NOT NULL",
+		"user_snapshot JSONB NOT NULL",
+		"bindings_snapshot JSONB NOT NULL",
+		"roles_snapshot JSONB NOT NULL",
+		"UNIQUE (entity_id, original_user_id)",
+		"CREATE INDEX idx_archived_users_entity_archived",
+		"CREATE INDEX idx_archived_users_entity_username",
+	}
+	for _, snippet := range required {
+		if !strings.Contains(content, snippet) {
+			t.Fatalf("schema missing archived users snippet %q", snippet)
+		}
+	}
+}
+
+func readSchema(t *testing.T) string {
+	t.Helper()
+
+	root := filepath.Clean(filepath.Join("..", ".."))
+	data, err := os.ReadFile(filepath.Join(root, "migrations", "000001_schema_baseline.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return string(data)
+}
+
 func isPolicyCheckedFile(path string) bool {
 	if strings.HasPrefix(path, "docs/superpowers/plans/") {
 		return false
