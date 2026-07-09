@@ -194,6 +194,8 @@ export interface AuditLogListResponse {
   offset: number;
 }
 
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
 export type ArchivedUser = {
   id: string;
   entity_id: string;
@@ -206,9 +208,9 @@ export type ArchivedUser = {
   archived_at: string;
   archived_by_user_id: string;
   archive_reason: string;
-  user_snapshot: Record<string, string | number | boolean | null>;
-  bindings_snapshot: Array<Record<string, string | number | boolean | null>>;
-  roles_snapshot: Array<Record<string, string | number | boolean | null>>;
+  user_snapshot: JsonValue;
+  bindings_snapshot: JsonValue;
+  roles_snapshot: JsonValue;
 };
 
 export type ArchivedUserListResponse = {
