@@ -36,6 +36,7 @@ func NewCatalog() Catalog {
 				// Audit action labels — user sync
 				"sync.user.created":       "User created via sync",
 				"sync.user.disabled":      "User disabled via sync",
+				"sync.user.archived":      "User archived via sync",
 				"sync.department.updated": "Department updated via sync",
 
 				// Audit action labels — user management
@@ -116,6 +117,7 @@ func NewCatalog() Catalog {
 				// Audit action labels — user sync
 				"sync.user.created":       "同步创建用户",
 				"sync.user.disabled":      "同步禁用用户",
+				"sync.user.archived":      "同步归档用户",
 				"sync.department.updated": "同步更新部门",
 
 				// Audit action labels — user management

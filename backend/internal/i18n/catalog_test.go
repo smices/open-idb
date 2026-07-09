@@ -22,6 +22,17 @@ func TestCatalogReturnsChineseMessage(t *testing.T) {
 	}
 }
 
+func TestCatalogLabelsSyncArchivedUser(t *testing.T) {
+	catalog := NewCatalog()
+
+	if got := catalog.Message("en-US", "sync.user.archived"); got != "User archived via sync" {
+		t.Fatalf("expected English archive label, got %q", got)
+	}
+	if got := catalog.Message("zh-CN", "sync.user.archived"); got != "同步归档用户" {
+		t.Fatalf("expected Chinese archive label, got %q", got)
+	}
+}
+
 func TestCatalogFallsBackToEnglish(t *testing.T) {
 	catalog := NewCatalog()
 
