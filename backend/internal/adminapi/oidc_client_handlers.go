@@ -21,6 +21,7 @@ type OIDCClientResponse struct {
 	ApplicationID      string   `json:"application_id"`
 	ClientID           string   `json:"client_id"`
 	ClientSecret       string   `json:"client_secret,omitempty"`
+	ClientSecretHash   string   `json:"client_secret_hash,omitempty"`
 	RedirectURIs       []string `json:"redirect_uris"`
 	AllowedScopes      []string `json:"allowed_scopes"`
 	GrantTypes         []string `json:"grant_types"`
@@ -338,12 +339,13 @@ func (h OIDCClientHandler) rotateSecret(w http.ResponseWriter, r *http.Request) 
 }
 
 // oidcClientFromRow converts a generated OIDC client row to a response.
-func oidcClientFromRow(row generated.ListOIDCClientsRow) OIDCClientResponse {
+func oidcClientFromRow(row generated.OidcClient) OIDCClientResponse {
 	return OIDCClientResponse{
 		ID:                 ulidString(row.ID),
 		EntityID:           ulidString(row.EntityID),
 		ApplicationID:      ulidString(row.ApplicationID),
 		ClientID:           row.ClientID,
+		ClientSecretHash:   textValue(row.ClientSecretHash),
 		RedirectURIs:       row.RedirectUris,
 		AllowedScopes:      row.AllowedScopes,
 		GrantTypes:         row.GrantTypes,

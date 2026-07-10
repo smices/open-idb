@@ -481,16 +481,23 @@ function ApplicationsPage() {
     const [apps, clients] = await Promise.all([api.listApplications({ limit: 100 }), api.listOIDCClients({ limit: 200 }).catch(() => ({ clients: [] }))]);
     return { apps: apps.applications || [], clients: clients.clients || [] };
   }, []);
+  const oidcClientFor = (app) => {
+    const client = data?.clients?.find((item) => item.application_id === app?.id) || null;
+    return client;
+  };
+  const applicationJsonFor = (app) => ({ ...app, oidc_client: oidcClientFor(app) });
   const save = async () => {
     const values = await form.validateFields();
     if (selected) {
       await api.updateApplication(selected.id, { name: values.name, status: values.status });
       const client = data?.clients?.find((item) => item.application_id === selected.id);
-      if (selected.type === 'oidc_client' && client) await api.updateOIDCClient(client.id, { redirect_uris: values.redirect_uris, allowed_scopes: values.allowed_scopes, grant_types: values.grant_types, response_types: values.response_types, pkce_required: values.pkce_required, status: values.status });
+      if (selected.type === 'oidc_client' && client) await api.updateOIDCClient(client.id, { redirect_uris: values.redirect_uris, allowed_scopes: values.allowed_scopes, grant_types: values.grant_types, response_types: values.response_types, pkce_required: values.pkce_required, workplace_provider: values.workplace_provider, workplace_app_id: values.workplace_app_id, workplace_app_secret: values.workplace_app_secret, status: values.status });
     }
     else {
       const app = await api.createApplication({ name: values.name, type: values.type || 'oidc_client' });
-      if (values.type === 'oidc_client') await api.createOIDCClient({ application_id: app.id, client_id: values.client_id, redirect_uris: values.redirect_uris || [], allowed_scopes: values.allowed_scopes, grant_types: values.grant_types, response_types: values.response_types, pkce_required: values.pkce_required });
+      if (values.type === 'oidc_client') {
+        await api.createOIDCClient({ application_id: app.id, client_id: values.client_id, redirect_uris: values.redirect_uris || [], allowed_scopes: values.allowed_scopes, grant_types: values.grant_types, response_types: values.response_types, pkce_required: values.pkce_required, workplace_provider: values.workplace_provider, workplace_app_id: values.workplace_app_id, workplace_app_secret: values.workplace_app_secret });
+      }
     }
     message.success(t('common.updateSuccess'));
     setOpen(false);
@@ -511,9 +518,9 @@ function ApplicationsPage() {
         </Space> },
       ]} />
       <Modal title={selected ? t('common.edit') : t('common.create')} open={open} onOk={save} onCancel={() => setOpen(false)}>
-        <Form form={form} layout="vertical"><Form.Item name="name" label={t('applications.name')} rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="type" label={t('applications.type')}><Select disabled={Boolean(selected)} options={APPLICATION_TYPES.map((value) => ({ value, label: t(`applications.type.${value}`, value) }))} /></Form.Item><Form.Item name="status" label={t('applications.status')}><Select options={['active', 'disabled'].map((value) => ({ value, label: t(`applications.status.${value}`, value) }))} /></Form.Item><Form.Item noStyle shouldUpdate={(prev, next) => prev.type !== next.type}>{() => form.getFieldValue('type') === 'oidc_client' ? <><Form.Item name="client_id" label={t('applications.clientId')}><Input disabled={Boolean(selected)} placeholder={t('applications.autoWhenEmpty')} /></Form.Item><Form.Item name="redirect_uris" label={t('applications.redirectUris')}><Select mode="tags" /></Form.Item><Form.Item name="allowed_scopes" label={t('applications.scopes')}><Select mode="tags" /></Form.Item><Form.Item name="grant_types" label={t('applications.grantTypes')}><Select mode="tags" /></Form.Item><Form.Item name="response_types" label={t('applications.responseTypes')}><Select mode="tags" /></Form.Item><Form.Item name="pkce_required" label={t('applications.pkce')} valuePropName="checked"><Switch /></Form.Item></> : null}</Form.Item></Form>
+        <Form form={form} layout="vertical"><Form.Item name="name" label={t('applications.name')} rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="type" label={t('applications.type')}><Select disabled={Boolean(selected)} options={APPLICATION_TYPES.map((value) => ({ value, label: t(`applications.type.${value}`, value) }))} /></Form.Item><Form.Item name="status" label={t('applications.status')}><Select options={['active', 'disabled'].map((value) => ({ value, label: t(`applications.status.${value}`, value) }))} /></Form.Item><Form.Item noStyle shouldUpdate={(prev, next) => prev.type !== next.type}>{() => form.getFieldValue('type') === 'oidc_client' ? <><Form.Item name="client_id" label={t('applications.clientId')}><Input disabled={Boolean(selected)} placeholder={t('applications.autoWhenEmpty')} /></Form.Item><Form.Item name="redirect_uris" label={t('applications.redirectUris')}><Select mode="tags" /></Form.Item><Form.Item name="allowed_scopes" label={t('applications.scopes')}><Select mode="tags" /></Form.Item><Form.Item name="grant_types" label={t('applications.grantTypes')}><Select mode="tags" /></Form.Item><Form.Item name="response_types" label={t('applications.responseTypes')}><Select mode="tags" /></Form.Item><Form.Item name="pkce_required" label={t('applications.pkce')} valuePropName="checked"><Switch /></Form.Item><Form.Item name="workplace_provider" label={t('applications.workplaceProvider')}><Input /></Form.Item><Form.Item name="workplace_app_id" label={t('applications.workplaceAppId')}><Input /></Form.Item><Form.Item name="workplace_app_secret" label={t('applications.workplaceAppSecret')}><Input.Password /></Form.Item></> : null}</Form.Item></Form>
       </Modal>
-      <Modal title={t('common.view')} open={Boolean(viewing)} footer={<Button onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify({ ...viewing, oidc_client: data?.clients?.find((client) => client.application_id === viewing?.id) || null }, null, 2)); message.success(t('common.copySuccess')); } catch { message.error(t('common.copyFailed')); } }}>{t('common.copy')}</Button>} onCancel={() => setViewing(null)}><pre className="json-box">{JSON.stringify({ ...viewing, oidc_client: data?.clients?.find((client) => client.application_id === viewing?.id) || null }, null, 2)}</pre></Modal>
+      <Modal title={t('common.view')} open={Boolean(viewing)} footer={<Button onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify(applicationJsonFor(viewing), null, 2)); message.success(t('common.copySuccess')); } catch { message.error(t('common.copyFailed')); } }}>{t('common.copy')}</Button>} onCancel={() => setViewing(null)}><pre className="json-box">{JSON.stringify(applicationJsonFor(viewing), null, 2)}</pre></Modal>
     </div>
   );
 }
