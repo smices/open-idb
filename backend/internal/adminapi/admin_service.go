@@ -785,7 +785,7 @@ func (s *AdminService) GetOIDCClientByID(ctx context.Context, entityID, id strin
 		EntityID:           ulidString(row.EntityID),
 		ApplicationID:      ulidString(row.ApplicationID),
 		ClientID:           row.ClientID,
-		ClientSecretHash:   textValue(row.ClientSecretHash),
+		ClientSecret:       textValue(row.ClientSecretHash),
 		RedirectURIs:       row.RedirectUris,
 		AllowedScopes:      row.AllowedScopes,
 		GrantTypes:         row.GrantTypes,
@@ -824,7 +824,6 @@ func (s *AdminService) CreateOIDCClient(ctx context.Context, params generated.Cr
 		EntityID:           ulidString(row.EntityID),
 		ApplicationID:      ulidString(row.ApplicationID),
 		ClientID:           row.ClientID,
-		ClientSecretHash:   textValue(row.ClientSecretHash),
 		RedirectURIs:       row.RedirectUris,
 		AllowedScopes:      row.AllowedScopes,
 		GrantTypes:         row.GrantTypes,
@@ -845,6 +844,7 @@ func (s *AdminService) CreateOIDCClient(ctx context.Context, params generated.Cr
 
 func (s *AdminService) UpdateOIDCClient(ctx context.Context, params generated.UpdateOIDCClientParams) (OIDCClientResponse, error) {
 	before, _ := s.GetOIDCClientByID(ctx, params.EntityID, params.ID)
+	before.ClientSecret = ""
 	row, err := s.queries.UpdateOIDCClient(ctx, params)
 	if err != nil {
 		return OIDCClientResponse{}, err
@@ -854,7 +854,6 @@ func (s *AdminService) UpdateOIDCClient(ctx context.Context, params generated.Up
 		EntityID:           ulidString(row.EntityID),
 		ApplicationID:      ulidString(row.ApplicationID),
 		ClientID:           row.ClientID,
-		ClientSecretHash:   textValue(row.ClientSecretHash),
 		RedirectURIs:       row.RedirectUris,
 		AllowedScopes:      row.AllowedScopes,
 		GrantTypes:         row.GrantTypes,
@@ -875,6 +874,7 @@ func (s *AdminService) UpdateOIDCClient(ctx context.Context, params generated.Up
 
 func (s *AdminService) DeleteOIDCClient(ctx context.Context, entityID, id string) error {
 	before, _ := s.GetOIDCClientByID(ctx, entityID, id)
+	before.ClientSecret = ""
 	err := s.queries.DeleteOIDCClient(ctx, generated.DeleteOIDCClientParams{
 		EntityID: entityID,
 		ID:       id,
@@ -906,7 +906,6 @@ func (s *AdminService) RotateOIDCClientSecret(ctx context.Context, entityID, id 
 		EntityID:           ulidString(row.EntityID),
 		ApplicationID:      ulidString(row.ApplicationID),
 		ClientID:           row.ClientID,
-		ClientSecretHash:   textValue(row.ClientSecretHash),
 		RedirectURIs:       row.RedirectUris,
 		AllowedScopes:      row.AllowedScopes,
 		GrantTypes:         row.GrantTypes,

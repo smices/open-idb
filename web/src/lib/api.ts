@@ -482,7 +482,6 @@ export interface OIDCClient {
   application_id: string;
   client_id: string;
   client_secret?: string;
-  client_secret_hash?: string;
   redirect_uris: string[];
   allowed_scopes?: string[];
   grant_types?: string[];

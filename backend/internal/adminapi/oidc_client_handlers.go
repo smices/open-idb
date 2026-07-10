@@ -21,7 +21,6 @@ type OIDCClientResponse struct {
 	ApplicationID      string   `json:"application_id"`
 	ClientID           string   `json:"client_id"`
 	ClientSecret       string   `json:"client_secret,omitempty"`
-	ClientSecretHash   string   `json:"client_secret_hash,omitempty"`
 	RedirectURIs       []string `json:"redirect_uris"`
 	AllowedScopes      []string `json:"allowed_scopes"`
 	GrantTypes         []string `json:"grant_types"`
@@ -345,7 +344,7 @@ func oidcClientFromRow(row generated.OidcClient) OIDCClientResponse {
 		EntityID:           ulidString(row.EntityID),
 		ApplicationID:      ulidString(row.ApplicationID),
 		ClientID:           row.ClientID,
-		ClientSecretHash:   textValue(row.ClientSecretHash),
+		ClientSecret:       textValue(row.ClientSecretHash),
 		RedirectURIs:       row.RedirectUris,
 		AllowedScopes:      row.AllowedScopes,
 		GrantTypes:         row.GrantTypes,

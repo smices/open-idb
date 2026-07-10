@@ -525,61 +525,6 @@ function ApplicationsPage() {
   );
 }
 
-function ApplicationDrawer({ app, roles, client, onClose, onDone }) {
-  const { t } = useTranslation();
-  const { message } = AntApp.useApp();
-  const [roleIds, setRoleIds] = useState([]);
-  const [form] = Form.useForm();
-  useEffect(() => {
-    async function load() {
-      if (!app) return;
-      const assignments = await api.listApplicationRoleAssignments(app.id).catch(() => ({ items: [], roles: [] }));
-      setRoleIds(pickItems(assignments, ['items', 'roles']).map((item) => item.role_id));
-      form.setFieldsValue(client || { redirect_uris: [], allowed_scopes: ['openid', 'profile'], grant_types: ['authorization_code'], response_types: ['code'], pkce_required: true });
-    }
-    load();
-  }, [app, client, form]);
-  if (!app) return null;
-  const saveAccess = async () => {
-    await api.setApplicationRoleAssignments(app.id, roleIds);
-    message.success(t('applications.saveSuccess'));
-    onDone?.();
-  };
-  const saveClient = async () => {
-    const values = await form.validateFields();
-    const payload = { ...values, application_id: app.id };
-    if (client?.id) await api.updateOIDCClient(client.id, values);
-    else {
-      const res = await api.createOIDCClient(payload);
-      Modal.info({ title: t('applications.clientSecret'), content: <pre className="json-box">{res.client_secret}</pre> });
-    }
-    message.success(t('applications.saveSuccess'));
-    onDone?.();
-  };
-  return (
-    <Drawer title={app.name} width={560} open={Boolean(app)} onClose={onClose}>
-      <Space direction="vertical" size={18} style={{ width: '100%' }}>
-        <Card title={t('applications.accessRoles')} extra={<Button onClick={saveAccess}>{t('common.save')}</Button>}>
-          <Select mode="multiple" style={{ width: '100%' }} value={roleIds} onChange={setRoleIds} options={roles.map((r) => ({ value: r.id, label: `${r.name} (${r.code})` }))} />
-        </Card>
-        <Card title={t('applications.oidcClient')} extra={<Button onClick={saveClient}>{t('common.save')}</Button>}>
-          <Form form={form} layout="vertical">
-            <Form.Item name="client_id" label={t('applications.clientId')}><Input disabled={Boolean(client?.id)} placeholder={t('applications.autoWhenEmpty')} /></Form.Item>
-            <Form.Item name="redirect_uris" label={t('applications.redirectUris')}><Select mode="tags" /></Form.Item>
-            <Form.Item name="allowed_scopes" label={t('applications.scopes')}><Select mode="tags" /></Form.Item>
-            <Form.Item name="grant_types" label={t('applications.grantTypes')}><Select mode="tags" /></Form.Item>
-            <Form.Item name="response_types" label={t('applications.responseTypes')}><Select mode="tags" /></Form.Item>
-            <Form.Item name="pkce_required" label={t('applications.pkce')} valuePropName="checked"><Switch /></Form.Item>
-            <Form.Item name="workplace_provider" label={t('applications.workplaceProvider')}><Input /></Form.Item>
-            <Form.Item name="workplace_app_id" label={t('applications.workplaceAppId')}><Input /></Form.Item>
-            <Form.Item name="workplace_app_secret" label={t('applications.workplaceAppSecret')}><Input.Password /></Form.Item>
-          </Form>
-        </Card>
-      </Space>
-    </Drawer>
-  );
-}
-
 function RolesPage() {
   const { t } = useTranslation();
   const { message } = AntApp.useApp();

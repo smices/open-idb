@@ -30,7 +30,7 @@ SET redirect_uris = COALESCE(sqlc.narg('redirect_uris'), redirect_uris),
     status = COALESCE(sqlc.narg('status'), status),
     updated_at = now()
 WHERE entity_id = $1 AND id = $2
-RETURNING id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at;
+RETURNING id, entity_id, application_id, client_id, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at;
 
 -- name: DeleteOIDCClient :exec
 DELETE FROM oidc_clients
@@ -40,4 +40,4 @@ WHERE entity_id = $1 AND id = $2;
 UPDATE oidc_clients
 SET client_secret_hash = $3, updated_at = now()
 WHERE entity_id = $1 AND id = $2
-RETURNING id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at;
+RETURNING id, entity_id, application_id, client_id, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at;
