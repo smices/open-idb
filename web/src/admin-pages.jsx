@@ -24,6 +24,8 @@ import { Archive, Plus, RefreshCw, Save, Search, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from './lib/api.ts';
 
+const APPLICATION_TYPES = ['oidc_client', 'api_client', 'internal_app'];
+
 function navigate(path) {
   window.location.href = path;
 }
@@ -482,7 +484,7 @@ function ApplicationsPage() {
   const save = async () => {
     const values = await form.validateFields();
     if (selected) await api.updateApplication(selected.id, { name: values.name, status: values.status });
-    else await api.createApplication({ name: values.name, type: values.type || 'oidc' });
+    else await api.createApplication({ name: values.name, type: values.type || 'oidc_client' });
     message.success(t('common.updateSuccess'));
     setOpen(false);
     reload();
@@ -502,7 +504,7 @@ function ApplicationsPage() {
         </Space> },
       ]} />
       <Modal title={selected ? t('common.edit') : t('common.create')} open={open} onOk={save} onCancel={() => setOpen(false)}>
-        <Form form={form} layout="vertical"><Form.Item name="name" label={t('applications.name')} rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="type" label={t('applications.type')}><Select disabled={Boolean(selected)} options={['oidc', 'saml', 'custom'].map((value) => ({ value, label: t(`applications.type.${value}`, value) }))} /></Form.Item><Form.Item name="status" label={t('applications.status')}><Select options={['active', 'disabled'].map((value) => ({ value, label: t(`applications.status.${value}`, value) }))} /></Form.Item></Form>
+        <Form form={form} layout="vertical"><Form.Item name="name" label={t('applications.name')} rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="type" label={t('applications.type')}><Select disabled={Boolean(selected)} options={APPLICATION_TYPES.map((value) => ({ value, label: t(`applications.type.${value}`, value) }))} /></Form.Item><Form.Item name="status" label={t('applications.status')}><Select options={['active', 'disabled'].map((value) => ({ value, label: t(`applications.status.${value}`, value) }))} /></Form.Item></Form>
       </Modal>
       <ApplicationDrawer app={drawer} roles={data?.roles || []} client={data?.clients?.find((c) => c.application_id === drawer?.id)} onClose={() => setDrawer(null)} onDone={reload} />
     </div>

@@ -7,6 +7,8 @@ const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const appCss = readFileSync(join(root, 'src/styles.css'), 'utf8');
 const appJs = readFileSync(join(root, 'src/main.jsx'), 'utf8');
 const adminPagesJs = readFileSync(join(root, 'src/admin-pages.jsx'), 'utf8');
+const apiTs = readFileSync(join(root, 'src/lib/api.ts'), 'utf8');
+const i18nJs = readFileSync(join(root, 'src/i18n/index.js'), 'utf8');
 const bootJs = readFileSync(join(root, 'src/boot.js'), 'utf8');
 const workplaceContinueJs = readFileSync(join(root, 'src/workplace-continue.js'), 'utf8');
 const devWebLocal = readFileSync(join(repoRoot, 'scripts/dev-web-local.sh'), 'utf8');
@@ -111,6 +113,31 @@ for (const [label, source] of [
         failures.push(`Hardcoded English UI text in ${label}: ${text}`);
       }
     }
+  }
+}
+
+const applicationTypes = ['oidc_client', 'api_client', 'internal_app'];
+const applicationTypeDeclaration = `const APPLICATION_TYPES = ['oidc_client', 'api_client', 'internal_app'];`;
+const applicationTypeUnion = `export type ApplicationType = 'oidc_client' | 'api_client' | 'internal_app';`;
+
+if (!adminPagesJs.includes(applicationTypeDeclaration)) {
+  failures.push('Applications page must declare the canonical application type list');
+}
+if (!adminPagesJs.includes("type: values.type || 'oidc_client'")) {
+  failures.push('Applications page must default new applications to oidc_client');
+}
+if (!apiTs.includes(applicationTypeUnion) || !apiTs.includes('payload: { name: string; type: ApplicationType }')) {
+  failures.push('Frontend API must expose the canonical ApplicationType contract');
+}
+for (const appType of applicationTypes) {
+  const key = `'applications.type.${appType}':`;
+  if (i18nJs.split(key).length - 1 !== 2) {
+    failures.push(`Missing bilingual application type label: ${appType}`);
+  }
+}
+for (const obsoleteType of ['oidc', 'saml', 'custom']) {
+  if (i18nJs.includes(`'applications.type.${obsoleteType}':`)) {
+    failures.push(`Obsolete application type translation remains: ${obsoleteType}`);
   }
 }
 

@@ -404,11 +404,13 @@ export interface UpdateUserRequest {
   locale?: string;
 }
 
+export type ApplicationType = 'oidc_client' | 'api_client' | 'internal_app';
+
 export interface Application {
   id: string;
   entity_id: string;
   name: string;
-  type: string;
+  type: ApplicationType;
   status: string;
   created_at?: string;
   updated_at?: string;
@@ -753,7 +755,7 @@ export const api = {
     return apiRequest<ApplicationListResponse>(`/sapi/applications${suffix}`);
   },
   getApplication: (id: string) => apiRequest<Application>(`/sapi/applications/${encodeURIComponent(id)}`),
-  createApplication: (payload: { name: string; type: string }) =>
+  createApplication: (payload: { name: string; type: ApplicationType }) =>
     apiRequest<Application>('/sapi/applications', { method: 'POST', body: payload }),
   updateApplication: (id: string, payload: { name?: string; status?: string }) =>
     apiRequest<Application>(`/sapi/applications/${encodeURIComponent(id)}`, {
