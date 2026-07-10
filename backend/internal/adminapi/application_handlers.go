@@ -15,6 +15,15 @@ type ApplicationHandler struct {
 	service userService
 }
 
+func isValidApplicationType(appType string) bool {
+	switch appType {
+	case "oidc_client", "api_client", "internal_app":
+		return true
+	default:
+		return false
+	}
+}
+
 type applicationEntityResolver interface {
 	ResolveOrganizationTreeEntityID(ctx context.Context, candidate string) (string, error)
 }
@@ -114,6 +123,10 @@ func (h ApplicationHandler) createApplication(w http.ResponseWriter, r *http.Req
 	}
 	if body.Name == "" || body.Type == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "name and type are required")
+		return
+	}
+	if !isValidApplicationType(body.Type) {
+		writeError(w, http.StatusBadRequest, "invalid_application_type", "type must be one of oidc_client, api_client, or internal_app")
 		return
 	}
 	app, err := h.service.CreateApplication(r.Context(), entityID, body.Name, body.Type)
