@@ -105,6 +105,15 @@ func TestSafeReturnToRejectsExternalURL(t *testing.T) {
 	}
 }
 
+func TestIsHTTPSRequestAcceptsForwardedProto(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/login/account", nil)
+	req.Header.Set("Forwarded", "for=192.0.2.1;proto=https;host=auth.idc.snnc.cc")
+
+	if !isHTTPSRequest(req) {
+		t.Fatal("isHTTPSRequest() = false, want true for Forwarded proto=https")
+	}
+}
+
 func TestLoginContextResolvesOIDCApplicationReturnTo(t *testing.T) {
 	router := chi.NewRouter()
 	NewHandler(fakeLoginService{

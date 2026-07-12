@@ -131,6 +131,7 @@ func (h Handler) loginAccount(w http.ResponseWriter, r *http.Request) {
 		Value:    session.ID,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   isHTTPSRequest(r),
 		SameSite: http.SameSiteLaxMode,
 		Expires:  session.ExpiresAt,
 		MaxAge:   int(time.Until(session.ExpiresAt).Seconds()),
@@ -160,6 +161,22 @@ func writeError(w http.ResponseWriter, status int, code string, message string) 
 func acceptsHTML(r *http.Request) bool {
 	accept := r.Header.Get("Accept")
 	return strings.Contains(accept, "text/html")
+}
+
+func isHTTPSRequest(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https") {
+		return true
+	}
+	for _, part := range strings.Split(r.Header.Get("Forwarded"), ";") {
+		name, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if ok && strings.EqualFold(name, "proto") && strings.EqualFold(strings.Trim(value, `"`), "https") {
+			return true
+		}
+	}
+	return false
 }
 
 func safeReturnTo(value string) string {

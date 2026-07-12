@@ -19,6 +19,7 @@ func NewRouter(options ...Option) http.Handler {
 
 	// i18n middleware for locale extraction from Accept-Language header
 	catalog := i18n.NewCatalog()
+	r.Use(SecurityHeaders)
 	r.Use(i18n.Middleware(catalog))
 	r.Use(RequireAuthenticatedRequest)
 
@@ -39,6 +40,18 @@ func NewRouter(options ...Option) http.Handler {
 		writeJSONError(w, http.StatusNotFound, "not_found", "The requested resource was not found.")
 	})
 	return r
+}
+
+func SecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; form-action 'self'")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func RequireAuthenticatedRequest(next http.Handler) http.Handler {

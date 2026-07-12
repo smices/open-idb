@@ -171,6 +171,7 @@ func (h AdminHandler) loginAccount(w http.ResponseWriter, r *http.Request) {
 		Value:    session.ID,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   isHTTPSRequest(r),
 		SameSite: http.SameSiteLaxMode,
 		Expires:  session.ExpiresAt,
 		MaxAge:   int(time.Until(session.ExpiresAt).Seconds()),

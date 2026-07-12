@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -35,6 +36,26 @@ func TestHealthRoutesReturnOK(t *testing.T) {
 				t.Fatalf("status body = %q, want %q", response.Status, "ok")
 			}
 		})
+	}
+}
+
+func TestRouterSetsSecurityHeaders(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+
+	NewRouter().ServeHTTP(rec, req)
+
+	headers := map[string]string{
+		"Content-Security-Policy": "frame-ancestors 'none'",
+		"Referrer-Policy":         "strict-origin-when-cross-origin",
+		"X-Content-Type-Options":  "nosniff",
+		"X-Frame-Options":         "DENY",
+		"Permissions-Policy":      "camera=()",
+	}
+	for name, want := range headers {
+		if got := rec.Header().Get(name); !strings.Contains(got, want) {
+			t.Fatalf("%s = %q, want to contain %q", name, got, want)
+		}
 	}
 }
 

@@ -411,6 +411,7 @@ function LoginPage({ branding }) {
   const brandName = branding.platform_name || t('app.title');
   const logo = context?.entity?.logo_url || branding.logo_url || '/logo.svg';
   const isEnterpriseEntrance = mode === 'app' || Boolean(entityRef);
+  const currentHost = window.location.host;
 
   const label = (key, fallback) => {
     const value = t(key);
@@ -508,6 +509,22 @@ function LoginPage({ branding }) {
         <p className="auth-eyebrow">{isAdminAccountLogin ? adminEyebrow : label('login.enterprise.eyebrow', '企业 SSO')}</p>
         <h1>{title}</h1>
         <p>{subtitle}</p>
+        {isAdminAccountLogin ? (
+          <div className="auth-trust-panel" aria-label={t('login.trust.ariaLabel')}>
+            <div>
+              <ShieldCheck size={17} />
+              <span>{label('login.trust.authorizedOnly', '仅限授权管理员访问')}</span>
+            </div>
+            <div>
+              <Network size={17} />
+              <span>{label('login.trust.currentDomain', '当前域名：{host}').replace('{host}', currentHost)}</span>
+            </div>
+            <div>
+              <KeyRound size={17} />
+              <span>{label('login.trust.noDownloads', '本页不会要求安装软件或下载文件')}</span>
+            </div>
+          </div>
+        ) : null}
       </section>
       <Card className="auth-card login-card">
         {loading || autoRedirecting ? <Skeleton active paragraph={{ rows: 4 }} /> : (
@@ -541,6 +558,9 @@ function LoginPage({ branding }) {
                     <Input.Password name="password" autoComplete="current-password" required placeholder={t('login.passwordPlaceholder')} />
                   </label>
                   <Button htmlType="submit" type="primary" block onClick={() => message.destroy()}>{t(`login.${mode}.submit`)}</Button>
+                  <Typography.Text className="login-origin-note" type="secondary">
+                    {label('login.trust.originNote', '提交前请确认浏览器地址为 {host}。').replace('{host}', currentHost)}
+                  </Typography.Text>
                 </Space>
               </form>
             ) : null}
