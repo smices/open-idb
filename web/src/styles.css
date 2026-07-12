@@ -36,7 +36,8 @@ a {
   color: #f8fbff;
   background:
     linear-gradient(90deg, rgba(5, 12, 20, 0.82), rgba(8, 21, 31, 0.66) 48%, rgba(7, 13, 20, 0.9)),
-    url("/login-tech-bg.png") center / cover no-repeat;
+    url("/login-circuit-bg.svg") center / 320px 320px repeat,
+    #07111d;
 }
 
 .auth-page::after {
