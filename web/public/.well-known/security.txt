@@ -1,3 +1,3 @@
-Contact: mailto:security@idc.snnc.cc
+Contact: mailto:smices@gmail.com
 Canonical: https://auth.idc.snnc.cc/.well-known/security.txt
 Preferred-Languages: zh, en
