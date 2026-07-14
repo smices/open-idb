@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   App as AntApp,
   Button,
@@ -25,6 +25,7 @@ import { useTranslation } from 'react-i18next';
 import { api } from './lib/api.ts';
 
 const APPLICATION_TYPES = ['oidc_client', 'api_client', 'internal_app'];
+const APPLICATION_PAGE_SIZE = 20;
 
 function navigate(path) {
   window.location.href = path;
@@ -38,6 +39,15 @@ function formatDate(value) {
 
 function errorMessage(error, fallback = 'Request failed') {
   return error instanceof Error ? error.message : fallback;
+}
+
+function runAction(message, action) {
+  return Promise.resolve()
+    .then(action)
+    .catch((error) => {
+      if (!Array.isArray(error?.errorFields)) message.error(errorMessage(error));
+      return null;
+    });
 }
 
 function pickItems(payload, keys = ['items']) {
@@ -73,13 +83,16 @@ function PageCard({ title, extra, children }) {
 function useLoader(loader, deps = []) {
   const { message } = AntApp.useApp();
   const [state, setState] = useState({ loading: true, data: null, error: '' });
+  const requestIdRef = useRef(0);
   const reload = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
     setState((current) => ({ ...current, loading: true, error: '' }));
     try {
       const data = await loader();
-      setState({ loading: false, data, error: '' });
+      if (requestId === requestIdRef.current) setState({ loading: false, data, error: '' });
       return data;
     } catch (err) {
+      if (requestId !== requestIdRef.current) return null;
       const msg = errorMessage(err);
       setState({ loading: false, data: null, error: msg });
       message.error(msg);
@@ -88,6 +101,7 @@ function useLoader(loader, deps = []) {
   }, deps);
   useEffect(() => {
     reload();
+    return () => { requestIdRef.current += 1; };
   }, [reload]);
   return { ...state, reload };
 }
@@ -126,18 +140,14 @@ function EntitiesPage() {
   const [form] = Form.useForm();
   const { loading, data, reload } = useLoader(() => api.listEntities({ limit: 100 }), []);
   const items = data?.items || [];
-  const save = async () => {
+  const save = () => runAction(message, async () => {
     const values = await form.validateFields();
-    try {
-      if (editing) await api.updateEntity(editing.id, values);
-      else await api.createEntity(values);
-      message.success(t(editing ? 'common.updateSuccess' : 'common.createSuccess'));
-      setOpen(false);
-      reload();
-    } catch (err) {
-      message.error(errorMessage(err));
-    }
-  };
+    if (editing) await api.updateEntity(editing.id, values);
+    else await api.createEntity(values);
+    message.success(t(editing ? 'common.updateSuccess' : 'common.createSuccess'));
+    setOpen(false);
+    await reload();
+  });
   return (
     <div className="page-stack">
       <div className="toolbar"><div /><Button type="primary" icon={<Plus size={16} />} onClick={() => { setEditing(null); form.resetFields(); setOpen(true); }}>{t('common.create')}</Button></div>
@@ -148,7 +158,7 @@ function EntitiesPage() {
         { title: t('entities.defaultLocale'), dataIndex: 'default_locale' },
         { title: t('entities.brandName'), dataIndex: 'brand_name' },
         { title: t('entities.createdAt'), dataIndex: 'created_at', render: formatDate },
-        { title: t('common.actions'), render: (_, row) => <Button size="small" onClick={() => { setEditing(row); form.setFieldsValue(row); setOpen(true); }}>{t('common.edit')}</Button> },
+        { title: t('common.actions'), render: (_, row) => <Button size="small" onClick={() => { setEditing(row); form.resetFields(); form.setFieldsValue(row); setOpen(true); }}>{t('common.edit')}</Button> },
       ]} />
       <Modal title={editing ? t('common.edit') : t('common.create')} open={open} onOk={save} onCancel={() => setOpen(false)} destroyOnHidden>
         <Form form={form} layout="vertical">
@@ -173,15 +183,16 @@ function IdentitySourcesPage() {
   const { loading, data, reload } = useLoader(() => api.listIdentitySources({ limit: 100 }), []);
   const sources = pickItems(data, ['items', 'sources']);
   const loadConfig = async () => {
-    setConfigOpen(true);
     try {
       const cfg = await api.getFeishuIdentitySourceConfig();
-      configForm.setFieldsValue({ ...cfg, ...(cfg.config || {}) });
-    } catch {
       configForm.resetFields();
+      configForm.setFieldsValue({ ...cfg, ...(cfg.config || {}) });
+      setConfigOpen(true);
+    } catch (error) {
+      message.error(errorMessage(error));
     }
   };
-  const saveConfig = async () => {
+  const saveConfig = () => runAction(message, async () => {
     const values = await configForm.validateFields();
     await api.upsertFeishuIdentitySourceConfig({
       display_name: values.display_name || 'Feishu',
@@ -196,15 +207,15 @@ function IdentitySourcesPage() {
     });
     message.success(t('common.updateSuccess'));
     setConfigOpen(false);
-    reload();
-  };
+    await reload();
+  });
   return (
     <div className="page-stack">
       <div className="toolbar">
         <div />
         <Space>
           <Button icon={<Settings size={16} />} onClick={loadConfig}>{t('identitySources.feishuConfigTitle')}</Button>
-          <Button type="primary" icon={<Plus size={16} />} onClick={async () => { await api.createIdentitySource({ type: 'feishu', name: 'Feishu', sync_enabled: true }); message.success(t('common.createSuccess')); reload(); }}>{t('identitySources.createFeishuSource')}</Button>
+          <Button type="primary" icon={<Plus size={16} />} onClick={() => runAction(message, async () => { await api.createIdentitySource({ type: 'feishu', name: 'Feishu', sync_enabled: true }); message.success(t('common.createSuccess')); await reload(); })}>{t('identitySources.createFeishuSource')}</Button>
         </Space>
       </div>
       <Table rowKey="id" loading={loading} dataSource={sources} columns={[
@@ -214,8 +225,8 @@ function IdentitySourcesPage() {
         { title: t('identitySources.syncEnabled'), dataIndex: 'sync_enabled', render: (v) => <Tag color={v ? 'green' : undefined}>{t(Boolean(v) ? 'common.yes' : 'common.no')}</Tag> },
         { title: t('users.updatedAt'), dataIndex: 'updated_at', render: formatDate },
         { title: t('common.actions'), render: (_, row) => <Space>
-          <Button size="small" onClick={async () => { await api.triggerSourceSync(row.id, 'incremental'); message.success(t('identitySources.incrementalSyncStarted')); }}>{t('identitySources.triggerIncremental')}</Button>
-          <Popconfirm title={t('common.delete')} onConfirm={async () => { await api.deleteIdentitySource(row.id); message.success(t('common.deleteSuccess')); reload(); }}><Button size="small" danger>{t('common.delete')}</Button></Popconfirm>
+          <Button size="small" onClick={() => runAction(message, async () => { await api.triggerSourceSync(row.id, 'incremental'); message.success(t('identitySources.incrementalSyncStarted')); })}>{t('identitySources.triggerIncremental')}</Button>
+          <Popconfirm title={t('common.delete')} onConfirm={() => runAction(message, async () => { await api.deleteIdentitySource(row.id); message.success(t('common.deleteSuccess')); await reload(); })}><Button size="small" danger>{t('common.delete')}</Button></Popconfirm>
         </Space> },
       ]} />
       <Modal title={t('identitySources.feishuConfigTitle')} open={configOpen} onOk={saveConfig} onCancel={() => setConfigOpen(false)} destroyOnHidden>
@@ -268,17 +279,22 @@ function OrganizationPage() {
   };
   useEffect(() => { loadRoot(); }, []);
   const onLoadData = async (node) => {
-    const raw = node.raw;
-    if (!raw || node.children?.length) return;
-    const res = await api.listOrganizationTreeChildren({ kind: raw.kind, id: raw.id, limit: 100 });
-    node.children = (res.items || []).map(toNode);
-    setTreeData([...treeData]);
+    try {
+      const raw = node.raw;
+      if (!raw || node.children?.length) return;
+      const res = await api.listOrganizationTreeChildren({ kind: raw.kind, id: raw.id, limit: 100 });
+      node.children = (res.items || []).map(toNode);
+      setTreeData([...treeData]);
+    } catch (error) {
+      message.error(errorMessage(error));
+      throw error;
+    }
   };
-  const search = async () => {
+  const search = () => runAction(message, async () => {
     if (!query.trim()) return loadRoot();
     const res = await api.searchOrganizationTree({ q: query.trim(), limit: 100 });
     setTreeData((res.items || []).map(toNode));
-  };
+  });
   return (
     <div className="two-column">
       <Card title={t('organization.organizationTree')} extra={<Space.Compact><Input value={query} onChange={(e) => setQuery(e.target.value)} onPressEnter={search} placeholder={t('organization.search')} /><Button icon={<Search size={16} />} onClick={search} aria-label={t('organization.search')} /></Space.Compact>}>
@@ -310,7 +326,7 @@ function UsersPage() {
         { title: t('users.type'), dataIndex: 'user_type', render: (v) => t(`users.type.${v}`, v) },
         { title: t('common.actions'), render: (_, row) => <Space>
           <Button size="small" onClick={() => navigate(`/admin/users/${encodeURIComponent(row.id)}`)}>{t('common.details')}</Button>
-          <Button size="small" onClick={async () => { await (row.lifecycle_status === 'active' ? api.disableUser(row.id) : api.enableUser(row.id)); message.success(t('common.updateSuccess')); reload(); }}>{row.lifecycle_status === 'active' ? t('common.disable') : t('common.enable')}</Button>
+          <Button size="small" onClick={() => runAction(message, async () => { await (row.lifecycle_status === 'active' ? api.disableUser(row.id) : api.enableUser(row.id)); message.success(t('common.updateSuccess')); await reload(); })}>{row.lifecycle_status === 'active' ? t('common.disable') : t('common.enable')}</Button>
         </Space> },
       ]} />
     </div>
@@ -413,16 +429,16 @@ function UserDetailPage({ id }) {
     return { user, roles, allRoles: allRoles.items || [], sessions: sessions.items || [], bindings, sources: pickItems(sources, ['items', 'sources']) };
   }, [id]);
   if (loading || !data) return <Skeleton active paragraph={{ rows: 8 }} />;
-  const saveUser = async () => {
+  const saveUser = () => runAction(message, async () => {
     const values = await form.validateFields();
     await api.updateUser(id, values);
     message.success(t('common.updateSuccess'));
     setEditOpen(false);
-    reload();
-  };
+    await reload();
+  });
   return (
     <div className="page-stack">
-      <PageCard title={data.user.display_name || data.user.username} extra={<Button onClick={() => { form.setFieldsValue(data.user); setEditOpen(true); }}>{t('common.edit')}</Button>}>
+      <PageCard title={data.user.display_name || data.user.username} extra={<Button onClick={() => { form.resetFields(); form.setFieldsValue(data.user); setEditOpen(true); }}>{t('common.edit')}</Button>}>
         <Descriptions bordered size="small" column={2} items={[
           { key: 'username', label: t('users.username'), children: data.user.username },
           { key: 'email', label: t('users.email'), children: data.user.email || '-' },
@@ -432,22 +448,22 @@ function UserDetailPage({ id }) {
           { key: 'updated', label: t('users.updatedAt'), children: formatDate(data.user.updated_at) },
         ]} />
       </PageCard>
-      <PageCard title={t('users.roles')} extra={<Select placeholder={t('users.assignRole')} style={{ width: 220 }} options={data.allRoles.map((r) => ({ value: r.id, label: `${r.name} (${r.code})` }))} onChange={async (roleId) => { await api.assignRoleToUser(id, roleId); message.success(t('users.roleAssigned')); reload(); }} />}>
-        <Space wrap>{data.roles.map((role) => <Tag key={role.id} closable onClose={(e) => { e.preventDefault(); api.removeRoleFromUser(id, role.id).then(reload); }}>{role.name}</Tag>)}</Space>
+      <PageCard title={t('users.roles')} extra={<Select placeholder={t('users.assignRole')} style={{ width: 220 }} options={data.allRoles.map((r) => ({ value: r.id, label: `${r.name} (${r.code})` }))} onChange={(roleId) => runAction(message, async () => { await api.assignRoleToUser(id, roleId); message.success(t('users.roleAssigned')); await reload(); })} />}>
+        <Space wrap>{data.roles.map((role) => <Tag key={role.id} closable onClose={(e) => { e.preventDefault(); runAction(message, async () => { await api.removeRoleFromUser(id, role.id); await reload(); }); }}>{role.name}</Tag>)}</Space>
       </PageCard>
-      <Table title={() => <Space>{t('users.bindings')}<Button size="small" icon={<Plus size={14} />} onClick={() => setBindingOpen(true)}>{t('common.create')}</Button></Space>} rowKey="id" dataSource={data.bindings} columns={[
+      <Table title={() => <Space>{t('users.bindings')}<Button size="small" icon={<Plus size={14} />} onClick={() => { bindingForm.resetFields(); setBindingOpen(true); }}>{t('common.create')}</Button></Space>} rowKey="id" dataSource={data.bindings} columns={[
         { title: t('users.source'), dataIndex: 'source_name' },
         { title: t('users.providerUid'), dataIndex: 'provider_uid' },
         { title: t('users.primaryBinding'), dataIndex: 'is_primary', render: (v) => t(Boolean(v) ? 'common.yes' : 'common.no') },
         { title: t('users.boundAt'), dataIndex: 'bound_at', render: formatDate },
-        { title: t('common.actions'), render: (_, row) => <Popconfirm title={t('common.delete')} onConfirm={async () => { await api.deleteUserBinding(id, row.id); reload(); }}><Button danger size="small">{t('common.delete')}</Button></Popconfirm> },
+        { title: t('common.actions'), render: (_, row) => <Popconfirm title={t('common.delete')} onConfirm={() => runAction(message, async () => { await api.deleteUserBinding(id, row.id); await reload(); })}><Button danger size="small">{t('common.delete')}</Button></Popconfirm> },
       ]} />
       <Table title={() => t('users.sessions')} rowKey="id" dataSource={data.sessions} columns={[
         { title: t('users.loginMethod'), dataIndex: 'login_method' },
         { title: t('users.status'), dataIndex: 'status', render: (v) => <Tag>{t(`users.sessionStatus.${v}`, v)}</Tag> },
         { title: t('users.ip'), dataIndex: 'ip' },
         { title: t('users.createdAt'), dataIndex: 'created_at', render: formatDate },
-        { title: t('common.actions'), render: (_, row) => <Button size="small" onClick={async () => { await api.revokeSession(row.id); reload(); }}>{t('users.revokeSession')}</Button> },
+        { title: t('common.actions'), render: (_, row) => <Button size="small" onClick={() => runAction(message, async () => { await api.revokeSession(row.id); await reload(); })}>{t('users.revokeSession')}</Button> },
       ]} />
       <Modal title={t('common.edit')} open={editOpen} onOk={saveUser} onCancel={() => setEditOpen(false)}>
         <Form form={form} layout="vertical">
@@ -457,7 +473,7 @@ function UserDetailPage({ id }) {
           <Form.Item name="locale" label={t('users.locale')}><Select options={['zh-CN', 'en-US'].map((value) => ({ value, label: value }))} /></Form.Item>
         </Form>
       </Modal>
-      <Modal title={t('users.createBinding')} open={bindingOpen} onOk={async () => { const values = await bindingForm.validateFields(); await api.createUserBinding(id, values); setBindingOpen(false); reload(); }} onCancel={() => setBindingOpen(false)}>
+      <Modal title={t('users.createBinding')} open={bindingOpen} onOk={() => runAction(message, async () => { const values = await bindingForm.validateFields(); await api.createUserBinding(id, values); setBindingOpen(false); await reload(); })} onCancel={() => setBindingOpen(false)}>
         <Form form={bindingForm} layout="vertical">
           <Form.Item name="source_id" label={t('users.source')} rules={[{ required: true }]}><Select options={data.sources.map((s) => ({ value: s.id, label: s.name }))} /></Form.Item>
           <Form.Item name="directory_user_id" label={t('users.directoryUserId')} rules={[{ required: true }]}><Input /></Form.Item>
@@ -550,8 +566,12 @@ function ApplicationsPage() {
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState(null);
   const [viewing, setViewing] = useState(null);
+  const [page, setPage] = useState(1);
   const [form] = Form.useForm();
-  const { loading, data, reload } = useLoader(() => api.listApplications({ limit: 100 }), []);
+  const { loading, data, reload } = useLoader(() => api.listApplications({
+    limit: APPLICATION_PAGE_SIZE,
+    offset: (page - 1) * APPLICATION_PAGE_SIZE,
+  }), [page]);
   const createApplication = () => {
     setSelected(null);
     form.resetFields();
@@ -590,7 +610,8 @@ function ApplicationsPage() {
       else await api.createApplication(payload);
       message.success(t('applications.saveSuccess'));
       setOpen(false);
-      await reload();
+      if (!selected && page !== 1) setPage(1);
+      else await reload();
     } catch (error) {
       message.error(errorMessage(error));
     } finally {
@@ -601,15 +622,30 @@ function ApplicationsPage() {
     try {
       await api.deleteApplication(row.id);
       message.success(t('common.deleteSuccess'));
-      await reload();
+      if (page > 1 && (data?.applications?.length || 0) === 1) setPage(page - 1);
+      else await reload();
     } catch (error) {
       message.error(errorMessage(error));
+    }
+  };
+  const copyViewing = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(viewing, null, 2));
+      message.success(t('common.copySuccess'));
+    } catch {
+      message.error(t('common.copyFailed'));
     }
   };
   return (
     <div className="page-stack">
       <div className="toolbar"><div /><Button type="primary" icon={<Plus size={16} />} onClick={createApplication}>{t('common.create')}</Button></div>
-      <Table rowKey="id" loading={loading} dataSource={data?.applications || []} columns={[
+      <Table rowKey="id" loading={loading} dataSource={data?.applications || []} pagination={{
+        current: page,
+        pageSize: APPLICATION_PAGE_SIZE,
+        total: data?.total || 0,
+        showSizeChanger: false,
+        onChange: setPage,
+      }} scroll={{ x: 'max-content' }} columns={[
         { title: t('applications.name'), dataIndex: 'name' },
         { title: t('applications.type'), dataIndex: 'type', render: (v) => t(`applications.type.${v}`, v) },
         { title: t('applications.status'), dataIndex: 'status', render: (v) => <Tag>{t(`applications.status.${v}`, v)}</Tag> },
@@ -625,9 +661,11 @@ function ApplicationsPage() {
           <Form.Item name="name" label={t('applications.name')} rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="type" label={t('applications.type')} rules={[{ required: true }]}><Select disabled={Boolean(selected)} options={APPLICATION_TYPES.map((value) => ({ value, label: t(`applications.type.${value}`, value) }))} /></Form.Item>
           <Form.Item name="status" label={t('applications.status')} rules={[{ required: true }]}><Select options={['active', 'disabled'].map((value) => ({ value, label: t(`applications.status.${value}`, value) }))} /></Form.Item>
-          <Form.Item noStyle shouldUpdate={(prev, next) => prev.type !== next.type}>
+          <Form.Item noStyle shouldUpdate={(prev, next) => prev.type !== next.type || prev.workplace_provider !== next.workplace_provider}>
             {() => {
               const type = form.getFieldValue('type');
+              const workplaceProvider = form.getFieldValue('workplace_provider');
+              const requireWorkplaceConfig = workplaceProvider === 'feishu';
               if (type === 'oidc_client') return <>
                 <Form.Item name="client_id" label={t('applications.clientId')}><Input disabled={Boolean(selected)} placeholder={t('applications.autoWhenEmpty')} /></Form.Item>
                 <Form.Item name="client_secret" label={t('applications.clientSecret')}><Input readOnly placeholder={t('applications.autoWhenEmpty')} /></Form.Item>
@@ -637,8 +675,8 @@ function ApplicationsPage() {
                 <Form.Item name="response_types" label={t('applications.responseTypes')}><Select mode="tags" /></Form.Item>
                 <Form.Item name="pkce_required" label={t('applications.pkce')} valuePropName="checked"><Switch /></Form.Item>
                 <Form.Item name="workplace_provider" label={t('applications.workplaceProvider')}><Select onChange={(value) => { if (!value) form.setFieldsValue({ workplace_app_id: '', workplace_app_secret: '' }); }} options={[{ value: '', label: t('applications.workplaceProvider.none') }, { value: 'feishu', label: t('applications.workplaceProvider.feishu') }]} /></Form.Item>
-                <Form.Item name="workplace_app_id" label={t('applications.workplaceAppId')}><Input /></Form.Item>
-                <Form.Item name="workplace_app_secret" label={t('applications.workplaceAppSecret')}><Input /></Form.Item>
+                <Form.Item name="workplace_app_id" label={t('applications.workplaceAppId')} rules={[{ required: requireWorkplaceConfig }]}><Input /></Form.Item>
+                <Form.Item name="workplace_app_secret" label={t('applications.workplaceAppSecret')} rules={[{ required: requireWorkplaceConfig }]}><Input /></Form.Item>
               </>;
               if (type === 'api_client') return <>
                 <Form.Item name="client_id" label={t('applications.clientId')} rules={[{ required: !selected || Boolean(selected?.config?.client_id || selected?.config?.client_secret) }]}><Input /></Form.Item>
@@ -655,7 +693,7 @@ function ApplicationsPage() {
           </Form.Item>
         </Form>
       </Modal>
-      <Modal width={720} title={t('common.view')} open={Boolean(viewing)} footer={<Button onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify(viewing, null, 2)); message.success(t('common.copySuccess')); } catch { message.error(t('common.copyFailed')); } }}>{t('common.copy')}</Button>} onCancel={() => setViewing(null)}><pre className="json-box">{JSON.stringify(viewing, null, 2)}</pre></Modal>
+      <Modal width={720} title={t('common.view')} open={Boolean(viewing)} footer={<Button onClick={copyViewing}>{t('common.copy')}</Button>} onCancel={() => setViewing(null)}><pre className="json-box">{JSON.stringify(viewing, null, 2)}</pre></Modal>
     </div>
   );
 }
@@ -672,31 +710,31 @@ function RolesPage() {
     const [roles, permissions] = await Promise.all([api.listRoles({ limit: 200 }), api.listPermissions({ limit: 200 })]);
     return { roles: roles.items || [], permissions: permissions.items || [] };
   }, []);
-  const saveRole = async () => {
+  const saveRole = () => runAction(message, async () => {
     const values = await roleForm.validateFields();
     if (selectedRole) await api.updateRole(selectedRole.id, values);
     else await api.createRole(values);
     message.success(t('common.updateSuccess'));
     setRoleOpen(false);
-    reload();
-  };
-  const savePermission = async () => {
+    await reload();
+  });
+  const savePermission = () => runAction(message, async () => {
     const values = await permForm.validateFields();
     await api.createPermission(values);
     message.success(t('common.createSuccess'));
     setPermOpen(false);
-    reload();
-  };
+    await reload();
+  });
   return (
     <div className="two-column">
       <Card title={t('roles.title')} extra={<Button icon={<Plus size={16} />} onClick={() => { setSelectedRole(null); roleForm.resetFields(); setRoleOpen(true); }}>{t('common.create')}</Button>}>
         <Table rowKey="id" loading={loading} dataSource={data?.roles || []} pagination={false} columns={[
           { title: t('roles.name'), dataIndex: 'name' },
           { title: t('roles.code'), dataIndex: 'code' },
-          { title: t('common.actions'), render: (_, row) => <Space><Button size="small" onClick={() => { setSelectedRole(row); roleForm.setFieldsValue(row); setRoleOpen(true); }}>{t('common.edit')}</Button><RolePermissionEditor role={row} permissions={data?.permissions || []} /></Space> },
+          { title: t('common.actions'), render: (_, row) => <Space><Button size="small" onClick={() => { setSelectedRole(row); roleForm.resetFields(); roleForm.setFieldsValue(row); setRoleOpen(true); }}>{t('common.edit')}</Button><RolePermissionEditor role={row} permissions={data?.permissions || []} /></Space> },
         ]} />
       </Card>
-      <Card title={t('roles.permissions')} extra={<Button icon={<Plus size={16} />} onClick={() => setPermOpen(true)}>{t('common.create')}</Button>}>
+      <Card title={t('roles.permissions')} extra={<Button icon={<Plus size={16} />} onClick={() => { permForm.resetFields(); setPermOpen(true); }}>{t('common.create')}</Button>}>
         <Table rowKey="id" loading={loading} dataSource={data?.permissions || []} pagination={{ pageSize: 8 }} columns={[{ title: t('roles.code'), dataIndex: 'code' }, { title: t('roles.name'), dataIndex: 'name' }, { title: t('roles.type'), dataIndex: 'type' }]} />
       </Card>
       <Modal title={t('roles.role')} open={roleOpen} onOk={saveRole} onCancel={() => setRoleOpen(false)}><Form form={roleForm} layout="vertical"><Form.Item name="name" label={t('roles.name')} rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="code" label={t('roles.code')} rules={[{ required: !selectedRole }]}><Input disabled={Boolean(selectedRole)} /></Form.Item><Form.Item name="description" label={t('roles.description')}><Input.TextArea /></Form.Item></Form></Modal>
@@ -710,13 +748,13 @@ function RolePermissionEditor({ role, permissions }) {
   const { message } = AntApp.useApp();
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState([]);
-  const load = async () => {
-    const current = await api.listRolePermissions(role.id).catch(() => []);
+  const load = () => runAction(message, async () => {
+    const current = await api.listRolePermissions(role.id);
     setSelected(current.map((p) => p.id));
     setOpen(true);
-  };
-  const save = async () => {
-    const current = await api.listRolePermissions(role.id).catch(() => []);
+  });
+  const save = () => runAction(message, async () => {
+    const current = await api.listRolePermissions(role.id);
     const currentIds = new Set(current.map((p) => p.id));
     const nextIds = new Set(selected);
     await Promise.all([
@@ -725,7 +763,7 @@ function RolePermissionEditor({ role, permissions }) {
     ]);
     message.success(t('roles.permissionSaveSuccess'));
     setOpen(false);
-  };
+  });
   return <><Button size="small" onClick={load}>{t('roles.permissions')}</Button><Modal title={t('roles.permissionDialogTitle', { name: role.name })} open={open} onOk={save} onCancel={() => setOpen(false)}><Select mode="multiple" style={{ width: '100%' }} value={selected} onChange={setSelected} options={permissions.map((p) => ({ value: p.id, label: `${p.name} (${p.code})` }))} /></Modal></>;
 }
 
@@ -764,11 +802,11 @@ function PlatformPage() {
     form.setFieldsValue(branding);
     return branding;
   }, []);
-  const save = async () => {
+  const save = () => runAction(message, async () => {
     const values = await form.validateFields();
     await api.updatePlatformBranding(values);
     message.success(t('common.updateSuccess'));
-  };
+  });
   return <Card className="data-card" title={t('platform.title')} loading={loading} extra={<Button type="primary" icon={<Save size={16} />} onClick={save}>{t('common.save')}</Button>}><Form form={form} layout="vertical"><Form.Item name="platform_name" label={t('platform.name')} rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="logo_url" label={t('platform.logoUrl')}><Input /></Form.Item><Form.Item name="favicon_url" label={t('platform.faviconUrl')}><Input /></Form.Item><Form.Item name="title_suffix" label={t('platform.titleSuffix')}><Input /></Form.Item></Form></Card>;
 }
 
@@ -783,15 +821,15 @@ function AdminUsersPage() {
     const [admins, roles, entities] = await Promise.all([api.listAdminUsers(), api.listAdminRoles(), api.listEntities({ limit: 200 }).catch(() => ({ items: [] }))]);
     return { admins: admins.items || [], roles, entities: entities.items || [] };
   }, []);
-  const save = async () => {
+  const save = () => runAction(message, async () => {
     const values = await form.validateFields();
     if (passwordMode) await api.setAdminUserPassword(editing.id, values.password);
     else if (editing) await api.updateAdminUser(editing.id, values);
     else await api.createAdminUser(values);
     message.success(t('common.updateSuccess'));
     setOpen(false);
-    reload();
-  };
+    await reload();
+  });
   return (
     <div className="page-stack">
       <div className="toolbar"><div /><Button type="primary" icon={<Plus size={16} />} onClick={() => { setEditing(null); setPasswordMode(false); form.resetFields(); setOpen(true); }}>{t('common.create')}</Button></div>
@@ -801,7 +839,7 @@ function AdminUsersPage() {
         { title: t('adminUsers.role'), dataIndex: 'role', render: (v) => <Tag>{v}</Tag> },
         { title: t('adminUsers.status'), dataIndex: 'status', render: (v) => <Tag>{t(`adminUsers.status.${v}`, v)}</Tag> },
         { title: t('adminUsers.updatedAt'), dataIndex: 'updated_at', render: formatDate },
-        { title: t('common.actions'), render: (_, row) => <Space><Button size="small" onClick={() => { setEditing(row); setPasswordMode(false); form.setFieldsValue(row); setOpen(true); }}>{t('common.edit')}</Button><Button size="small" onClick={() => { setEditing(row); setPasswordMode(true); form.resetFields(); setOpen(true); }}>{t('adminUsers.changePassword')}</Button><Popconfirm title={t('common.delete')} onConfirm={async () => { await api.deleteAdminUser(row.id); reload(); }}><Button size="small" danger>{t('common.delete')}</Button></Popconfirm></Space> },
+        { title: t('common.actions'), render: (_, row) => <Space><Button size="small" onClick={() => { setEditing(row); setPasswordMode(false); form.resetFields(); form.setFieldsValue(row); setOpen(true); }}>{t('common.edit')}</Button><Button size="small" onClick={() => { setEditing(row); setPasswordMode(true); form.resetFields(); setOpen(true); }}>{t('adminUsers.changePassword')}</Button><Popconfirm title={t('common.delete')} onConfirm={() => runAction(message, async () => { await api.deleteAdminUser(row.id); await reload(); })}><Button size="small" danger>{t('common.delete')}</Button></Popconfirm></Space> },
       ]} />
       <Modal title={passwordMode ? t('adminUsers.changePassword') : editing ? t('common.edit') : t('common.create')} open={open} onOk={save} onCancel={() => setOpen(false)}>
         <Form form={form} layout="vertical">

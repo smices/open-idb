@@ -138,11 +138,9 @@ func TestValidDirectoryDeletionIdentifierRequiresExplicitProviderIDType(t *testi
 }
 
 func TestAcquireSourceLockRejectsConcurrentSyncForSameSource(t *testing.T) {
-	testcontainers.SkipIfProviderIsNotHealthy(t)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	pool := newSyncTestPool(ctx, t)
+	pool := newAtomicSyncTestPool(ctx, t)
 	queries := generated.New(pool)
 
 	first, err := NewSyncService(SyncServiceConfig{Queries: queries, Provider: fakeSyncDirectoryProvider{}, TxStarter: pool})
@@ -606,12 +604,10 @@ func newAtomicSyncTestPool(ctx context.Context, t *testing.T) *pgxpool.Pool {
 }
 
 func TestFullSyncArchivesMissingManagedUsers(t *testing.T) {
-	testcontainers.SkipIfProviderIsNotHealthy(t)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	pool := newSyncTestPool(ctx, t)
+	pool := newAtomicSyncTestPool(ctx, t)
 	queries := generated.New(pool)
 
 	entity, err := queries.CreateEntity(ctx, generated.CreateEntityParams{
@@ -751,12 +747,10 @@ func TestFullSyncArchivesMissingManagedUsers(t *testing.T) {
 }
 
 func TestFullSyncPreservesManagedUserULIDWhenProviderUIDChanges(t *testing.T) {
-	testcontainers.SkipIfProviderIsNotHealthy(t)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	pool := newSyncTestPool(ctx, t)
+	pool := newAtomicSyncTestPool(ctx, t)
 	queries := generated.New(pool)
 
 	entity, err := queries.CreateEntity(ctx, generated.CreateEntityParams{
@@ -873,12 +867,10 @@ func TestFullSyncPreservesManagedUserULIDWhenProviderUIDChanges(t *testing.T) {
 }
 
 func TestFullSyncProviderReturnedDeletedUserArchivesWithoutDisabledAudit(t *testing.T) {
-	testcontainers.SkipIfProviderIsNotHealthy(t)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	pool := newSyncTestPool(ctx, t)
+	pool := newAtomicSyncTestPool(ctx, t)
 	queries := generated.New(pool)
 
 	entity, err := queries.CreateEntity(ctx, generated.CreateEntityParams{
@@ -1000,12 +992,10 @@ func TestFullSyncProviderReturnedDeletedUserArchivesWithoutDisabledAudit(t *test
 }
 
 func TestFullSyncProviderReturnedDeletedUserWithoutBindingDoesNotMergeByUsername(t *testing.T) {
-	testcontainers.SkipIfProviderIsNotHealthy(t)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	pool := newSyncTestPool(ctx, t)
+	pool := newAtomicSyncTestPool(ctx, t)
 	queries := generated.New(pool)
 
 	entity, err := queries.CreateEntity(ctx, generated.CreateEntityParams{
@@ -1127,12 +1117,10 @@ func TestFullSyncProviderReturnedDeletedUserWithoutBindingDoesNotMergeByUsername
 }
 
 func TestFullSyncProviderReturnedDeletedUserWithoutBindingDoesNotCreateManagedUser(t *testing.T) {
-	testcontainers.SkipIfProviderIsNotHealthy(t)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	pool := newSyncTestPool(ctx, t)
+	pool := newAtomicSyncTestPool(ctx, t)
 	queries := generated.New(pool)
 
 	entity, err := queries.CreateEntity(ctx, generated.CreateEntityParams{

@@ -53,7 +53,12 @@ lint:
 	elif [ -z "$$packages" ]; then \
 		echo "no packages to lint"; \
 	else \
-		go test ./...; \
+		unformatted=$$(gofmt -l .); \
+		if [ -n "$$unformatted" ]; then \
+			echo "$$unformatted" >&2; \
+			exit 1; \
+		fi; \
+		go vet ./...; \
 	fi
 
 generate:

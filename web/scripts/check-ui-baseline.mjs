@@ -41,6 +41,23 @@ if (!dependencies.antd) {
   failures.push('Missing Ant Design dependency');
 }
 
+const reactMajor = Number.parseInt(String(dependencies.react || '').match(/\d+/)?.[0] || '0', 10);
+const antdMajor = Number.parseInt(String(dependencies.antd || '').match(/\d+/)?.[0] || '0', 10);
+if (reactMajor >= 19 && antdMajor === 5) {
+  if (!dependencies['@ant-design/v5-patch-for-react-19']) {
+    failures.push('React 19 with Ant Design 5 requires the official compatibility package');
+  }
+  if (!appJs.includes("import '@ant-design/v5-patch-for-react-19';")) {
+    failures.push('React 19 compatibility package must be loaded by the main application entry');
+  }
+}
+
+for (const command of ['test:unit', 'typecheck', 'check:ui', 'build']) {
+  if (!String(packageJson.scripts?.check || '').includes(`npm run ${command}`)) {
+    failures.push(`Web check script must include npm run ${command}`);
+  }
+}
+
 for (const filePath of collectFiles(join(root, 'src'))) {
   if (filePath.endsWith('.svelte')) {
     failures.push(`Unexpected legacy Svelte source file: ${filePath}`);
@@ -57,6 +74,10 @@ for (const [label, source] of [
   }
 }
 
+if (devWebLocal.includes('VITE_API_TARGET=')) {
+  failures.push('Local web startup must keep the API target server-only so browser requests use the Vite proxy');
+}
+
 if (!webContract.includes('workplace-continue.js')) {
   failures.push('Missing documented lightweight workplace entry exception in web frontend contract');
 }
@@ -67,6 +88,15 @@ if (!bootJs.includes("import('./workplace-continue.js')")) {
 
 if (!appJs.includes("React.lazy(() => import('./admin-pages.jsx')")) {
   failures.push('Admin pages must be route-lazy loaded from the main React entry');
+}
+if (!appJs.includes('locale={themeState.language') || !appJs.includes('antdZhCN') || !appJs.includes('antdEnUS')) {
+  failures.push('Ant Design locale must follow the selected application language');
+}
+if (!appJs.includes('mobile-menu-button') || !appCss.includes('.mobile-sidebar-backdrop')) {
+  failures.push('Admin shell must provide a mobile navigation control and overlay');
+}
+if (!/\.nav-menu\s*\{[\s\S]*?min-height:\s*0;[\s\S]*?overflow-y:\s*auto;[\s\S]*?\}/.test(appCss)) {
+  failures.push('Admin navigation must remain scrollable on short viewports');
 }
 
 for (const forbidden of ['react', 'react-dom', 'antd', 'react-i18next', './i18n/index.js']) {
@@ -123,8 +153,38 @@ const applicationTypeUnion = `export type ApplicationType = 'oidc_client' | 'api
 if (!adminPagesJs.includes(applicationTypeDeclaration)) {
   failures.push('Applications page must declare the canonical application type list');
 }
+if (!adminPagesJs.includes('offset: (page - 1) * APPLICATION_PAGE_SIZE') || !adminPagesJs.includes('total: data?.total')) {
+  failures.push('Applications page must paginate through the complete server-side result set');
+}
 if (!adminPagesJs.includes("type: values.type || 'oidc_client'")) {
   failures.push('Applications page must default new applications to oidc_client');
+}
+if (!adminPagesJs.includes("workplaceProvider === 'feishu'") || !adminPagesJs.includes('required: requireWorkplaceConfig')) {
+  failures.push('Feishu workplace selection must require its application ID and secret');
+}
+if (/on(?:Click|Confirm|Ok|Change)=\{async/.test(`${appJs}\n${adminPagesJs}`)) {
+  failures.push('Admin mutation handlers must route failures through shared error handling');
+}
+if (!adminPagesJs.includes('const requestIdRef = useRef(0)') || !adminPagesJs.includes('requestId === requestIdRef.current')) {
+  failures.push('Async page loaders must ignore stale responses');
+}
+if (!/const onLoadData = async[\s\S]*message\.error\(errorMessage\(error\)\);[\s\S]*throw error;/.test(adminPagesJs)) {
+  failures.push('Organization lazy loading must report errors without converting rejection to success');
+}
+if (adminPagesJs.includes('setConfigOpen(true);\n    try')) {
+  failures.push('Identity source configuration must not open before its existing values load successfully');
+}
+if (!/configForm\.resetFields\(\);\s*configForm\.setFieldsValue/.test(adminPagesJs)) {
+  failures.push('Identity source configuration reload must clear cancelled form values before applying server state');
+}
+if (adminPagesJs.includes('api.listRolePermissions(role.id).catch')) {
+  failures.push('Role permission read failures must not be treated as an empty permission set');
+}
+if (!adminPagesJs.includes('setEditing(row); setPasswordMode(false); form.resetFields(); form.setFieldsValue(row);')) {
+  failures.push('Admin user editing must clear values left by the previously selected account');
+}
+if (!appJs.includes('const saveProfile = () => runAction') || !appJs.includes('const savePassword = () => runAction')) {
+  failures.push('Profile mutations must surface API and validation failures');
 }
 if (!apiTs.includes(applicationTypeUnion) || !apiTs.includes('payload: ApplicationWriteRequest')) {
   failures.push('Frontend API must expose the canonical ApplicationType contract');

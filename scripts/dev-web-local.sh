@@ -275,7 +275,6 @@ start_web() {
   (
     cd "${ROOT_DIR}/web"
     PUBLIC_API_TARGET="http://localhost:${BACKEND_PORT}" \
-    VITE_API_TARGET="http://localhost:${BACKEND_PORT}" \
     npm run dev -- --host 0.0.0.0 --port "$WEB_PORT"
   )
 }

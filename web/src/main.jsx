@@ -1,5 +1,8 @@
+import '@ant-design/v5-patch-for-react-19';
 import React, { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import antdEnUS from 'antd/locale/en_US';
+import antdZhCN from 'antd/locale/zh_CN';
 import {
   App as AntApp,
   Alert,
@@ -31,6 +34,7 @@ import {
   GitBranch,
   KeyRound,
   Mail,
+  Menu as MenuIcon,
   Network,
   RefreshCw,
   Settings,
@@ -42,6 +46,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { api } from './lib/api.ts';
 import { feishuAuthCodeFromBridge, isFeishuClient, normalizeWorkplaceProvider, queryAuthCode, returnToParam } from './lib/feishu-workplace.js';
+import { safeReturnTo } from './lib/navigation.js';
 import { UserMenu } from './components/UserMenu.jsx';
 import './i18n/index.js';
 import 'antd/dist/reset.css';
@@ -69,6 +74,15 @@ function formatDate(value) {
 
 function errorMessage(error, fallback = 'Request failed') {
   return error instanceof Error ? error.message : fallback;
+}
+
+function runAction(message, action) {
+  return Promise.resolve()
+    .then(action)
+    .catch((error) => {
+      if (!Array.isArray(error?.errorFields)) message.error(errorMessage(error));
+      return null;
+    });
 }
 
 function pickItems(payload, keys = ['items']) {
@@ -194,7 +208,7 @@ function Root() {
   }), [themeState.resolvedTheme]);
 
   return (
-    <ConfigProvider theme={antThemeConfig}>
+    <ConfigProvider theme={antThemeConfig} locale={themeState.language === 'zh-CN' ? antdZhCN : antdEnUS}>
       <AntApp>
         <IdBridgeApp themeState={themeState} />
       </AntApp>
@@ -397,7 +411,7 @@ function LoginPage({ branding }) {
   const params = new URLSearchParams(window.location.search);
   const pathMode = modeFromLoginPath(pathname);
   const isAdminAccountPath = pathMode === 'admin' || pathMode === 'entity_admin';
-  const returnTo = params.get('return_to') || (isAdminAccountPath ? '/admin' : '/portal');
+  const returnTo = safeReturnTo(params.get('return_to'), isAdminAccountPath ? '/admin' : '/portal');
   const oidcClientId = returnToParam(returnTo, 'client_id');
   const workplaceProvider = normalizeWorkplaceProvider(
     params.get('workplace') ||
@@ -625,7 +639,8 @@ function PortalShell({ user, branding, themeState, onLogout }) {
 function AdminShell({ user, branding, themeState, onLogout }) {
   const { t } = useTranslation();
   const pathname = window.location.pathname;
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(SIDEBAR_KEY) === '1');
+  const [mobile, setMobile] = useState(() => window.matchMedia?.('(max-width: 767.98px)').matches || false);
+  const [collapsed, setCollapsed] = useState(() => mobile || localStorage.getItem(SIDEBAR_KEY) === '1');
   const active = routeTitle(pathname, t);
   const selectedKey = active.path || '/admin';
   const brandName = branding.platform_name || t('app.title');
@@ -639,30 +654,38 @@ function AdminShell({ user, branding, themeState, onLogout }) {
       .map((item) => ({ key: item.path, icon: item.icon, label: item.label })),
   }));
 
-  const toggle = () => {
-    const next = !collapsed;
+  const setNavigationCollapsed = (next) => {
     setCollapsed(next);
-    localStorage.setItem(SIDEBAR_KEY, next ? '1' : '0');
+    if (!mobile) localStorage.setItem(SIDEBAR_KEY, next ? '1' : '0');
+  };
+  const toggle = () => setNavigationCollapsed(!collapsed);
+  const handleBreakpoint = (broken) => {
+    setMobile(broken);
+    if (broken) setCollapsed(true);
   };
 
   return (
     <Layout className="shell">
-      <Sider className="sidebar" width={260} collapsedWidth={76} collapsible collapsed={collapsed} trigger={null}>
-        <a className="brand" href="/admin" aria-label={brandName}>
-          <span className="brand-mark"><img src={branding.logo_url || '/logo.svg'} alt="" /></span>
-          {!collapsed ? <span><strong>{brandName}</strong><span>{t('layout.adminConsole')}</span></span> : null}
-        </a>
-        <Button
-          className="sidebar-rail-toggle"
-          icon={collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-          onClick={toggle}
-          title={collapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
-          aria-label={collapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
-        />
-        <Menu className="nav-menu" mode="inline" selectedKeys={[selectedKey]} items={menuItems} onClick={({ key }) => navigate(key)} />
+      {mobile && !collapsed ? <button type="button" className="mobile-sidebar-backdrop" onClick={() => setNavigationCollapsed(true)} aria-label={t('layout.collapseSidebar')} /> : null}
+      <Sider className="sidebar" width={260} collapsedWidth={mobile ? 0 : 76} breakpoint="md" onBreakpoint={handleBreakpoint} collapsible collapsed={collapsed} trigger={null}>
+        {mobile && collapsed ? null : <>
+          <a className="brand" href="/admin" aria-label={brandName}>
+            <span className="brand-mark"><img src={branding.logo_url || '/logo.svg'} alt="" /></span>
+            {!collapsed ? <span><strong>{brandName}</strong><span>{t('layout.adminConsole')}</span></span> : null}
+          </a>
+          <Button
+            className="sidebar-rail-toggle"
+            icon={collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+            onClick={toggle}
+            title={collapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
+            aria-label={collapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
+          />
+          <Menu className="nav-menu" mode="inline" selectedKeys={[selectedKey]} items={menuItems} onClick={({ key }) => { if (mobile) setCollapsed(true); navigate(key); }} />
+        </>}
       </Sider>
-      <Layout>
+      <Layout className="shell-main" aria-hidden={mobile && !collapsed ? true : undefined} inert={mobile && !collapsed ? true : undefined}>
         <Header className="topbar">
+          <Button className="mobile-menu-button" type="text" icon={<MenuIcon size={20} />} onClick={() => setNavigationCollapsed(false)} aria-label={t('layout.expandSidebar')} />
           <div className="topbar-title">
             <h1>{active.label}</h1>
             <p>{active.description}</p>
@@ -689,19 +712,20 @@ function ProfilePage({ user, admin }) {
   const [profileForm] = Form.useForm();
   const [passwordForm] = Form.useForm();
   useEffect(() => {
+    profileForm.resetFields();
     profileForm.setFieldsValue(user);
   }, [profileForm, user]);
-  const saveProfile = async () => {
+  const saveProfile = () => runAction(message, async () => {
     const values = await profileForm.validateFields();
     await (admin ? api.updateAdminMe({ display_name: values.display_name }) : api.updateMe({ display_name: values.display_name }));
     message.success(t('common.updateSuccess'));
-  };
-  const savePassword = async () => {
+  });
+  const savePassword = () => runAction(message, async () => {
     const values = await passwordForm.validateFields();
     await (admin ? api.updateAdminPassword(values) : api.updatePassword(values));
     passwordForm.resetFields();
     message.success(t('common.updateSuccess'));
-  };
+  });
   return (
     <div className="two-column">
       <Card title={t('profile.title')} extra={<Button onClick={saveProfile}>{t('common.save')}</Button>}>

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import { feishuAuthCodeFromBridge, isFeishuClient, normalizeWorkplaceProvider, queryAuthCode, returnToParam } from './lib/feishu-workplace.js';
+import { safeReturnTo } from './lib/navigation.js';
 
 const API_TARGET = import.meta.env.VITE_API_TARGET || import.meta.env.PUBLIC_API_TARGET || '';
 
@@ -583,7 +584,7 @@ function redirectToOAuth(provider, entityRef, returnTo) {
 
 async function runWorkplaceContinue() {
   const params = new URLSearchParams(window.location.search);
-  const returnTo = params.get('return_to') || '/portal';
+  const returnTo = safeReturnTo(params.get('return_to'), '/portal');
   const oidcClientId = returnToParam(returnTo, 'client_id');
   const workplaceProvider = normalizeWorkplaceProvider(
     params.get('workplace') ||

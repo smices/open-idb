@@ -29,7 +29,7 @@ type Session struct {
 type AdminSession struct {
 	ID          string
 	AdminID     string
-	EntityID     string
+	EntityID    string
 	Username    string
 	DisplayName string
 	Role        string
