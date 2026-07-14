@@ -9,27 +9,30 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/smices/open-idb/internal/secureconfig"
 )
 
 type Config struct {
-	HTTPAddr          string
-	DatabaseURL       string
-	DefaultLocale     string
-	ShutdownTimeout   time.Duration
-	OIDCIssuer        string
-	OIDCKeyID         string
-	OIDCPrivateKeyPEM string
-	AccessTokenTTL    time.Duration
-	IDTokenTTL        time.Duration
-	AuthCodeTTL       time.Duration
-	SessionTTL        time.Duration
-	RedisEnabled      bool
-	RedisURL          string
-	WebBaseURL        string
-	FeishuAppID       string
-	FeishuAppSecret   string
-	FeishuBaseURL     string
-	FeishuRedirectURI string
+	HTTPAddr            string
+	DatabaseURL         string
+	DefaultLocale       string
+	ShutdownTimeout     time.Duration
+	OIDCIssuer          string
+	OIDCKeyID           string
+	OIDCPrivateKeyPEM   string
+	ConfigEncryptionKey string
+	AccessTokenTTL      time.Duration
+	IDTokenTTL          time.Duration
+	AuthCodeTTL         time.Duration
+	SessionTTL          time.Duration
+	RedisEnabled        bool
+	RedisURL            string
+	WebBaseURL          string
+	FeishuAppID         string
+	FeishuAppSecret     string
+	FeishuBaseURL       string
+	FeishuRedirectURI   string
 }
 
 func Load() (Config, error) {
@@ -59,24 +62,25 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		HTTPAddr:          getEnv("IDB_HTTP_ADDR", ":8080"),
-		DatabaseURL:       os.Getenv("DATABASE_URL"),
-		DefaultLocale:     getEnv("IDB_DEFAULT_LOCALE", "en-US"),
-		ShutdownTimeout:   shutdownTimeout,
-		OIDCIssuer:        getEnv("IDB_OIDC_ISSUER", "http://localhost:8080"),
-		OIDCKeyID:         getEnv("IDB_OIDC_KEY_ID", "dev-key-1"),
-		OIDCPrivateKeyPEM: os.Getenv("IDB_OIDC_PRIVATE_KEY_PEM"),
-		AccessTokenTTL:    accessTokenTTL,
-		IDTokenTTL:        idTokenTTL,
-		AuthCodeTTL:       authCodeTTL,
-		SessionTTL:        sessionTTL,
-		RedisEnabled:      redisEnabled,
-		RedisURL:          os.Getenv("IDB_REDIS_URL"),
-		WebBaseURL:        os.Getenv("IDB_WEB_BASE_URL"),
-		FeishuAppID:       os.Getenv("IDB_FEISHU_APP_ID"),
-		FeishuAppSecret:   os.Getenv("IDB_FEISHU_APP_SECRET"),
-		FeishuBaseURL:     getEnv("IDB_FEISHU_BASE_URL", "https://open.feishu.cn"),
-		FeishuRedirectURI: getEnv("IDB_FEISHU_REDIRECT_URI", "http://localhost:8080/api/auth/feishu/callback"),
+		HTTPAddr:            getEnv("IDB_HTTP_ADDR", ":8080"),
+		DatabaseURL:         os.Getenv("DATABASE_URL"),
+		DefaultLocale:       getEnv("IDB_DEFAULT_LOCALE", "en-US"),
+		ShutdownTimeout:     shutdownTimeout,
+		OIDCIssuer:          getEnv("IDB_OIDC_ISSUER", "http://localhost:8080"),
+		OIDCKeyID:           getEnv("IDB_OIDC_KEY_ID", "dev-key-1"),
+		OIDCPrivateKeyPEM:   os.Getenv("IDB_OIDC_PRIVATE_KEY_PEM"),
+		ConfigEncryptionKey: strings.TrimSpace(os.Getenv("IDB_CONFIG_ENCRYPTION_KEY")),
+		AccessTokenTTL:      accessTokenTTL,
+		IDTokenTTL:          idTokenTTL,
+		AuthCodeTTL:         authCodeTTL,
+		SessionTTL:          sessionTTL,
+		RedisEnabled:        redisEnabled,
+		RedisURL:            os.Getenv("IDB_REDIS_URL"),
+		WebBaseURL:          os.Getenv("IDB_WEB_BASE_URL"),
+		FeishuAppID:         os.Getenv("IDB_FEISHU_APP_ID"),
+		FeishuAppSecret:     os.Getenv("IDB_FEISHU_APP_SECRET"),
+		FeishuBaseURL:       getEnv("IDB_FEISHU_BASE_URL", "https://open.feishu.cn"),
+		FeishuRedirectURI:   getEnv("IDB_FEISHU_REDIRECT_URI", "http://localhost:8080/api/auth/feishu/callback"),
 	}
 
 	if cfg.DefaultLocale != "en-US" && cfg.DefaultLocale != "zh-CN" {
@@ -101,6 +105,9 @@ func Load() (Config, error) {
 	}
 	if cfg.RedisEnabled && cfg.RedisURL == "" {
 		return Config{}, fmt.Errorf("IDB_REDIS_URL is required when IDB_REDIS_ENABLED is true")
+	}
+	if _, err := secureconfig.New(cfg.ConfigEncryptionKey); err != nil {
+		return Config{}, fmt.Errorf("IDB_CONFIG_ENCRYPTION_KEY: %w", err)
 	}
 
 	return cfg, nil

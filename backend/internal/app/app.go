@@ -127,10 +127,13 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		routerOptions = append(routerOptions, adminHandler.RegisterRoutes)
 
 		// Config service (IM providers)
-		configService, err := adminapi.NewConfigService(queries, cfg.FeishuRedirectURI)
+		configService, err := adminapi.NewConfigService(queries, cfg.FeishuRedirectURI, cfg.ConfigEncryptionKey)
 		if err != nil {
 			closeFn()
 			return nil, err
+		}
+		if cfg.ConfigEncryptionKey == "" {
+			logger.Warn("identity source configuration encryption is disabled; set IDB_CONFIG_ENCRYPTION_KEY before updating provider credentials")
 		}
 		configHandler := adminapi.NewConfigHandler(configService)
 		routerOptions = append(routerOptions, configHandler.RegisterRoutes)
@@ -212,6 +215,10 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 
 		// Login providers discovery endpoint + Feishu login and sync.
 		providerService := auth.NewLoginProviderService(queries, cfg.FeishuAppID, cfg.FeishuAppSecret, cfg.FeishuRedirectURI)
+		if err := providerService.SetConfigEncryptionKey(cfg.ConfigEncryptionKey); err != nil {
+			closeFn()
+			return nil, err
+		}
 		feishuLoginService := auth.NewFeishuLoginService(queries, nil, cfg.SessionTTL)
 		feishuLoginService.SetClientResolver(feishuClientResolver{
 			buildClient: func(ctx context.Context, entityID string) (*feishu.Client, error) {

@@ -275,6 +275,27 @@ func TestLoadRejectsInvalidOIDCTTL(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsConfigEncryptionKey(t *testing.T) {
+	const key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	setConfigEnv(t, map[string]string{"IDB_CONFIG_ENCRYPTION_KEY": key})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.ConfigEncryptionKey != key {
+		t.Fatalf("ConfigEncryptionKey = %q, want configured key", cfg.ConfigEncryptionKey)
+	}
+}
+
+func TestLoadRejectsInvalidConfigEncryptionKey(t *testing.T) {
+	setConfigEnv(t, map[string]string{"IDB_CONFIG_ENCRYPTION_KEY": "not-a-valid-key"})
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want invalid config encryption key error")
+	}
+}
+
 func setConfigEnv(t *testing.T, values map[string]string) {
 	t.Helper()
 
@@ -286,6 +307,7 @@ func setConfigEnv(t *testing.T, values map[string]string) {
 		"IDB_OIDC_ISSUER",
 		"IDB_OIDC_KEY_ID",
 		"IDB_OIDC_PRIVATE_KEY_PEM",
+		"IDB_CONFIG_ENCRYPTION_KEY",
 		"IDB_WEB_BASE_URL",
 		"IDB_FEISHU_REDIRECT_URI",
 		"IDB_REDIS_ENABLED",

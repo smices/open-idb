@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/smices/open-idb/internal/db/generated"
+	"github.com/smices/open-idb/internal/secureconfig"
 )
 
 // LoginProvider represents a configured third-party login provider.
@@ -24,8 +25,10 @@ type LoginProvider struct {
 }
 
 type FeishuProviderConfig struct {
-	AppID     string `json:"app_id"`
-	AppSecret string `json:"app_secret"`
+	AppID             string `json:"app_id"`
+	AppSecret         string `json:"app_secret"`
+	VerificationToken string `json:"verification_token,omitempty"`
+	EncryptKey        string `json:"encrypt_key,omitempty"`
 }
 
 // providerQueries is the database interface for login provider discovery.
@@ -42,16 +45,28 @@ type LoginProviderService struct {
 	feishuAppID       string
 	feishuAppSecret   string
 	feishuRedirectURI string
+	configCodec       *secureconfig.Codec
 }
 
 // NewLoginProviderService creates a LoginProviderService.
 func NewLoginProviderService(queries *generated.Queries, feishuAppID string, feishuAppSecret string, redirectURI string) *LoginProviderService {
+	codec, _ := secureconfig.New("")
 	return &LoginProviderService{
 		queries:           queries,
 		feishuAppID:       feishuAppID,
 		feishuAppSecret:   feishuAppSecret,
 		feishuRedirectURI: redirectURI,
+		configCodec:       codec,
 	}
+}
+
+func (s *LoginProviderService) SetConfigEncryptionKey(encodedKey string) error {
+	codec, err := secureconfig.New(strings.TrimSpace(encodedKey))
+	if err != nil {
+		return err
+	}
+	s.configCodec = codec
+	return nil
 }
 
 // ListProviders returns configured third-party login providers for a entity.
@@ -72,7 +87,7 @@ func (s *LoginProviderService) ListProvidersForClient(ctx context.Context, entit
 	}
 
 	providers := make([]LoginProvider, 0, len(rows))
-	feishuConfig, err := ParseFeishuProviderConfig(safeJSON(s.feishuAppIDConfig(rows, entityID)))
+	feishuConfig, err := s.parseStoredFeishuProviderConfig(safeJSON(s.feishuAppIDConfig(rows, entityID)))
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +143,7 @@ func (s *LoginProviderService) ResolveFeishuConfig(ctx context.Context, entityID
 		if row.Provider != "feishu" {
 			continue
 		}
-		rowCfg, err := ParseFeishuProviderConfig(row.Config)
+		rowCfg, err := s.parseStoredFeishuProviderConfig(row.Config)
 		if err != nil {
 			return FeishuProviderConfig{}, err
 		}
@@ -190,7 +205,7 @@ func mustULID(value string) string {
 func (s *LoginProviderService) feishuAppIDFromRow(ctx context.Context, entityID string, row generated.ListLoginProvidersRow) (string, error) {
 	_ = ctx
 	_ = entityID
-	cfg, err := ParseFeishuProviderConfig(row.Config)
+	cfg, err := s.parseStoredFeishuProviderConfig(row.Config)
 	if err != nil {
 		return "", err
 	}
@@ -222,7 +237,7 @@ func (s *LoginProviderService) feishuWorkplaceAppIDFromClient(ctx context.Contex
 func (s *LoginProviderService) feishuAppIDConfig(rows []generated.ListLoginProvidersRow, entityID string) []byte {
 	for _, row := range rows {
 		if row.Provider == "feishu" {
-			cfg, err := ParseFeishuProviderConfig(row.Config)
+			cfg, err := s.parseStoredFeishuProviderConfig(row.Config)
 			if err == nil && strings.TrimSpace(cfg.AppID) != "" {
 				return row.Config
 			}
@@ -232,6 +247,18 @@ func (s *LoginProviderService) feishuAppIDConfig(rows []generated.ListLoginProvi
 		return nil
 	}
 	return nil
+}
+
+func (s *LoginProviderService) parseStoredFeishuProviderConfig(raw []byte) (FeishuProviderConfig, error) {
+	plain := raw
+	if s.configCodec != nil {
+		var err error
+		plain, _, err = s.configCodec.Open(raw)
+		if err != nil {
+			return FeishuProviderConfig{}, err
+		}
+	}
+	return ParseFeishuProviderConfig(plain)
 }
 
 func (s *LoginProviderService) buildFeishuOAuthURL(entityID string, appID string) string {
