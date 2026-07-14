@@ -19,6 +19,31 @@ func TestGenerateRSAKey(t *testing.T) {
 	}
 }
 
+func TestParseRSAPrivateKeyPEM_RoundTripsGeneratedKey(t *testing.T) {
+	original, err := GenerateRSAKey()
+	if err != nil {
+		t.Fatalf("GenerateRSAKey() error = %v", err)
+	}
+
+	encoded, err := EncodeRSAPrivateKeyPEM(original)
+	if err != nil {
+		t.Fatalf("EncodeRSAPrivateKeyPEM() error = %v", err)
+	}
+	parsed, err := ParseRSAPrivateKeyPEM(encoded)
+	if err != nil {
+		t.Fatalf("ParseRSAPrivateKeyPEM() error = %v", err)
+	}
+	if parsed.N.Cmp(original.N) != 0 || parsed.D.Cmp(original.D) != 0 {
+		t.Fatal("parsed private key does not match original key")
+	}
+}
+
+func TestParseRSAPrivateKeyPEMRejectsInvalidInput(t *testing.T) {
+	if _, err := ParseRSAPrivateKeyPEM("not a private key"); err == nil {
+		t.Fatal("ParseRSAPrivateKeyPEM() error = nil, want error")
+	}
+}
+
 func TestPublicJWK(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

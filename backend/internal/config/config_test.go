@@ -115,6 +115,7 @@ func TestLoadAcceptsOIDCSettings(t *testing.T) {
 	setConfigEnv(t, map[string]string{
 		"IDB_OIDC_ISSUER":              "https://idb.example.test",
 		"IDB_OIDC_KEY_ID":              "key-2026",
+		"IDB_OIDC_PRIVATE_KEY_PEM":     "test-private-key",
 		"IDB_ACCESS_TOKEN_TTL_SECONDS": "60",
 		"IDB_ID_TOKEN_TTL_SECONDS":     "120",
 		"IDB_AUTH_CODE_TTL_SECONDS":    "30",
@@ -131,6 +132,9 @@ func TestLoadAcceptsOIDCSettings(t *testing.T) {
 	}
 	if cfg.OIDCKeyID != "key-2026" {
 		t.Fatalf("OIDCKeyID = %q, want %q", cfg.OIDCKeyID, "key-2026")
+	}
+	if cfg.OIDCPrivateKeyPEM != "test-private-key" {
+		t.Fatalf("OIDCPrivateKeyPEM = %q, want configured key", cfg.OIDCPrivateKeyPEM)
 	}
 	if cfg.AccessTokenTTL != time.Minute {
 		t.Fatalf("AccessTokenTTL = %s, want %s", cfg.AccessTokenTTL, time.Minute)
@@ -281,6 +285,7 @@ func setConfigEnv(t *testing.T, values map[string]string) {
 		"IDB_SHUTDOWN_TIMEOUT_SECONDS",
 		"IDB_OIDC_ISSUER",
 		"IDB_OIDC_KEY_ID",
+		"IDB_OIDC_PRIVATE_KEY_PEM",
 		"IDB_WEB_BASE_URL",
 		"IDB_FEISHU_REDIRECT_URI",
 		"IDB_REDIS_ENABLED",

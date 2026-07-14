@@ -50,6 +50,7 @@ https://idbridge.example.com
 | `IDB_WEB_BASE_URL` | 建议 | `https://idbridge.example.com` | Web 基准地址；未显式设置 Feishu 回调时用于生成回调地址 |
 | `IDB_FEISHU_REDIRECT_URI` | 飞书必填 | `https://idbridge.example.com/api/auth/feishu/callback` | 飞书 OAuth 回调地址 |
 | `IDB_OIDC_KEY_ID` | 建议 | `prod-key-1` | OIDC/JWKS key id |
+| `IDB_OIDC_PRIVATE_KEY_PEM` | 生产必填 | 由 Secret 注入 | OIDC RSA 私钥 PEM；必须在所有 backend 副本中保持一致 |
 | `IDB_DEFAULT_LOCALE` | 否 | `zh-CN` | `zh-CN` 或 `en-US` |
 | `IDB_SESSION_TTL_SECONDS` | 否 | `86400` | 用户会话 TTL |
 | `IDB_AUTH_CODE_TTL_SECONDS` | 否 | `300` | OIDC 授权码 TTL |
@@ -64,6 +65,23 @@ https://idbridge.example.com
 - `IDB_OIDC_ISSUER` 必须和部署后发现文档中的 issuer 一致。
 - `IDB_FEISHU_REDIRECT_URI` 必须在飞书开放平台中配置为 OAuth 回调地址。
 - 如果后端在内网 `http://idbridge:8080`，但用户访问域名是 `https://idbridge.example.com`，`IDB_OIDC_ISSUER` 仍然必须写外部可访问地址。
+- 生产环境必须通过 Secret 注入 `IDB_OIDC_PRIVATE_KEY_PEM`，不得提交到仓库或写入普通 ConfigMap。未配置时服务会为兼容旧部署临时生成密钥，但进程重启会改变 JWKS，不能作为生产长期方案。
+
+### 3.1 OIDC 签名密钥上线步骤
+
+现有旧版本使用进程内临时密钥，因此无法在升级后恢复旧私钥。为避免第三方应用在切换期间校验到刚刚失效的短期 token：
+
+1. 在受控环境生成 2048 位 RSA 私钥，并保存在部署 Secret 管理系统：
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048
+```
+
+2. 将完整 PEM 内容作为 `IDB_OIDC_PRIVATE_KEY_PEM` 注入全部 backend 副本，并为本次密钥设置新的 `IDB_OIDC_KEY_ID`。
+3. 在一次受控发布窗口内切换全部 backend 副本；旧版本签发的 access/id token 默认最多有效 15 分钟。发布前先等待该窗口结束或让依赖方刷新 token，避免旧公钥缓存造成短暂验签失败。
+4. 发布后访问 `/api/.well-known/jwks.json`，确认 `kid` 与配置一致；重启一个副本后再次确认 JWKS 不变。
+
+后续发布保持同一 Secret 和 `kid`，不会影响现有 `client_id`、回调地址、用户、应用或 client secret hash。密钥轮换应作为单独的兼容发布执行，保留旧公钥直到最长 token 有效期和缓存期结束。
 
 ## 4. 数据库初始化
 
@@ -146,6 +164,8 @@ make k8s-deploy-frontend
 - Ingress host
 
 ## 7. 反向代理配置
+
+健康检查约定：`/healthz` 只表示进程存活；`/readyz` 会检查 PostgreSQL，数据库不可用时返回 `503`。Kubernetes、负载均衡和发布脚本应把流量检查指向 `/readyz`。
 
 ### 7.1 Nginx 示例
 

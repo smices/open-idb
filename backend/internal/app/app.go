@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"crypto/rsa"
 	"fmt"
 	"net"
 	"net/http"
@@ -70,11 +71,19 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		// handlers that need to write audit events.
 		auditService := audit.NewService(queries)
 
-		privateKey, err := sso.GenerateRSAKey()
+		privateKey, err := oidcPrivateKey(cfg.OIDCPrivateKeyPEM)
 		if err != nil {
 			closeFn()
 			return nil, err
 		}
+		if cfg.OIDCPrivateKeyPEM == "" {
+			logger.Warn("OIDC signing key is ephemeral; configure IDB_OIDC_PRIVATE_KEY_PEM from a deployment secret before restarting production")
+		}
+		routerOptions = append(routerOptions, httpserver.WithReadinessCheck(func(parent context.Context) error {
+			checkCtx, cancel := context.WithTimeout(parent, 2*time.Second)
+			defer cancel()
+			return pool.Ping(checkCtx)
+		}))
 		service, err := sso.NewService(sso.ServiceConfig{
 			Issuer:           cfg.OIDCIssuer,
 			KeyID:            cfg.OIDCKeyID,
@@ -283,6 +292,13 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		worker: bgWorker,
 		close:  closeFn,
 	}, nil
+}
+
+func oidcPrivateKey(raw string) (*rsa.PrivateKey, error) {
+	if strings.TrimSpace(raw) != "" {
+		return sso.ParseRSAPrivateKeyPEM(raw)
+	}
+	return sso.GenerateRSAKey()
 }
 
 type feishuClientResolver struct {

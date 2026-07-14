@@ -77,7 +77,7 @@ IDB_FEISHU_REDIRECT_URI='https://idbridge.example.com/api/auth/feishu/callback'
 - “组织架构”显示公司、部门树和同步来的员工。
 - “账号管理”显示 IdBridge 内可登录、可授权、可分配角色和应用访问的账号。
 - 通讯录档案和账号对象不是同一个概念。
-- 全量同步按飞书快照收敛：匹配到既有用户时保留 IdBridge ULID，飞书中缺失的同步用户软删除，不物理删除。
+- 全量同步按飞书快照收敛：匹配到既有用户时保留 IdBridge ULID。飞书中缺失的目录记录会标记为 `deleted`；对应受管账号会被归档并从活动 `users` 中移除，以释放用户名和绑定。
 
 ## 2. 业务应用接入 IdBridge
 

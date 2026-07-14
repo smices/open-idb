@@ -3,7 +3,9 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,6 +38,19 @@ func TestHealthRoutesReturnOK(t *testing.T) {
 				t.Fatalf("status body = %q, want %q", response.Status, "ok")
 			}
 		})
+	}
+}
+
+func TestReadinessRouteReturnsServiceUnavailableWhenDependencyIsUnavailable(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+
+	NewRouter(WithReadinessCheck(func(context.Context) error {
+		return errors.New("database unavailable")
+	})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
 	}
 }
 

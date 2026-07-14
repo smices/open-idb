@@ -3,6 +3,7 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -13,6 +14,14 @@ import (
 )
 
 type Option func(chi.Router)
+
+// WithReadinessCheck attaches a dependency check to /readyz without changing
+// the liveness contract of /healthz.
+func WithReadinessCheck(check func(context.Context) error) Option {
+	return func(r chi.Router) {
+		r.Get("/readyz", ReadinessHandler(check))
+	}
+}
 
 func NewRouter(options ...Option) http.Handler {
 	r := chi.NewRouter()
@@ -32,7 +41,7 @@ func NewRouter(options ...Option) http.Handler {
 	r.Get("/admin", FrontendRouteHandler)
 	r.Get("/admin/*", FrontendRouteHandler)
 	r.Get("/healthz", HealthHandler)
-	r.Get("/readyz", HealthHandler)
+	r.Get("/readyz", ReadinessHandler(nil))
 	for _, option := range options {
 		option(r)
 	}

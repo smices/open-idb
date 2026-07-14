@@ -31,7 +31,7 @@ Updated: `2026-07-07`
 
 - Feishu full sync creates or updates synced users.
 - Existing IdBridge ULID user IDs are preserved on merge.
-- Users missing from a full Feishu snapshot are soft-deleted.
+- Directory records missing from a full Feishu snapshot are marked deleted; managed users are archived and removed from the active account set.
 - Administrator accounts are not included in synced user counts.
 
 ## Required Checks

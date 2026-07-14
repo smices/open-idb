@@ -22,7 +22,7 @@ Applies to the production `web/` frontend.
 - `/admin/login` and `/t/{entity}/admin/login` are administrator login surfaces. They use independent administrator accounts only.
 - Administrator accounts live in `admin_users`. Employee/user accounts live in `users`. The two account systems are isolated and must not be counted or authenticated as each other.
 - Dashboard user metrics count synced business users only. Administrator counts are exposed separately as `admin_users`.
-- Feishu full sync must preserve existing ULID user IDs when merging by binding/provider identity, union identity, or stable username. Users missing from a full Feishu sync are soft-deleted, not physically deleted.
+- Feishu full sync must preserve existing ULID user IDs when merging by binding/provider identity, union identity, or stable username. Directory records missing from a full snapshot are marked deleted; managed accounts are archived and removed from active users.
 
 ## Layout And Interaction
 

@@ -12,7 +12,7 @@ Applies to `web/`.
 - `/` must not expose administrator entry points or administrator copy.
 - Employee login uses Feishu SSO first. Admin login is isolated under `/admin/login` or `/t/{entity}/admin/login`.
 - Dashboard user metrics exclude administrator accounts; admin count is a separate metric.
-- Feishu full sync keeps stable ULID user IDs and soft-deletes users missing from the full source snapshot.
+- Feishu full sync keeps stable ULID user IDs; missing directory records are marked deleted and missing managed users are archived out of the active account set.
 
 Required checks:
 

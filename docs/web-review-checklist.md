@@ -32,7 +32,7 @@ Unified entry: [quickstart-navigation.md](quickstart-navigation.md)
 - [ ] Feishu login button is visible on user login surfaces.
 - [ ] Feishu workplace SSO flow remains available through `workplace=feishu`.
 - [ ] Full sync preserves existing IdBridge ULID user IDs when merging.
-- [ ] Full sync soft-deletes synced users missing from the Feishu snapshot.
+- [ ] Full sync marks missing directory records deleted and archives corresponding managed users out of the active account set.
 
 ## Required Checks
 

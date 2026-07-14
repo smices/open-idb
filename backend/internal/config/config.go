@@ -18,6 +18,7 @@ type Config struct {
 	ShutdownTimeout   time.Duration
 	OIDCIssuer        string
 	OIDCKeyID         string
+	OIDCPrivateKeyPEM string
 	AccessTokenTTL    time.Duration
 	IDTokenTTL        time.Duration
 	AuthCodeTTL       time.Duration
@@ -64,6 +65,7 @@ func Load() (Config, error) {
 		ShutdownTimeout:   shutdownTimeout,
 		OIDCIssuer:        getEnv("IDB_OIDC_ISSUER", "http://localhost:8080"),
 		OIDCKeyID:         getEnv("IDB_OIDC_KEY_ID", "dev-key-1"),
+		OIDCPrivateKeyPEM: os.Getenv("IDB_OIDC_PRIVATE_KEY_PEM"),
 		AccessTokenTTL:    accessTokenTTL,
 		IDTokenTTL:        idTokenTTL,
 		AuthCodeTTL:       authCodeTTL,
