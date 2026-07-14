@@ -245,6 +245,12 @@ DO UPDATE SET
     updated_at = now()
 RETURNING id, entity_id, organization_id, name, parent_id, source_id, external_department_id, created_at, updated_at;
 
+-- name: DeleteMissingSourceDepartments :execrows
+DELETE FROM departments
+WHERE entity_id = $1
+  AND source_id = $2
+  AND NOT (external_department_id = ANY(sqlc.arg('present_external_department_ids')::text[]));
+
 -- === Groups ===
 
 -- name: CreateGroup :one

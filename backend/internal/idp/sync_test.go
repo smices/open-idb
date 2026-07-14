@@ -136,6 +136,16 @@ func TestFullSyncArchivesMissingManagedUsers(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create account binding: %v", err)
 	}
+	if _, err := queries.UpsertDirectoryDepartment(ctx, generated.UpsertDirectoryDepartmentParams{EntityID: entity.ID, SourceID: source.ID, ExternalDepartmentID: "od_removed", Name: "Removed Department", RawProfile: []byte(`{}`)}); err != nil {
+		t.Fatalf("create directory department: %v", err)
+	}
+	org, err := queries.CreateOrganization(ctx, generated.CreateOrganizationParams{EntityID: entity.ID, Name: "Company"})
+	if err != nil {
+		t.Fatalf("create organization: %v", err)
+	}
+	if _, err := queries.UpsertDepartmentBySource(ctx, generated.UpsertDepartmentBySourceParams{EntityID: entity.ID, OrganizationID: org.ID, Name: "Removed Department", SourceID: pgtype.Text{String: source.ID, Valid: true}, ExternalDepartmentID: pgtype.Text{String: "od_removed", Valid: true}}); err != nil {
+		t.Fatalf("create mapped department: %v", err)
+	}
 
 	service, err := NewSyncService(SyncServiceConfig{
 		Queries:   queries,
@@ -163,6 +173,16 @@ func TestFullSyncArchivesMissingManagedUsers(t *testing.T) {
 	}
 	if result.DirectoryUsersDeleted != 1 {
 		t.Fatalf("DirectoryUsersDeleted = %d, want 1", result.DirectoryUsersDeleted)
+	}
+	if result.DepartmentsDeleted != 1 {
+		t.Fatalf("DepartmentsDeleted = %d, want 1", result.DepartmentsDeleted)
+	}
+	var directoryDepartmentCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM directory_departments WHERE entity_id = $1 AND source_id = $2 AND external_department_id = 'od_removed'`, entity.ID, source.ID).Scan(&directoryDepartmentCount); err != nil {
+		t.Fatalf("count directory departments: %v", err)
+	}
+	if directoryDepartmentCount != 0 {
+		t.Fatalf("directory department count = %d, want 0", directoryDepartmentCount)
 	}
 
 	_, err = queries.GetUserByID(ctx, generated.GetUserByIDParams{

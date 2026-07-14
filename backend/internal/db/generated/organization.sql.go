@@ -325,6 +325,27 @@ func (q *Queries) DeleteGroup(ctx context.Context, arg DeleteGroupParams) error 
 	return err
 }
 
+const deleteMissingSourceDepartments = `-- name: DeleteMissingSourceDepartments :execrows
+DELETE FROM departments
+WHERE entity_id = $1
+  AND source_id = $2
+  AND NOT (external_department_id = ANY($3::text[]))
+`
+
+type DeleteMissingSourceDepartmentsParams struct {
+	EntityID                     string      `json:"entity_id"`
+	SourceID                     pgtype.Text `json:"source_id"`
+	PresentExternalDepartmentIds []string    `json:"present_external_department_ids"`
+}
+
+func (q *Queries) DeleteMissingSourceDepartments(ctx context.Context, arg DeleteMissingSourceDepartmentsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteMissingSourceDepartments, arg.EntityID, arg.SourceID, arg.PresentExternalDepartmentIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteOrganization = `-- name: DeleteOrganization :exec
 DELETE FROM organizations
 WHERE entity_id = $1 AND id = $2

@@ -58,6 +58,7 @@ type FullSyncInput struct {
 type FullSyncResult struct {
 	JobID                 string `json:"job_id"`
 	DepartmentsUpserted   int    `json:"departments_upserted"`
+	DepartmentsDeleted    int    `json:"departments_deleted"`
 	UsersUpserted         int    `json:"users_upserted"`
 	ManagedUsersCreated   int    `json:"managed_users_created"`
 	ManagedUsersUpdated   int    `json:"managed_users_updated"`
@@ -253,7 +254,15 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 		return result, err
 	}
 
+	presentExternalDepartmentIDs := make([]string, 0, len(data.Departments))
 	for _, department := range data.Departments {
+		department.ExternalDepartmentID = strings.TrimSpace(department.ExternalDepartmentID)
+		if department.ExternalDepartmentID == "" {
+			err := fmt.Errorf("directory department external id is required")
+			_ = s.failJob(ctx, entityID, job.ID, result, err)
+			return result, err
+		}
+		presentExternalDepartmentIDs = append(presentExternalDepartmentIDs, department.ExternalDepartmentID)
 		if _, err := s.queries.UpsertDirectoryDepartment(ctx, generated.UpsertDirectoryDepartmentParams{
 			EntityID:                   entityID,
 			SourceID:                   sourceID,
@@ -280,8 +289,13 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 		})
 	}
 
-	// Step 8: Map directory_departments to organizational departments
-	s.mapDepartments(ctx, input, entityID, sourceID, data.Departments, traceID)
+	// Step 8: Map directory_departments to organizational departments. A full
+	// sync must not succeed with a stale mapped department tree.
+	if err := s.mapDepartments(ctx, input, entityID, sourceID, data.Departments, traceID); err != nil {
+		_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
+		_ = s.failJob(ctx, entityID, job.ID, result, err)
+		return result, err
+	}
 
 	users := uniqueDirectoryUsers(data.Users)
 	presentExternalUserIDs := make([]string, 0, len(users))
@@ -451,13 +465,14 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 	}
 
 	if input.SyncType == SyncModeFull {
-		archivedUsers, deletedDirectoryUsers, err := s.reconcileFullSync(ctx, entityID, sourceID, presentExternalUserIDs)
+		archivedUsers, deletedDirectoryUsers, deletedDepartments, err := s.reconcileFullSync(ctx, entityID, sourceID, presentExternalUserIDs, presentExternalDepartmentIDs)
 		if err != nil {
 			_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
 			_ = s.failJob(ctx, entityID, job.ID, result, err)
 			return result, err
 		}
 		result.DirectoryUsersDeleted = deletedDirectoryUsers
+		result.DepartmentsDeleted = deletedDepartments
 		result.ManagedUsersDeleted = len(archivedUsers)
 		for _, archivedUser := range archivedUsers {
 			s.writeAudit(ctx, audit.Event{
@@ -617,13 +632,13 @@ type archivedSyncUser struct {
 // snapshot has been loaded and all regular upserts have succeeded. Its single
 // transaction prevents a failed archive from leaving directory records marked
 // deleted while their managed accounts remain active.
-func (s *SyncService) reconcileFullSync(ctx context.Context, entityID, sourceID string, presentExternalUserIDs []string) ([]archivedSyncUser, int, error) {
+func (s *SyncService) reconcileFullSync(ctx context.Context, entityID, sourceID string, presentExternalUserIDs, presentExternalDepartmentIDs []string) ([]archivedSyncUser, int, int, error) {
 	if s.txStarter == nil {
-		return nil, 0, fmt.Errorf("sync service transaction starter is not configured")
+		return nil, 0, 0, fmt.Errorf("sync service transaction starter is not configured")
 	}
 	tx, err := s.txStarter.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	committed := false
 	defer func() {
@@ -632,17 +647,28 @@ func (s *SyncService) reconcileFullSync(ctx context.Context, entityID, sourceID 
 		}
 	}()
 	queries := s.queries.WithTx(tx)
+	deletedDepartments, err := queries.DeleteMissingSourceDepartments(ctx, generated.DeleteMissingSourceDepartmentsParams{
+		EntityID: entityID, SourceID: pgtype.Text{String: sourceID, Valid: true}, PresentExternalDepartmentIds: presentExternalDepartmentIDs,
+	})
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	if _, err := queries.DeleteMissingDirectoryDepartments(ctx, generated.DeleteMissingDirectoryDepartmentsParams{
+		EntityID: entityID, SourceID: sourceID, PresentExternalDepartmentIds: presentExternalDepartmentIDs,
+	}); err != nil {
+		return nil, 0, 0, err
+	}
 	deletedDirectoryUsers, err := queries.MarkMissingDirectoryUsersDeleted(ctx, generated.MarkMissingDirectoryUsersDeletedParams{
 		EntityID:               entityID,
 		SourceID:               sourceID,
 		PresentExternalUserIds: presentExternalUserIDs,
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	deletedManagedUsers, err := queries.ListManagedUsersForDeletedDirectoryUsers(ctx, generated.ListManagedUsersForDeletedDirectoryUsersParams{EntityID: entityID, SourceID: sourceID})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	archivedUsers := make([]archivedSyncUser, 0, len(deletedManagedUsers))
 	for _, user := range deletedManagedUsers {
@@ -650,21 +676,21 @@ func (s *SyncService) reconcileFullSync(ctx context.Context, entityID, sourceID 
 			EntityID: entityID, UserID: user.ID, ArchivedByUserID: pgtype.Text{}, ArchiveReason: "directory full sync removed user",
 		})
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
 		if err := queries.DeleteUserActiveDependents(ctx, generated.DeleteUserActiveDependentsParams{EntityID: entityID, UserID: user.ID}); err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
 		if err := queries.DeleteUserActiveRow(ctx, generated.DeleteUserActiveRowParams{EntityID: entityID, UserID: user.ID}); err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
 		archivedUsers = append(archivedUsers, archivedSyncUser{Username: user.Username, Archive: archive})
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	committed = true
-	return archivedUsers, len(deletedDirectoryUsers), nil
+	return archivedUsers, len(deletedDirectoryUsers), int(deletedDepartments), nil
 }
 
 // acquireSourceLock serializes sync runs for one identity source across all
@@ -884,9 +910,9 @@ func (s *SyncService) failJob(ctx context.Context, entityID string, jobID string
 // It finds or creates a default organization for the entity, then upserts
 // department records linked to that organization. Parent relationships are
 // resolved in two passes: first upsert all departments, then update parent_id.
-// Errors are logged but do not fail the sync job — department mapping is
-// best-effort and can be retried on the next sync.
-func (s *SyncService) mapDepartments(ctx context.Context, input FullSyncInput, entityID, sourceID string, departments []DirectoryDepartment, traceID string) {
+// Errors fail the sync job so a successful full sync always exposes the same
+// source-backed department set through both directory and organization views.
+func (s *SyncService) mapDepartments(ctx context.Context, input FullSyncInput, entityID, sourceID string, departments []DirectoryDepartment, traceID string) error {
 	// Find or create a company root for this entity.
 	org, err := s.queries.GetFirstOrganization(ctx, entityID)
 	if err != nil {
@@ -905,7 +931,7 @@ func (s *SyncService) mapDepartments(ctx context.Context, input FullSyncInput, e
 			Name:     name,
 		})
 		if err != nil {
-			return // best-effort, log and continue
+			return err
 		}
 	}
 
@@ -920,7 +946,7 @@ func (s *SyncService) mapDepartments(ctx context.Context, input FullSyncInput, e
 			ExternalDepartmentID: pgtypeText(dept.ExternalDepartmentID),
 		})
 		if err != nil {
-			continue // best-effort
+			return err
 		}
 		for _, key := range departmentLookupKeys(dept) {
 			deptIDs[key] = row.ID
@@ -941,13 +967,16 @@ func (s *SyncService) mapDepartments(ctx context.Context, input FullSyncInput, e
 		if !ok {
 			continue
 		}
-		_, _ = s.queries.UpdateDepartment(ctx, generated.UpdateDepartmentParams{
+		if _, err := s.queries.UpdateDepartment(ctx, generated.UpdateDepartmentParams{
 			EntityID: entityID,
 			ID:       childID,
 			Name:     pgtype.Text{String: dept.Name, Valid: true},
 			ParentID: pgtypeULID(parentID),
-		})
+		}); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func departmentLookupKeys(dept DirectoryDepartment) []string {

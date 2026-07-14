@@ -231,6 +231,51 @@ func (q *Queries) CreateManagedUser(ctx context.Context, arg CreateManagedUserPa
 	return i, err
 }
 
+const deleteMissingDirectoryDepartments = `-- name: DeleteMissingDirectoryDepartments :many
+DELETE FROM directory_departments
+WHERE entity_id = $1
+  AND source_id = $2
+  AND NOT (external_department_id = ANY($3::text[]))
+RETURNING id, entity_id, source_id, external_department_id, parent_external_department_id, name, raw_profile, last_synced_at, created_at, updated_at
+`
+
+type DeleteMissingDirectoryDepartmentsParams struct {
+	EntityID                     string   `json:"entity_id"`
+	SourceID                     string   `json:"source_id"`
+	PresentExternalDepartmentIds []string `json:"present_external_department_ids"`
+}
+
+func (q *Queries) DeleteMissingDirectoryDepartments(ctx context.Context, arg DeleteMissingDirectoryDepartmentsParams) ([]DirectoryDepartment, error) {
+	rows, err := q.db.Query(ctx, deleteMissingDirectoryDepartments, arg.EntityID, arg.SourceID, arg.PresentExternalDepartmentIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DirectoryDepartment{}
+	for rows.Next() {
+		var i DirectoryDepartment
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.SourceID,
+			&i.ExternalDepartmentID,
+			&i.ParentExternalDepartmentID,
+			&i.Name,
+			&i.RawProfile,
+			&i.LastSyncedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAccountBindingByProviderUID = `-- name: GetAccountBindingByProviderUID :one
 SELECT id, entity_id, user_id, source_id, directory_user_id, provider_uid, provider_union_id, is_primary, bound_at
 FROM account_bindings

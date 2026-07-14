@@ -133,6 +133,13 @@ DO UPDATE SET
     updated_at = now()
 RETURNING id, entity_id, source_id, external_department_id, parent_external_department_id, name, raw_profile, last_synced_at, created_at, updated_at;
 
+-- name: DeleteMissingDirectoryDepartments :many
+DELETE FROM directory_departments
+WHERE entity_id = $1
+  AND source_id = $2
+  AND NOT (external_department_id = ANY(sqlc.arg('present_external_department_ids')::text[]))
+RETURNING id, entity_id, source_id, external_department_id, parent_external_department_id, name, raw_profile, last_synced_at, created_at, updated_at;
+
 -- name: GetAccountBindingByProviderUID :one
 SELECT id, entity_id, user_id, source_id, directory_user_id, provider_uid, provider_union_id, is_primary, bound_at
 FROM account_bindings
