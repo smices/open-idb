@@ -163,6 +163,24 @@ make k8s-deploy-frontend
 - TLS Secret
 - Ingress host
 
+### 6.1 备份与恢复演练
+
+PostgreSQL 是用户、应用、OIDC client、授权状态和审计记录的唯一事实来源。生产上线前应建立自动备份，并至少完成一次非生产恢复演练。
+
+备份示例：
+
+```bash
+pg_dump --format=custom --no-owner --file=idbridge-$(date +%F).dump "$DATABASE_URL"
+```
+
+恢复必须在隔离的目标数据库上先验证，再安排受控维护窗口：
+
+```bash
+pg_restore --clean --if-exists --no-owner --dbname="$DATABASE_URL" idbridge-YYYY-MM-DD.dump
+```
+
+恢复后必须验证迁移版本、OIDC discovery、JWKS、管理员登录和一个既有 OIDC 应用的授权码流程。不要通过删除或重建数据库来排查单个应用、用户或同步问题。
+
 ## 7. 反向代理配置
 
 健康检查约定：`/healthz` 只表示进程存活；`/readyz` 会检查 PostgreSQL，数据库不可用时返回 `503`。Kubernetes、负载均衡和发布脚本应把流量检查指向 `/readyz`。
