@@ -48,6 +48,34 @@ func TestUsernameForDirectoryUser(t *testing.T) {
 	}
 }
 
+func TestAcquireSourceLockRejectsConcurrentSyncForSameSource(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	pool := newSyncTestPool(ctx, t)
+	queries := generated.New(pool)
+
+	first, err := NewSyncService(SyncServiceConfig{Queries: queries, Provider: fakeSyncDirectoryProvider{}, TxStarter: pool})
+	if err != nil {
+		t.Fatalf("new first sync service: %v", err)
+	}
+	second, err := NewSyncService(SyncServiceConfig{Queries: queries, Provider: fakeSyncDirectoryProvider{}, TxStarter: pool})
+	if err != nil {
+		t.Fatalf("new second sync service: %v", err)
+	}
+
+	release, err := first.acquireSourceLock(ctx, "01HZZZZZZZ0000000000000001", "01HZZZZZZZ0000000000000002")
+	if err != nil {
+		t.Fatalf("acquire first lock: %v", err)
+	}
+	defer release()
+
+	if _, err := second.acquireSourceLock(ctx, "01HZZZZZZZ0000000000000001", "01HZZZZZZZ0000000000000002"); !errors.Is(err, ErrSyncAlreadyRunning) {
+		t.Fatalf("second lock error = %v, want ErrSyncAlreadyRunning", err)
+	}
+}
+
 func TestFullSyncArchivesMissingManagedUsers(t *testing.T) {
 	testcontainers.SkipIfProviderIsNotHealthy(t)
 

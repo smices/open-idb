@@ -116,6 +116,26 @@ func TestTriggerFullSyncReturnsServiceError(t *testing.T) {
 	}
 }
 
+func TestTriggerFullSyncReturnsConflictWhenSyncIsAlreadyRunning(t *testing.T) {
+	router := newTestRouter(&fakeSyncService{err: idp.ErrSyncAlreadyRunning})
+	req := httptest.NewRequest(http.MethodPost, "/sapi/identity-sources/source-1/sync/full", nil)
+	req.Header.Set("X-IDB-Entity-ID", "entity-1")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+	var response map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["error"] != "sync_in_progress" {
+		t.Fatalf("error = %q, want sync_in_progress", response["error"])
+	}
+}
+
 func TestHandleFeishuWebhookReturnsChallenge(t *testing.T) {
 	router := newTestRouter(&fakeSyncService{})
 	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/feishu/entity-1/source-1", strings.NewReader(`{"type":"url_verification","challenge":"challenge-token"}`))

@@ -5,6 +5,7 @@ package adminapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -127,6 +128,10 @@ func (h Handler) triggerSync(w http.ResponseWriter, r *http.Request, syncType id
 		result, err = h.syncService.RunFullSync(r.Context(), input)
 	}
 	if err != nil {
+		if errors.Is(err, idp.ErrSyncAlreadyRunning) {
+			writeError(w, http.StatusConflict, "sync_in_progress", "a sync is already running for this identity source")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "sync_failed", err.Error())
 		return
 	}

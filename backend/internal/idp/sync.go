@@ -44,6 +44,10 @@ type txStarter interface {
 	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
 }
 
+// ErrSyncAlreadyRunning prevents two reconciliation passes for the same
+// entity/source boundary from observing different upstream snapshots.
+var ErrSyncAlreadyRunning = errors.New("sync already running for this identity source")
+
 type FullSyncInput struct {
 	EntityID string
 	SourceID string
@@ -177,6 +181,11 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 	if err != nil {
 		return FullSyncResult{}, err
 	}
+	releaseLock, err := s.acquireSourceLock(ctx, entityID, sourceID)
+	if err != nil {
+		return FullSyncResult{}, err
+	}
+	defer releaseLock()
 	provider := input.Provider
 	if provider == "" {
 		source, err := s.queries.GetIdentitySourceByID(ctx, generated.GetIdentitySourceByIDParams{
@@ -442,41 +451,22 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 	}
 
 	if input.SyncType == SyncModeFull {
-		deletedDirectoryUsers, err := s.queries.MarkMissingDirectoryUsersDeleted(ctx, generated.MarkMissingDirectoryUsersDeletedParams{
-			EntityID:               entityID,
-			SourceID:               sourceID,
-			PresentExternalUserIds: presentExternalUserIDs,
-		})
+		archivedUsers, deletedDirectoryUsers, err := s.reconcileFullSync(ctx, entityID, sourceID, presentExternalUserIDs)
 		if err != nil {
 			_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
 			_ = s.failJob(ctx, entityID, job.ID, result, err)
 			return result, err
 		}
-		result.DirectoryUsersDeleted = len(deletedDirectoryUsers)
-		deletedManagedUsers, err := s.queries.ListManagedUsersForDeletedDirectoryUsers(ctx, generated.ListManagedUsersForDeletedDirectoryUsersParams{
-			EntityID: entityID,
-			SourceID: sourceID,
-		})
-		if err != nil {
-			_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-			_ = s.failJob(ctx, entityID, job.ID, result, err)
-			return result, err
-		}
-		for _, deletedUser := range deletedManagedUsers {
-			archive, err := s.archiveManagedUser(ctx, entityID, deletedUser.ID, "directory full sync removed user")
-			if err != nil {
-				_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-				_ = s.failJob(ctx, entityID, job.ID, result, err)
-				return result, err
-			}
-			result.ManagedUsersDeleted++
+		result.DirectoryUsersDeleted = deletedDirectoryUsers
+		result.ManagedUsersDeleted = len(archivedUsers)
+		for _, archivedUser := range archivedUsers {
 			s.writeAudit(ctx, audit.Event{
 				EntityID:     input.EntityID,
 				ActorType:    "sync_job",
 				Action:       audit.ActionSyncUserArchived,
 				ResourceType: "archived_user",
-				ResourceID:   ulidString(archive.ID),
-				After:        map[string]string{"username": deletedUser.Username, "archive_reason": "directory full sync removed user"},
+				ResourceID:   ulidString(archivedUser.Archive.ID),
+				After:        map[string]string{"username": archivedUser.Username, "archive_reason": "directory full sync removed user"},
 				TraceID:      traceID,
 			})
 		}
@@ -616,6 +606,93 @@ func (s *SyncService) archiveManagedUser(ctx context.Context, entityID, userID, 
 	}
 	committed = true
 	return archive, nil
+}
+
+type archivedSyncUser struct {
+	Username string
+	Archive  generated.ArchivedUser
+}
+
+// reconcileFullSync performs the destructive tail only after the upstream
+// snapshot has been loaded and all regular upserts have succeeded. Its single
+// transaction prevents a failed archive from leaving directory records marked
+// deleted while their managed accounts remain active.
+func (s *SyncService) reconcileFullSync(ctx context.Context, entityID, sourceID string, presentExternalUserIDs []string) ([]archivedSyncUser, int, error) {
+	if s.txStarter == nil {
+		return nil, 0, fmt.Errorf("sync service transaction starter is not configured")
+	}
+	tx, err := s.txStarter.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, 0, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(context.Background())
+		}
+	}()
+	queries := s.queries.WithTx(tx)
+	deletedDirectoryUsers, err := queries.MarkMissingDirectoryUsersDeleted(ctx, generated.MarkMissingDirectoryUsersDeletedParams{
+		EntityID:               entityID,
+		SourceID:               sourceID,
+		PresentExternalUserIds: presentExternalUserIDs,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	deletedManagedUsers, err := queries.ListManagedUsersForDeletedDirectoryUsers(ctx, generated.ListManagedUsersForDeletedDirectoryUsersParams{EntityID: entityID, SourceID: sourceID})
+	if err != nil {
+		return nil, 0, err
+	}
+	archivedUsers := make([]archivedSyncUser, 0, len(deletedManagedUsers))
+	for _, user := range deletedManagedUsers {
+		archive, err := queries.ArchiveUser(ctx, generated.ArchiveUserParams{
+			EntityID: entityID, UserID: user.ID, ArchivedByUserID: pgtype.Text{}, ArchiveReason: "directory full sync removed user",
+		})
+		if err != nil {
+			return nil, 0, err
+		}
+		if err := queries.DeleteUserActiveDependents(ctx, generated.DeleteUserActiveDependentsParams{EntityID: entityID, UserID: user.ID}); err != nil {
+			return nil, 0, err
+		}
+		if err := queries.DeleteUserActiveRow(ctx, generated.DeleteUserActiveRowParams{EntityID: entityID, UserID: user.ID}); err != nil {
+			return nil, 0, err
+		}
+		archivedUsers = append(archivedUsers, archivedSyncUser{Username: user.Username, Archive: archive})
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, 0, err
+	}
+	committed = true
+	return archivedUsers, len(deletedDirectoryUsers), nil
+}
+
+// acquireSourceLock serializes sync runs for one identity source across all
+// backend replicas. The lock is tied to a short, otherwise idle transaction;
+// PostgreSQL releases it automatically if the process crashes.
+func (s *SyncService) acquireSourceLock(ctx context.Context, entityID, sourceID string) (func(), error) {
+	if s.txStarter == nil {
+		// Preserve lightweight unit callers. The production app always sets the
+		// PostgreSQL transaction starter before accepting sync requests.
+		return func() {}, nil
+	}
+	tx, err := s.txStarter.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	var acquired bool
+	err = tx.QueryRow(ctx, "SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0), hashtextextended($2, 0))", entityID, sourceID).Scan(&acquired)
+	if err != nil {
+		_ = tx.Rollback(context.Background())
+		return nil, err
+	}
+	if !acquired {
+		_ = tx.Rollback(context.Background())
+		return nil, ErrSyncAlreadyRunning
+	}
+	return func() {
+		_ = tx.Commit(context.Background())
+	}, nil
 }
 
 func uniqueDirectoryUsers(users []DirectoryUser) []DirectoryUser {
