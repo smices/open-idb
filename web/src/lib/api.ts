@@ -406,14 +406,48 @@ export interface UpdateUserRequest {
 
 export type ApplicationType = 'oidc_client' | 'api_client' | 'internal_app';
 
+export interface APIClientApplicationConfig {
+  client_id: string;
+  client_secret: string;
+  allowed_scopes: string[];
+}
+
+export interface InternalApplicationConfig {
+  app_url: string;
+  callback_url: string;
+  description: string;
+}
+
+export type ApplicationConfig = APIClientApplicationConfig | InternalApplicationConfig | Record<string, never>;
+
 export interface Application {
   id: string;
   entity_id: string;
   name: string;
   type: ApplicationType;
   status: string;
+  config?: ApplicationConfig;
+  oidc_client?: OIDCClient;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface ApplicationWriteRequest {
+  name: string;
+  type: ApplicationType;
+  status?: string;
+  config?: Partial<APIClientApplicationConfig & InternalApplicationConfig>;
+  oidc_client?: {
+    client_id?: string;
+    redirect_uris?: string[];
+    allowed_scopes?: string[];
+    grant_types?: string[];
+    response_types?: string[];
+    pkce_required?: boolean;
+    workplace_provider?: string;
+    workplace_app_id?: string;
+    workplace_app_secret?: string;
+  };
 }
 
 export interface ApplicationListResponse {
@@ -487,6 +521,7 @@ export interface OIDCClient {
   grant_types?: string[];
   response_types?: string[];
   pkce_required?: boolean;
+  secret_required?: boolean;
   workplace_provider?: string;
   workplace_app_id?: string;
   workplace_app_secret?: string;
@@ -755,9 +790,9 @@ export const api = {
     return apiRequest<ApplicationListResponse>(`/sapi/applications${suffix}`);
   },
   getApplication: (id: string) => apiRequest<Application>(`/sapi/applications/${encodeURIComponent(id)}`),
-  createApplication: (payload: { name: string; type: ApplicationType }) =>
+  createApplication: (payload: ApplicationWriteRequest) =>
     apiRequest<Application>('/sapi/applications', { method: 'POST', body: payload }),
-  updateApplication: (id: string, payload: { name?: string; status?: string }) =>
+  updateApplication: (id: string, payload: ApplicationWriteRequest) =>
     apiRequest<Application>(`/sapi/applications/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: payload,

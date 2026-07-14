@@ -5,6 +5,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/smices/open-idb/internal/db/generated"
@@ -90,6 +91,16 @@ func (s *Service) CreateLoginSession(ctx context.Context, result LoginResult, me
 		meta.TTL = 24 * time.Hour
 	}
 	return createSessionValue(ctx, s.queries, session, meta)
+}
+
+func (s *Service) RevokeLoginSession(ctx context.Context, entityID, sessionID string) error {
+	if strings.TrimSpace(entityID) == "" || strings.TrimSpace(sessionID) == "" {
+		return fmt.Errorf("entity_id and session_id are required")
+	}
+	return s.queries.RevokeSession(ctx, generated.RevokeSessionParams{
+		EntityID: entityID,
+		ID:       sessionID,
+	})
 }
 
 func (s *Service) GetLoginContextEntityBySlug(ctx context.Context, slug string) (LoginContextEntity, error) {

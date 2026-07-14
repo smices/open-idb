@@ -26,7 +26,18 @@ func (q *DatabaseQuerier) LookupToken(ctx context.Context, entityID string, toke
 	if err != nil {
 		return SSOTokenLookup{}, err
 	}
+	return tokenLookupFromRow(token), nil
+}
 
+func (q *DatabaseQuerier) LookupTokenGlobally(ctx context.Context, tokenHash string) (SSOTokenLookup, error) {
+	token, err := q.queries.GetSSOTokenByHashGlobally(ctx, tokenHash)
+	if err != nil {
+		return SSOTokenLookup{}, err
+	}
+	return tokenLookupFromRow(token), nil
+}
+
+func tokenLookupFromRow(token generated.OauthToken) SSOTokenLookup {
 	var revokedAt, expiresAt *time.Time
 	if token.RevokedAt.Valid {
 		revokedAt = &token.RevokedAt.Time
@@ -44,7 +55,7 @@ func (q *DatabaseQuerier) LookupToken(ctx context.Context, entityID string, toke
 		Scopes:    token.Scopes,
 		RevokedAt: revokedAt,
 		ExpiresAt: expiresAt,
-	}, nil
+	}
 }
 
 func (q *DatabaseQuerier) MarkTokenRevoked(ctx context.Context, entityID string, tokenHash string) error {
@@ -52,6 +63,10 @@ func (q *DatabaseQuerier) MarkTokenRevoked(ctx context.Context, entityID string,
 		EntityID:  entityID,
 		TokenHash: tokenHash,
 	})
+}
+
+func (q *DatabaseQuerier) MarkTokenRevokedGlobally(ctx context.Context, tokenHash string) (string, error) {
+	return q.queries.RevokeSSOTokenByHashGlobally(ctx, tokenHash)
 }
 
 func (q *DatabaseQuerier) FetchUserInfo(ctx context.Context, entityID string, userID string) (UserInfoClaims, error) {

@@ -18,9 +18,10 @@ import (
 // --- Mock ---
 
 type mockProviderQueries struct {
-	listFn         func(context.Context, string) ([]generated.ListLoginProvidersRow, error)
-	getClientFn    func(context.Context, generated.GetOIDCClientByClientIDParams) (generated.OidcClient, error)
-	entityBySlugFn func(context.Context, string) (generated.BusinessEntity, error)
+	listFn             func(context.Context, string) ([]generated.ListLoginProvidersRow, error)
+	getClientFn        func(context.Context, generated.GetOIDCClientByClientIDParams) (generated.OidcClient, error)
+	entityBySlugFn     func(context.Context, string) (generated.BusinessEntity, error)
+	sourceConfigByIDFn func(context.Context, generated.GetIdentitySourceConfigByIDParams) (generated.GetIdentitySourceConfigByIDRow, error)
 }
 
 func (m *mockProviderQueries) ListLoginProviders(ctx context.Context, entityID string) ([]generated.ListLoginProvidersRow, error) {
@@ -44,7 +45,60 @@ func (m *mockProviderQueries) GetOIDCClientByClientID(ctx context.Context, arg g
 	return generated.OidcClient{}, fmt.Errorf("client %q not found", arg.ClientID)
 }
 
+func (m *mockProviderQueries) GetIdentitySourceConfigByID(ctx context.Context, arg generated.GetIdentitySourceConfigByIDParams) (generated.GetIdentitySourceConfigByIDRow, error) {
+	if m.sourceConfigByIDFn != nil {
+		return m.sourceConfigByIDFn(ctx, arg)
+	}
+	return generated.GetIdentitySourceConfigByIDRow{}, fmt.Errorf("identity source %q not found", arg.ID)
+}
+
 // --- Tests ---
+
+func TestResolveFeishuSourceConfigUsesExactSource(t *testing.T) {
+	const entityID = "01HZZZZZZZ0000000000000001"
+	const sourceID = "01HZZZZZZZ0000000000000002"
+	queries := &mockProviderQueries{
+		sourceConfigByIDFn: func(_ context.Context, arg generated.GetIdentitySourceConfigByIDParams) (generated.GetIdentitySourceConfigByIDRow, error) {
+			if arg.EntityID != entityID || arg.ID != sourceID {
+				t.Fatalf("source lookup = %#v, want exact entity/source", arg)
+			}
+			return generated.GetIdentitySourceConfigByIDRow{
+				ID:       sourceID,
+				EntityID: entityID,
+				Type:     "feishu",
+				Status:   "active",
+				Config:   []byte(`{"app_id":"source-app","app_secret":"source-secret","verification_token":"verify-me","encrypt_key":"encrypt-me"}`),
+			}, nil
+		},
+	}
+	svc := &LoginProviderService{queries: queries}
+
+	cfg, err := svc.ResolveFeishuSourceConfig(context.Background(), entityID, sourceID)
+	if err != nil {
+		t.Fatalf("ResolveFeishuSourceConfig() error = %v", err)
+	}
+	if cfg.AppID != "source-app" || cfg.AppSecret != "source-secret" || cfg.VerificationToken != "verify-me" || cfg.EncryptKey != "encrypt-me" {
+		t.Fatalf("config = %#v, want exact source config", cfg)
+	}
+}
+
+func TestResolveFeishuSourceConfigRejectsDisabledSource(t *testing.T) {
+	const entityID = "01HZZZZZZZ0000000000000001"
+	const sourceID = "01HZZZZZZZ0000000000000002"
+	queries := &mockProviderQueries{
+		sourceConfigByIDFn: func(_ context.Context, _ generated.GetIdentitySourceConfigByIDParams) (generated.GetIdentitySourceConfigByIDRow, error) {
+			return generated.GetIdentitySourceConfigByIDRow{
+				ID: sourceID, EntityID: entityID, Type: "feishu", Status: "disabled",
+				Config: []byte(`{"app_id":"source-app","app_secret":"source-secret"}`),
+			}, nil
+		},
+	}
+	svc := &LoginProviderService{queries: queries}
+
+	if _, err := svc.ResolveFeishuSourceConfig(context.Background(), entityID, sourceID); err == nil {
+		t.Fatal("ResolveFeishuSourceConfig() error = nil, want disabled source rejection")
+	}
+}
 
 func TestListProvidersReturnsActiveConfiguredProviders(t *testing.T) {
 	queries := &mockProviderQueries{

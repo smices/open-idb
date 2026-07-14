@@ -83,13 +83,22 @@ type DirectoryUserResponse struct {
 
 // ApplicationResponse represents an application in API responses.
 type ApplicationResponse struct {
-	ID        string    `json:"id"`
-	EntityID  string    `json:"entity_id"`
-	Name      string    `json:"name"`
-	Type      string    `json:"type"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string          `json:"id"`
+	EntityID  string          `json:"entity_id"`
+	Name      string          `json:"name"`
+	Type      string          `json:"type"`
+	Status    string          `json:"status"`
+	Config    json.RawMessage `json:"config,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+// ApplicationDetailResponse is the complete application document returned by
+// the application detail and mutation endpoints. OIDC fields remain backed by
+// oidc_clients so existing SSO integrations continue to use the same records.
+type ApplicationDetailResponse struct {
+	ApplicationResponse
+	OIDCClient *OIDCClientResponse `json:"oidc_client,omitempty"`
 }
 
 // SyncJobResponse represents a sync job in API responses.
@@ -476,6 +485,23 @@ func directoryUserFromRow(row generated.DirectoryUser) DirectoryUserResponse {
 }
 
 func applicationFromRow(row generated.Application) ApplicationResponse {
+	config := json.RawMessage(row.Config)
+	if len(config) == 0 {
+		config = json.RawMessage(`{}`)
+	}
+	return ApplicationResponse{
+		ID:        ulidString(row.ID),
+		EntityID:  ulidString(row.EntityID),
+		Name:      row.Name,
+		Type:      row.Type,
+		Status:    row.Status,
+		Config:    config,
+		CreatedAt: row.CreatedAt.Time,
+		UpdatedAt: row.UpdatedAt.Time,
+	}
+}
+
+func applicationFromListRow(row generated.ListApplicationsRow) ApplicationResponse {
 	return ApplicationResponse{
 		ID:        ulidString(row.ID),
 		EntityID:  ulidString(row.EntityID),

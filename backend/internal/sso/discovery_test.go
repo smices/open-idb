@@ -37,7 +37,7 @@ func TestBuildDiscoveryDocument(t *testing.T) {
 	if !reflect.DeepEqual(doc.ScopesSupported, []string{"openid", "profile", "email", "directory:read"}) {
 		t.Fatalf("ScopesSupported = %#v", doc.ScopesSupported)
 	}
-	if !reflect.DeepEqual(doc.TokenEndpointAuthMethodsSupported, []string{"client_secret_basic", "none"}) {
+	if !reflect.DeepEqual(doc.TokenEndpointAuthMethodsSupported, []string{"client_secret_basic", "client_secret_post", "none"}) {
 		t.Fatalf("TokenEndpointAuthMethodsSupported = %#v", doc.TokenEndpointAuthMethodsSupported)
 	}
 	if !reflect.DeepEqual(doc.CodeChallengeMethodsSupported, []string{"S256"}) {

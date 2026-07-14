@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/smices/open-idb/internal/auth"
 	"github.com/smices/open-idb/internal/idp"
+	"go.uber.org/zap"
 )
 
 type SyncService interface {
@@ -23,6 +24,10 @@ type SyncService interface {
 
 type DefaultFeishuWebhookTargetResolver interface {
 	ResolveDefaultFeishuWebhookTarget(ctx context.Context) (entityID string, sourceID string, err error)
+}
+
+type OrganizationTreeCacheInvalidator interface {
+	InvalidateOrganizationTree(ctx context.Context, entityID string) error
 }
 
 type ConsoleService interface {
@@ -73,12 +78,22 @@ type UpdateProfileInput struct {
 }
 
 type Handler struct {
-	syncService    SyncService
-	consoleService ConsoleService
+	syncService           SyncService
+	consoleService        ConsoleService
+	webhooks              *feishuWebhookRuntime
+	organizationTreeCache OrganizationTreeCacheInvalidator
+}
+
+func (h *Handler) SetOrganizationTreeCacheInvalidator(invalidator OrganizationTreeCacheInvalidator) {
+	h.organizationTreeCache = invalidator
 }
 
 func NewHandler(syncService SyncService, consoleService ConsoleService) Handler {
-	return Handler{syncService: syncService, consoleService: consoleService}
+	return Handler{
+		syncService:    syncService,
+		consoleService: consoleService,
+		webhooks:       newFeishuWebhookRuntime(),
+	}
 }
 
 func (h Handler) RegisterRoutes(r chi.Router) {
@@ -135,28 +150,26 @@ func (h Handler) triggerSync(w http.ResponseWriter, r *http.Request, syncType id
 		writeError(w, http.StatusInternalServerError, "sync_failed", err.Error())
 		return
 	}
+	if h.organizationTreeCache != nil {
+		if cacheErr := h.organizationTreeCache.InvalidateOrganizationTree(r.Context(), entityID); cacheErr != nil {
+			if h.webhooks != nil && h.webhooks.logger != nil {
+				h.webhooks.logger.Warn("organization tree cache invalidation failed after manual sync", zap.Error(cacheErr))
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
 func (h Handler) handleFeishuWebhook(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxFeishuWebhookBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "webhook_body_too_large", "webhook body exceeds the size limit")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid_webhook_body", "invalid request body")
-		return
-	}
-
-	var envelope struct {
-		Type      string `json:"type"`
-		Challenge string `json:"challenge"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_webhook_body", "invalid json body")
-		return
-	}
-	if strings.EqualFold(envelope.Type, "url_verification") {
-		writeJSON(w, http.StatusOK, map[string]string{
-			"challenge": envelope.Challenge,
-		})
 		return
 	}
 	if h.syncService == nil {
@@ -164,7 +177,44 @@ func (h Handler) handleFeishuWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	event, err := parseFeishuWebhookEvent(body)
+	entityID, sourceID, ok := h.feishuWebhookTarget(w, r)
+	if !ok {
+		return
+	}
+	runtime := h.webhooks
+	if runtime == nil {
+		runtime = newFeishuWebhookRuntime()
+	}
+	securityConfig, err := runtime.securityConfig(r.Context(), entityID, sourceID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "webhook_security_unavailable", "webhook security configuration is unavailable")
+		return
+	}
+	payload, err := prepareFeishuWebhookPayload(r, body, securityConfig)
+	if err != nil {
+		writeWebhookSecurityError(w, err)
+		return
+	}
+
+	var envelope struct {
+		Type      string `json:"type"`
+		Challenge string `json:"challenge"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_webhook_body", "invalid json body")
+		return
+	}
+	if strings.EqualFold(envelope.Type, "url_verification") {
+		if strings.TrimSpace(envelope.Challenge) == "" {
+			writeError(w, http.StatusBadRequest, "invalid_webhook_challenge", "webhook challenge is required")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"challenge": envelope.Challenge,
+		})
+		return
+	}
+	event, err := parseFeishuWebhookEvent(payload)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_webhook_event", err.Error())
 		return
@@ -173,28 +223,97 @@ func (h Handler) handleFeishuWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ignored"})
 		return
 	}
+	if event.IsDeleteEvent() && !isVerifiedTypedFeishuDelete(securityConfig, event) {
+		if runtime.logger != nil {
+			runtime.logger.Warn("ignored unverified or untyped feishu delete webhook",
+				zap.String("entity_id", entityID),
+				zap.String("source_id", sourceID),
+				zap.String("event_id", event.EventID),
+				zap.String("object_type", event.ObjectType),
+				zap.String("object_id_type", event.ObjectIDType),
+			)
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ignored"})
+		return
+	}
 
-	entityID, sourceID, ok := h.feishuWebhookTarget(w, r)
-	if !ok {
+	dedupeKey := feishuWebhookDedupeKey(entityID, sourceID, event.EventID, payload)
+	if !runtime.deduper.reserve(dedupeKey, runtime.now()) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate"})
+		return
+	}
+	if !runtime.runner.tryReserve() {
+		runtime.deduper.remove(dedupeKey)
+		writeError(w, http.StatusServiceUnavailable, "webhook_processing_busy", "webhook processing capacity is full")
 		return
 	}
 	jobID, err := h.syncService.SubmitWebhookEvent(r.Context(), entityID, sourceID, event)
 	if err != nil {
+		runtime.runner.release()
+		runtime.deduper.remove(dedupeKey)
 		writeError(w, http.StatusBadRequest, "submit_webhook_failed", err.Error())
 		return
 	}
 
-	// Trigger asynchronous incremental sync immediately; webhook provider only requires fast ack.
-	go func() {
-		_, _ = h.syncService.RunIncrementalSync(context.Background(), idp.FullSyncInput{
+	// Run at most a fixed number of incremental syncs concurrently. Overload is
+	// returned to Feishu so its delivery retry policy can apply.
+	runtime.runner.runReserved(func(ctx context.Context) {
+		_, runErr := h.syncService.RunIncrementalSync(ctx, idp.FullSyncInput{
 			EntityID: entityID,
 			SourceID: sourceID,
 		})
-	}()
-	writeJSON(w, http.StatusAccepted, map[string]string{
+		if runErr != nil {
+			runtime.deduper.remove(dedupeKey)
+			if runtime.logger != nil {
+				runtime.logger.Warn("feishu webhook incremental sync failed",
+					zap.String("entity_id", entityID),
+					zap.String("source_id", sourceID),
+					zap.String("event_id", event.EventID),
+					zap.String("job_id", jobID),
+					zap.Error(runErr),
+				)
+			}
+			return
+		}
+		if h.organizationTreeCache != nil {
+			if cacheErr := h.organizationTreeCache.InvalidateOrganizationTree(ctx, entityID); cacheErr != nil && runtime.logger != nil {
+				runtime.logger.Warn("organization tree cache invalidation failed after webhook sync",
+					zap.String("entity_id", entityID),
+					zap.String("source_id", sourceID),
+					zap.String("job_id", jobID),
+					zap.Error(cacheErr),
+				)
+			}
+		}
+	})
+	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "accepted",
 		"job_id": jobID,
 	})
+}
+
+func isVerifiedTypedFeishuDelete(cfg FeishuWebhookSecurityConfig, event idp.DirectorySyncEvent) bool {
+	if strings.TrimSpace(cfg.VerificationToken) == "" && strings.TrimSpace(cfg.EncryptKey) == "" {
+		return false
+	}
+	identifierType := strings.ToLower(strings.TrimSpace(event.ObjectIDType))
+	switch strings.ToLower(strings.TrimSpace(event.ObjectType)) {
+	case "user":
+		return identifierType == "user_id" || identifierType == "open_id" || identifierType == "union_id"
+	case "department":
+		return identifierType == "department_id" || identifierType == "open_department_id"
+	default:
+		return false
+	}
+}
+
+func writeWebhookSecurityError(w http.ResponseWriter, err error) {
+	var securityErr *webhookSecurityError
+	if errors.As(err, &securityErr) {
+		writeError(w, securityErr.status, securityErr.code, securityErr.message)
+		return
+	}
+	writeError(w, http.StatusUnauthorized, "invalid_webhook", "webhook verification failed")
 }
 
 func (h Handler) feishuWebhookTarget(w http.ResponseWriter, r *http.Request) (string, string, bool) {
@@ -381,6 +500,10 @@ func parseFeishuWebhookEvent(payload []byte) (idp.DirectorySyncEvent, error) {
 		ObjectID     string          `json:"object_id"`
 		ObjectIDType string          `json:"object_id_type"`
 		EventPayload json.RawMessage `json:"event"`
+		Header       struct {
+			EventType string `json:"event_type"`
+			EventID   string `json:"event_id"`
+		} `json:"header"`
 	}
 	if err := json.Unmarshal(payload, &envelope); err != nil {
 		return idp.DirectorySyncEvent{}, err
@@ -406,7 +529,7 @@ func parseFeishuWebhookEvent(payload []byte) (idp.DirectorySyncEvent, error) {
 		}
 	}
 
-	eventType := firstNonEmptyString(envelope.EventType, nested.EventType, nested.Type)
+	eventType := firstNonEmptyString(envelope.EventType, envelope.Header.EventType, nested.EventType, nested.Type)
 	eventPayload := map[string]interface{}{}
 	if len(envelope.EventPayload) > 0 {
 		_ = json.Unmarshal(envelope.EventPayload, &eventPayload)
@@ -455,6 +578,15 @@ func parseFeishuWebhookEvent(payload []byte) (idp.DirectorySyncEvent, error) {
 			eventObjectType = "department"
 		}
 	}
+	if eventObjectType == "" {
+		normalizedEventType := strings.ToLower(strings.TrimSpace(eventType))
+		switch {
+		case strings.Contains(normalizedEventType, "user") || strings.Contains(normalizedEventType, "employee"):
+			eventObjectType = "user"
+		case strings.Contains(normalizedEventType, "department") || strings.Contains(normalizedEventType, "dept"):
+			eventObjectType = "department"
+		}
+	}
 
 	if eventObjectType == "" {
 		return idp.DirectorySyncEvent{}, jsonError("unsupported webhook event")
@@ -476,6 +608,9 @@ func parseFeishuWebhookEvent(payload []byte) (idp.DirectorySyncEvent, error) {
 	if objectIDType == "" && eventObjectType == "department" && nested.DepartmentID != "" {
 		objectIDType = "department_id"
 	}
+	if objectIDType == "" {
+		objectIDType = extractObjectIDType(eventPayload, eventObjectType)
+	}
 
 	var raw map[string]interface{}
 	if err := json.Unmarshal(payload, &raw); err != nil {
@@ -487,7 +622,7 @@ func parseFeishuWebhookEvent(payload []byte) (idp.DirectorySyncEvent, error) {
 		ObjectType:   eventObjectType,
 		ObjectID:     objectID,
 		ObjectIDType: objectIDType,
-		EventID:      firstNonEmptyString(envelope.EventID, nested.EventID),
+		EventID:      firstNonEmptyString(envelope.EventID, envelope.Header.EventID, nested.EventID),
 		Raw:          raw,
 	}, nil
 }
@@ -507,8 +642,8 @@ func stringValue(values map[string]interface{}, keys ...string) string {
 }
 
 func extractObjectID(payload map[string]interface{}, objectType string) string {
-	objectNode, ok := payload["object"].(map[string]interface{})
-	if !ok {
+	objectNode := feishuWebhookObjectNode(payload, objectType)
+	if objectNode == nil {
 		return ""
 	}
 	switch objectType {
@@ -528,6 +663,38 @@ func extractObjectID(payload map[string]interface{}, objectType string) string {
 	default:
 		return ""
 	}
+}
+
+func extractObjectIDType(payload map[string]interface{}, objectType string) string {
+	objectNode := feishuWebhookObjectNode(payload, objectType)
+	if objectNode == nil {
+		return ""
+	}
+	switch objectType {
+	case "user":
+		for _, key := range []string{"user_id", "open_id", "union_id"} {
+			if stringValue(objectNode, key) != "" {
+				return key
+			}
+		}
+	case "department":
+		for _, key := range []string{"department_id", "open_department_id"} {
+			if stringValue(objectNode, key) != "" {
+				return key
+			}
+		}
+	}
+	return ""
+}
+
+func feishuWebhookObjectNode(payload map[string]interface{}, objectType string) map[string]interface{} {
+	if objectNode, ok := payload["object"].(map[string]interface{}); ok {
+		return objectNode
+	}
+	if objectNode, ok := payload[objectType].(map[string]interface{}); ok {
+		return objectNode
+	}
+	return nil
 }
 
 func jsonError(message string) error {

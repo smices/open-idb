@@ -126,7 +126,7 @@ if (!adminPagesJs.includes(applicationTypeDeclaration)) {
 if (!adminPagesJs.includes("type: values.type || 'oidc_client'")) {
   failures.push('Applications page must default new applications to oidc_client');
 }
-if (!apiTs.includes(applicationTypeUnion) || !apiTs.includes('payload: { name: string; type: ApplicationType }')) {
+if (!apiTs.includes(applicationTypeUnion) || !apiTs.includes('payload: ApplicationWriteRequest')) {
   failures.push('Frontend API must expose the canonical ApplicationType contract');
 }
 for (const appType of applicationTypes) {

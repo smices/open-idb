@@ -6,12 +6,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/mozillazg/go-pinyin"
@@ -20,6 +22,7 @@ import (
 
 const defaultBaseURL = "https://open.feishu.cn"
 const defaultPageSize = 50
+const defaultHTTPTimeout = 15 * time.Second
 
 type Config struct {
 	AppID     string
@@ -43,6 +46,34 @@ type feishuPaginatedResponse struct {
 	} `json:"data"`
 }
 
+type feishuAPIError struct {
+	HTTPStatus int
+	Code       int
+	Message    string
+	Path       string
+}
+
+func (e *feishuAPIError) Error() string {
+	if e.HTTPStatus != 0 {
+		return fmt.Sprintf("feishu http status %d for %s: code=%d msg=%s", e.HTTPStatus, e.Path, e.Code, e.Message)
+	}
+	return fmt.Sprintf("feishu api error for %s: code=%d msg=%s", e.Path, e.Code, e.Message)
+}
+
+func isFeishuObjectNotFound(err error, objectType string) bool {
+	var apiErr *feishuAPIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch objectType {
+	case "user":
+		return apiErr.Code == 60004
+	case "department":
+		return apiErr.Code == 60005
+	}
+	return false
+}
+
 func NewClient(cfg Config, httpClient *http.Client) (*Client, error) {
 	if cfg.AppID == "" || cfg.AppSecret == "" {
 		return nil, fmt.Errorf("feishu app id and app secret are required")
@@ -54,7 +85,7 @@ func NewClient(cfg Config, httpClient *http.Client) (*Client, error) {
 		return nil, fmt.Errorf("feishu base url is invalid: %w", err)
 	}
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 	return &Client{cfg: cfg, httpClient: httpClient}, nil
 }
@@ -76,7 +107,8 @@ func (c *Client) FullSync(ctx context.Context) (idp.FullSyncData, error) {
 }
 
 // IncrementalSync consumes a batch of webhook events and fetches changed users/departments.
-// Deletion events are represented as status-deleted records for upsert.
+// A confirmed not-found delete is kept as a typed provider identifier so the
+// sync layer can resolve an existing object without inventing a canonical ID.
 func (c *Client) IncrementalSync(ctx context.Context, events []idp.DirectorySyncEvent) (idp.FullSyncData, error) {
 	if len(events) == 0 {
 		return idp.FullSyncData{}, nil
@@ -89,8 +121,12 @@ func (c *Client) IncrementalSync(ctx context.Context, events []idp.DirectorySync
 
 	departments := make([]idp.DirectoryDepartment, 0)
 	users := make([]idp.DirectoryUser, 0)
+	departmentDeletions := make([]idp.DirectoryObjectDeletion, 0)
+	userDeletions := make([]idp.DirectoryObjectDeletion, 0)
 	departmentIDs := make(map[string]struct{})
 	userIDs := make(map[string]struct{})
+	departmentDeletionIDs := make(map[string]struct{})
+	userDeletionIDs := make(map[string]struct{})
 
 	for _, event := range events {
 		eventType := strings.ToLower(strings.TrimSpace(event.EventType))
@@ -105,14 +141,14 @@ func (c *Client) IncrementalSync(ctx context.Context, events []idp.DirectorySync
 			}
 			user, err := c.getUserByID(ctx, token, event.ObjectID, event.ObjectIDType)
 			if err != nil {
-				if event.IsDeleteEvent() {
-					if _, ok := userIDs[event.ObjectID]; !ok {
-						users = append(users, idp.DirectoryUser{
-							ExternalUserID: event.ObjectID,
-							Status:         "deleted",
-							RawProfile:     cloneBytes([]byte(`{}`)),
+				if event.IsDeleteEvent() && isFeishuObjectNotFound(err, "user") {
+					key := strings.ToLower(strings.TrimSpace(event.ObjectIDType)) + "\x00" + event.ObjectID
+					if _, ok := userDeletionIDs[key]; !ok {
+						userDeletions = append(userDeletions, idp.DirectoryObjectDeletion{
+							ObjectID:     event.ObjectID,
+							ObjectIDType: event.ObjectIDType,
 						})
-						userIDs[event.ObjectID] = struct{}{}
+						userDeletionIDs[key] = struct{}{}
 					}
 					continue
 				}
@@ -131,15 +167,14 @@ func (c *Client) IncrementalSync(ctx context.Context, events []idp.DirectorySync
 			}
 			department, err := c.getDepartmentByID(ctx, token, event.ObjectID, event.ObjectIDType)
 			if err != nil {
-				if event.IsDeleteEvent() {
-					if _, ok := departmentIDs[event.ObjectID]; !ok {
-						departments = append(departments, idp.DirectoryDepartment{
-							ExternalDepartmentID:       event.ObjectID,
-							ParentExternalDepartmentID: "",
-							Name:                       "",
-							RawProfile:                 cloneBytes([]byte(`{}`)),
+				if event.IsDeleteEvent() && isFeishuObjectNotFound(err, "department") {
+					key := strings.ToLower(strings.TrimSpace(event.ObjectIDType)) + "\x00" + event.ObjectID
+					if _, ok := departmentDeletionIDs[key]; !ok {
+						departmentDeletions = append(departmentDeletions, idp.DirectoryObjectDeletion{
+							ObjectID:     event.ObjectID,
+							ObjectIDType: event.ObjectIDType,
 						})
-						departmentIDs[event.ObjectID] = struct{}{}
+						departmentDeletionIDs[key] = struct{}{}
 					}
 					continue
 				}
@@ -153,7 +188,12 @@ func (c *Client) IncrementalSync(ctx context.Context, events []idp.DirectorySync
 		}
 	}
 
-	return idp.FullSyncData{Departments: departments, Users: users}, nil
+	return idp.FullSyncData{
+		Departments:         departments,
+		Users:               users,
+		DepartmentDeletions: departmentDeletions,
+		UserDeletions:       userDeletions,
+	}, nil
 }
 
 func (c *Client) entityAccessToken(ctx context.Context) (string, error) {
@@ -224,6 +264,9 @@ func (c *Client) departments(ctx context.Context, token string) ([]idp.Directory
 		if nextPageToken == "" {
 			return nil, fmt.Errorf("feishu departments response missing page_token while has_more=true")
 		}
+		if nextPageToken == pageToken {
+			return nil, fmt.Errorf("feishu departments response repeated page_token %q", nextPageToken)
+		}
 		pageToken = nextPageToken
 	}
 
@@ -286,7 +329,7 @@ func (c *Client) users(ctx context.Context, token string, departments []idp.Dire
 		for _, user := range users {
 			userKey := firstNonEmpty(user.ExternalUserID, user.ExternalOpenID, user.ExternalUnionID)
 			if userKey == "" {
-				continue
+				return nil, fmt.Errorf("feishu user is missing user_id, open_id, and union_id")
 			}
 			if _, ok := seenUsers[userKey]; ok {
 				continue
@@ -333,8 +376,12 @@ func (c *Client) usersByDepartment(ctx context.Context, token string, department
 			if err := json.Unmarshal(raw, &item); err != nil {
 				return nil, err
 			}
+			externalUserID := firstNonEmpty(item.UserID, item.OpenID, item.UnionID)
+			if externalUserID == "" {
+				return nil, fmt.Errorf("feishu user in department %q is missing user_id, open_id, and union_id", departmentID)
+			}
 			out = append(out, idp.DirectoryUser{
-				ExternalUserID:  firstNonEmpty(item.UserID, item.OpenID, item.UnionID),
+				ExternalUserID:  externalUserID,
 				ExternalUnionID: item.UnionID,
 				ExternalOpenID:  item.OpenID,
 				Name:            item.Name,
@@ -355,6 +402,9 @@ func (c *Client) usersByDepartment(ctx context.Context, token string, department
 		nextPageToken := firstNonEmpty(response.Data.NextPageToken, response.Data.PageToken)
 		if nextPageToken == "" {
 			return nil, fmt.Errorf("feishu users response missing page_token while has_more=true")
+		}
+		if nextPageToken == pageToken {
+			return nil, fmt.Errorf("feishu users response repeated page_token %q", nextPageToken)
 		}
 		pageToken = nextPageToken
 	}
@@ -420,8 +470,12 @@ func (c *Client) getUserByID(ctx context.Context, token string, userID string, i
 	if strings.TrimSpace(string(rawPayload)) == "" {
 		rawPayload = data
 	}
+	externalUserID := firstNonEmpty(item.UserID, item.OpenID, item.UnionID)
+	if externalUserID == "" {
+		return idp.DirectoryUser{}, fmt.Errorf("feishu user is missing user_id, open_id, and union_id")
+	}
 	return idp.DirectoryUser{
-		ExternalUserID:  item.UserID,
+		ExternalUserID:  externalUserID,
 		ExternalUnionID: item.UnionID,
 		ExternalOpenID:  item.OpenID,
 		Name:            item.Name,
@@ -471,7 +525,7 @@ func (c *Client) getObjectByID(ctx context.Context, token string, objectType str
 	if idType != "" {
 		query.Set(typeParam, idType)
 	}
-	path := "/open-apis/contact/v3/" + objectType + "/" + id
+	path := "/open-apis/contact/v3/" + objectType + "/" + url.PathEscape(id)
 	if encoded := query.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
@@ -484,7 +538,7 @@ func (c *Client) getObjectByID(ctx context.Context, token string, objectType str
 		return nil, err
 	}
 	if response.Code != 0 {
-		return nil, fmt.Errorf("feishu %s get failed: code=%d msg=%s", objectType, response.Code, response.Msg)
+		return nil, &feishuAPIError{Code: response.Code, Message: response.Msg, Path: path}
 	}
 	if len(response.Data) == 0 {
 		return nil, fmt.Errorf("feishu %s get missing data", objectType)
@@ -515,12 +569,22 @@ func (c *Client) doJSON(ctx context.Context, method string, path string, token s
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
-		message := strings.TrimSpace(string(body))
-		if message == "" {
-			return fmt.Errorf("feishu http status %d for %s", res.StatusCode, path)
+		responseBody, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+		var apiBody struct {
+			Code int    `json:"code"`
+			Msg  string `json:"msg"`
 		}
-		return fmt.Errorf("feishu http status %d for %s: %s", res.StatusCode, path, message)
+		_ = json.Unmarshal(responseBody, &apiBody)
+		message := strings.TrimSpace(apiBody.Msg)
+		if message == "" {
+			message = strings.TrimSpace(string(responseBody))
+		}
+		return &feishuAPIError{
+			HTTPStatus: res.StatusCode,
+			Code:       apiBody.Code,
+			Message:    message,
+			Path:       path,
+		}
 	}
 	return json.NewDecoder(res.Body).Decode(out)
 }

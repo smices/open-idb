@@ -28,6 +28,10 @@ type LoginService interface {
 	CreateLoginSession(ctx context.Context, result LoginResult, meta SessionMetadata) (Session, error)
 }
 
+type loginSessionRevoker interface {
+	RevokeLoginSession(ctx context.Context, entityID, sessionID string) error
+}
+
 type Handler struct {
 	service    LoginService
 	audit      AuditEventWriter
@@ -60,6 +64,7 @@ func (h Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/auth/context", h.loginContext)
 	r.Get("/sapi/auth/context", h.loginContext)
 	r.Post("/api/login/account", h.loginAccount)
+	r.Post("/api/auth/logout", h.logout)
 }
 
 func (h Handler) loginAccount(w http.ResponseWriter, r *http.Request) {
@@ -126,17 +131,45 @@ func (h Handler) loginAccount(w http.ResponseWriter, r *http.Request) {
 		TraceID:      traceID,
 		After:        map[string]string{"login_method": "account", "username": result.Username},
 	})
-	http.SetCookie(w, &http.Cookie{
-		Name:     "idb_session",
-		Value:    session.ID,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   isHTTPSRequest(r),
-		SameSite: http.SameSiteLaxMode,
-		Expires:  session.ExpiresAt,
-		MaxAge:   int(time.Until(session.ExpiresAt).Seconds()),
-	})
+	setSessionCookie(w, r, session.ID, session.ExpiresAt)
 	http.Redirect(w, r, safeReturnTo(r.PostForm.Get("return_to")), http.StatusFound)
+}
+
+func (h Handler) logout(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		clearSessionCookie(w, r)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	session, err := ResolveSession(r.Context(), cookie.Value)
+	if err != nil {
+		clearSessionCookie(w, r)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	revoker, ok := h.service.(loginSessionRevoker)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "logout_unavailable", "server session revocation is unavailable")
+		return
+	}
+	if err := revoker.RevokeLoginSession(r.Context(), session.EntityID, session.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "logout_failed", "server session could not be revoked")
+		return
+	}
+	h.writeAudit(r, auditmodel.Event{
+		EntityID:     session.EntityID,
+		ActorUserID:  session.UserID,
+		ActorType:    "user",
+		Action:       auditmodel.ActionLogout,
+		ResourceType: "session",
+		ResourceID:   session.ID,
+		IP:           r.RemoteAddr,
+		UserAgent:    r.UserAgent(),
+		TraceID:      id.NewULID(),
+	})
+	clearSessionCookie(w, r)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // writeAudit records an audit event if an audit writer is configured.

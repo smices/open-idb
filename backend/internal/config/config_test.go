@@ -296,6 +296,26 @@ func TestLoadRejectsInvalidConfigEncryptionKey(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsTrustedProxyCIDRs(t *testing.T) {
+	setConfigEnv(t, map[string]string{"IDB_TRUSTED_PROXY_CIDRS": "10.0.0.0/8, 2001:db8::/32"})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.TrustedProxyCIDRs) != 2 || cfg.TrustedProxyCIDRs[0].String() != "10.0.0.0/8" || cfg.TrustedProxyCIDRs[1].String() != "2001:db8::/32" {
+		t.Fatalf("TrustedProxyCIDRs = %#v", cfg.TrustedProxyCIDRs)
+	}
+}
+
+func TestLoadRejectsInvalidTrustedProxyCIDR(t *testing.T) {
+	setConfigEnv(t, map[string]string{"IDB_TRUSTED_PROXY_CIDRS": "10.0.0.0/8,not-a-cidr"})
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want invalid trusted proxy CIDR error")
+	}
+}
+
 func setConfigEnv(t *testing.T, values map[string]string) {
 	t.Helper()
 
@@ -308,6 +328,7 @@ func setConfigEnv(t *testing.T, values map[string]string) {
 		"IDB_OIDC_KEY_ID",
 		"IDB_OIDC_PRIVATE_KEY_PEM",
 		"IDB_CONFIG_ENCRYPTION_KEY",
+		"IDB_TRUSTED_PROXY_CIDRS",
 		"IDB_WEB_BASE_URL",
 		"IDB_FEISHU_REDIRECT_URI",
 		"IDB_REDIS_ENABLED",

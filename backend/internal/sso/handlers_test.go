@@ -143,6 +143,62 @@ func TestAPIAuthorizeRedirectsToLoginWhenUnauthenticated(t *testing.T) {
 	}
 }
 
+func TestAuthorizationRedirectURLPreservesQueryAndEncodesSuccessParameters(t *testing.T) {
+	got, err := authorizationRedirectURL(
+		"https://client.example/callback?tenant=alpha#complete",
+		map[string]string{
+			"code":  "code&with#reserved",
+			"state": "state&next=#/home",
+		},
+	)
+	if err != nil {
+		t.Fatalf("authorizationRedirectURL() error = %v", err)
+	}
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse redirect URL: %v", err)
+	}
+	if u.Query().Get("tenant") != "alpha" {
+		t.Fatalf("tenant = %q, want alpha", u.Query().Get("tenant"))
+	}
+	if u.Query().Get("code") != "code&with#reserved" {
+		t.Fatalf("code = %q", u.Query().Get("code"))
+	}
+	if u.Query().Get("state") != "state&next=#/home" {
+		t.Fatalf("state = %q", u.Query().Get("state"))
+	}
+	if u.Fragment != "complete" {
+		t.Fatalf("fragment = %q, want complete", u.Fragment)
+	}
+}
+
+func TestAuthorizationRedirectURLEncodesErrorParameters(t *testing.T) {
+	got, err := authorizationRedirectURL(
+		"https://client.example/callback?tenant=alpha",
+		map[string]string{
+			"error":             "invalid_request",
+			"error_description": "scope a&b is invalid #1",
+			"state":             "return=/orders&tab=#open",
+		},
+	)
+	if err != nil {
+		t.Fatalf("authorizationRedirectURL() error = %v", err)
+	}
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse redirect URL: %v", err)
+	}
+	if u.Query().Get("tenant") != "alpha" {
+		t.Fatalf("tenant = %q, want alpha", u.Query().Get("tenant"))
+	}
+	if u.Query().Get("error_description") != "scope a&b is invalid #1" {
+		t.Fatalf("error_description = %q", u.Query().Get("error_description"))
+	}
+	if u.Query().Get("state") != "return=/orders&tab=#open" {
+		t.Fatalf("state = %q", u.Query().Get("state"))
+	}
+}
+
 func TestShouldRestartAuthorizeLogin(t *testing.T) {
 	if !shouldRestartAuthorizeLogin(fmt.Errorf("%w: status is disabled", ErrUserInactive)) {
 		t.Fatal("inactive user should restart login")
@@ -199,6 +255,135 @@ func TestTokenEndpointRateLimitsByClientAndIP(t *testing.T) {
 
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusTooManyRequests)
+	}
+}
+
+func TestTokenClientCredentialsAcceptsBasicAuthentication(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(url.Values{
+		"grant_type": {"authorization_code"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth("client-1", "secret-1")
+	if err := req.ParseForm(); err != nil {
+		t.Fatalf("ParseForm() error = %v", err)
+	}
+
+	clientID, secret, provided, err := tokenClientCredentials(req)
+	if err != nil {
+		t.Fatalf("tokenClientCredentials() error = %v", err)
+	}
+	if clientID != "client-1" || secret != "secret-1" || !provided {
+		t.Fatalf("credentials = (%q, %q, %v), want basic credentials", clientID, secret, provided)
+	}
+}
+
+func TestTokenClientCredentialsAcceptsFormAuthentication(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(url.Values{
+		"client_id":     {"client-1"},
+		"client_secret": {"secret-1"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := req.ParseForm(); err != nil {
+		t.Fatalf("ParseForm() error = %v", err)
+	}
+
+	clientID, secret, provided, err := tokenClientCredentials(req)
+	if err != nil {
+		t.Fatalf("tokenClientCredentials() error = %v", err)
+	}
+	if clientID != "client-1" || secret != "secret-1" || !provided {
+		t.Fatalf("credentials = (%q, %q, %v), want form credentials", clientID, secret, provided)
+	}
+}
+
+func TestTokenClientCredentialsRejectsConflictingAuthenticationMethods(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(url.Values{
+		"client_id":     {"other-client"},
+		"client_secret": {"other-secret"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth("client-1", "secret-1")
+	if err := req.ParseForm(); err != nil {
+		t.Fatalf("ParseForm() error = %v", err)
+	}
+
+	if _, _, _, err := tokenClientCredentials(req); err == nil {
+		t.Fatal("tokenClientCredentials() error = nil, want conflict error")
+	}
+}
+
+func TestTokenClientCredentialsKeepsLegacyClientWithoutSecret(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(url.Values{
+		"client_id": {"client-1"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := req.ParseForm(); err != nil {
+		t.Fatalf("ParseForm() error = %v", err)
+	}
+
+	clientID, secret, provided, err := tokenClientCredentials(req)
+	if err != nil {
+		t.Fatalf("tokenClientCredentials() error = %v", err)
+	}
+	if clientID != "client-1" || secret != "" || provided {
+		t.Fatalf("credentials = (%q, %q, %v), want legacy client without secret", clientID, secret, provided)
+	}
+}
+
+func TestTokenEndpointAcceptsBasicCredentialsAndInfersEntity(t *testing.T) {
+	store := newExchangeTestStore()
+	store.client.SecretRequired = true
+	router := newExchangeHandlerTestRouter(t, store)
+	body := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {"code-1"},
+		"redirect_uri":  {store.code.RedirectUri},
+		"code_verifier": {"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(body.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(store.client.ClientID, store.client.ClientSecretHash.String)
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body = %q)", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if got := rec.Header().Get("Pragma"); got != "no-cache" {
+		t.Fatalf("Pragma = %q, want no-cache", got)
+	}
+}
+
+func TestTokenEndpointReturnsInvalidClientForWrongProvidedSecret(t *testing.T) {
+	store := newExchangeTestStore()
+	store.client.SecretRequired = true
+	router := newExchangeHandlerTestRouter(t, store)
+	body := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {"code-1"},
+		"redirect_uri":  {store.code.RedirectUri},
+		"code_verifier": {"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(body.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(store.client.ClientID, "wrong-secret")
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d (body = %q)", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+	var response map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["error"] != "invalid_client" {
+		t.Fatalf("error = %#v, want invalid_client", response["error"])
 	}
 }
 
@@ -263,6 +448,61 @@ func TestUserInfoWithValidToken(t *testing.T) {
 	// phone is not in scopes (no "phone" scope), so should be absent.
 	if _, ok := claims["phone_number"]; ok {
 		t.Fatalf("phone_number should be absent when phone scope not granted, got %v", claims["phone_number"])
+	}
+}
+
+func TestUserInfoInfersEntityFromGloballyUniqueBearerToken(t *testing.T) {
+	entityID := id.NewULID()
+	userID := id.NewULID()
+	rawToken := "globally-unique-access-token"
+	querier := &mockSSOQuerier{
+		token: SSOTokenLookup{
+			ID:        id.NewULID(),
+			EntityID:  entityID,
+			UserID:    userID,
+			ClientID:  "client-1",
+			TokenType: "access",
+			Scopes:    []string{"openid", "profile"},
+		},
+		user: UserInfoClaims{
+			ID:          userID,
+			EntityID:    entityID,
+			Username:    "alice",
+			DisplayName: "Alice",
+		},
+	}
+	router := newHandlerTestRouterWithQuerier(t, querier)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/oauth2/userinfo", nil)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body = %q)", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if querier.globalLookupCalls != 1 {
+		t.Fatalf("global lookup calls = %d, want 1", querier.globalLookupCalls)
+	}
+	if querier.lastFetchEntity != entityID {
+		t.Fatalf("userinfo entity = %q, want %q", querier.lastFetchEntity, entityID)
+	}
+}
+
+func TestUserInfoRejectsAmbiguousGlobalBearerToken(t *testing.T) {
+	querier := &mockSSOQuerier{globalTokenErr: fmt.Errorf("ambiguous token hash")}
+	router := newHandlerTestRouterWithQuerier(t, querier)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/oauth2/userinfo", nil)
+	req.Header.Set("Authorization", "Bearer shared-token")
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if querier.lastFetchEntity != "" {
+		t.Fatalf("userinfo entity = %q, want no user lookup", querier.lastFetchEntity)
 	}
 }
 
@@ -339,6 +579,45 @@ func TestRevokeCallsQuerier(t *testing.T) {
 	}
 	if querier.lastRevokeHash != tokenHash {
 		t.Fatalf("revoke hash = %q, want %q", querier.lastRevokeHash, tokenHash)
+	}
+}
+
+func TestRevokeInfersEntityFromGloballyUniqueToken(t *testing.T) {
+	entityID := id.NewULID()
+	rawToken := "globally-unique-token-to-revoke"
+	querier := &mockSSOQuerier{globalRevokeEntity: entityID}
+	router := newHandlerTestRouterWithQuerier(t, querier)
+
+	body := url.Values{"token": {rawToken}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/revoke", strings.NewReader(body.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if querier.lastGlobalRevokeHash != HashToken(rawToken) {
+		t.Fatalf("global revoke hash = %q, want %q", querier.lastGlobalRevokeHash, HashToken(rawToken))
+	}
+}
+
+func TestRevokeDoesNotRevokeAmbiguousGlobalToken(t *testing.T) {
+	querier := &mockSSOQuerier{globalRevokeErr: fmt.Errorf("ambiguous token hash")}
+	router := newHandlerTestRouterWithQuerier(t, querier)
+	body := url.Values{"token": {"shared-token"}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/revoke", strings.NewReader(body.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if querier.lastRevokeHash != "" {
+		t.Fatalf("scoped revoke hash = %q, want no scoped revoke", querier.lastRevokeHash)
 	}
 }
 
@@ -419,13 +698,19 @@ func TestBuildUserInfoResponseScopes(t *testing.T) {
 
 // mockSSOQuerier is a test double for the TokenLookupStore interface.
 type mockSSOQuerier struct {
-	token          SSOTokenLookup
-	tokenErr       error
-	user           UserInfoClaims
-	userErr        error
-	revokeErr      error
-	lastLookupHash string
-	lastRevokeHash string
+	token                SSOTokenLookup
+	tokenErr             error
+	globalTokenErr       error
+	user                 UserInfoClaims
+	userErr              error
+	revokeErr            error
+	globalRevokeEntity   string
+	globalRevokeErr      error
+	lastLookupHash       string
+	lastRevokeHash       string
+	lastGlobalRevokeHash string
+	lastFetchEntity      string
+	globalLookupCalls    int
 }
 
 func (m *mockSSOQuerier) LookupToken(_ context.Context, _ string, tokenHash string) (SSOTokenLookup, error) {
@@ -433,12 +718,24 @@ func (m *mockSSOQuerier) LookupToken(_ context.Context, _ string, tokenHash stri
 	return m.token, m.tokenErr
 }
 
+func (m *mockSSOQuerier) LookupTokenGlobally(_ context.Context, tokenHash string) (SSOTokenLookup, error) {
+	m.globalLookupCalls++
+	m.lastLookupHash = tokenHash
+	return m.token, m.globalTokenErr
+}
+
 func (m *mockSSOQuerier) MarkTokenRevoked(_ context.Context, _ string, tokenHash string) error {
 	m.lastRevokeHash = tokenHash
 	return m.revokeErr
 }
 
-func (m *mockSSOQuerier) FetchUserInfo(_ context.Context, _ string, _ string) (UserInfoClaims, error) {
+func (m *mockSSOQuerier) MarkTokenRevokedGlobally(_ context.Context, tokenHash string) (string, error) {
+	m.lastGlobalRevokeHash = tokenHash
+	return m.globalRevokeEntity, m.globalRevokeErr
+}
+
+func (m *mockSSOQuerier) FetchUserInfo(_ context.Context, entityID string, _ string) (UserInfoClaims, error) {
+	m.lastFetchEntity = entityID
 	return m.user, m.userErr
 }
 
@@ -508,4 +805,14 @@ func newHandlerTestRouterWithQuerier(t *testing.T, store TokenLookupStore) http.
 		handler.RegisterRoutes(mux)
 		mux.ServeHTTP(w, r)
 	})
+}
+
+func newExchangeHandlerTestRouter(t *testing.T, store Store) http.Handler {
+	t.Helper()
+	service := newExchangeTestService(t, store)
+	handler := NewHandler(service)
+	handler.SetEphemeralStore(ephemeral.NewMemoryStore())
+	mux := chi.NewRouter()
+	handler.RegisterRoutes(mux)
+	return mux
 }

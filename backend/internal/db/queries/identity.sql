@@ -151,6 +151,12 @@ FROM account_bindings
 WHERE entity_id = $1 AND source_id = $2 AND provider_union_id = $3 AND provider_union_id <> ''
 LIMIT 1;
 
+-- name: ListAccountBindingsByProviderUnionID :many
+SELECT id, entity_id, user_id, source_id, directory_user_id, provider_uid, provider_union_id, is_primary, bound_at
+FROM account_bindings
+WHERE entity_id = $1 AND source_id = $2 AND provider_union_id = $3 AND provider_union_id <> ''
+ORDER BY bound_at ASC, id ASC;
+
 -- name: UpdateAccountBindingFromDirectory :one
 UPDATE account_bindings
 SET directory_user_id = $4,
@@ -164,6 +170,165 @@ RETURNING id, entity_id, user_id, source_id, directory_user_id, provider_uid, pr
 SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
 FROM directory_users
 WHERE entity_id = $1 AND source_id = $2 AND external_user_id = $3;
+
+-- name: GetDirectoryUserByProviderIdentifier :one
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
+FROM directory_users
+WHERE entity_id = sqlc.arg('entity_id')
+  AND source_id = sqlc.arg('source_id')
+  AND sqlc.arg('identifier')::text <> ''
+  AND CASE lower(sqlc.arg('identifier_type')::text)
+    WHEN 'user_id' THEN
+      external_user_id = sqlc.arg('identifier')::text
+      OR raw_profile->>'user_id' = sqlc.arg('identifier')::text
+    WHEN 'open_id' THEN
+      external_open_id = sqlc.arg('identifier')::text
+      OR external_user_id = sqlc.arg('identifier')::text
+      OR raw_profile->>'open_id' = sqlc.arg('identifier')::text
+    WHEN 'union_id' THEN
+      external_union_id = sqlc.arg('identifier')::text
+      OR external_user_id = sqlc.arg('identifier')::text
+      OR raw_profile->>'union_id' = sqlc.arg('identifier')::text
+    ELSE
+	  external_user_id = sqlc.arg('identifier')::text
+	  OR external_open_id = sqlc.arg('identifier')::text
+	  OR external_union_id = sqlc.arg('identifier')::text
+	  OR raw_profile->>'user_id' = sqlc.arg('identifier')::text
+	  OR raw_profile->>'open_id' = sqlc.arg('identifier')::text
+	  OR raw_profile->>'union_id' = sqlc.arg('identifier')::text
+  END
+ORDER BY (external_user_id = sqlc.arg('identifier')::text) DESC, created_at ASC
+LIMIT 1;
+
+-- name: ListDirectoryUsersByProviderIdentifier :many
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
+FROM directory_users
+WHERE entity_id = sqlc.arg('entity_id')
+  AND source_id = sqlc.arg('source_id')
+  AND sqlc.arg('identifier')::text <> ''
+  AND CASE lower(sqlc.arg('identifier_type')::text)
+    WHEN 'user_id' THEN
+      external_user_id = sqlc.arg('identifier')::text
+      OR raw_profile->>'user_id' = sqlc.arg('identifier')::text
+    WHEN 'open_id' THEN
+      external_open_id = sqlc.arg('identifier')::text
+      OR external_user_id = sqlc.arg('identifier')::text
+      OR raw_profile->>'open_id' = sqlc.arg('identifier')::text
+    WHEN 'union_id' THEN
+      external_union_id = sqlc.arg('identifier')::text
+      OR external_user_id = sqlc.arg('identifier')::text
+      OR raw_profile->>'union_id' = sqlc.arg('identifier')::text
+    ELSE
+      false
+  END
+ORDER BY created_at ASC, id ASC;
+
+-- name: UpdateDirectoryUserByID :one
+UPDATE directory_users
+SET external_user_id = sqlc.arg('external_user_id'),
+    external_union_id = sqlc.narg('external_union_id'),
+    external_open_id = sqlc.narg('external_open_id'),
+    name = sqlc.arg('name'),
+    english_name = sqlc.arg('english_name'),
+    employee_no = sqlc.arg('employee_no'),
+    job_title = sqlc.arg('job_title'),
+    email = sqlc.narg('email'),
+    phone = sqlc.narg('phone'),
+    avatar_url = sqlc.narg('avatar_url'),
+    status = sqlc.arg('status'),
+    raw_profile = sqlc.arg('raw_profile'),
+    last_synced_at = now(),
+    updated_at = now()
+WHERE entity_id = sqlc.arg('entity_id')
+  AND source_id = sqlc.arg('source_id')
+  AND id = sqlc.arg('id')
+RETURNING id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at;
+
+-- name: MarkDirectoryUserDeletedByID :one
+UPDATE directory_users
+SET status = 'deleted',
+    last_synced_at = now(),
+    updated_at = now()
+WHERE entity_id = $1 AND source_id = $2 AND id = $3
+RETURNING id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at;
+
+-- name: GetAccountBindingByDirectoryUserID :one
+SELECT id, entity_id, user_id, source_id, directory_user_id, provider_uid, provider_union_id, is_primary, bound_at
+FROM account_bindings
+WHERE entity_id = $1 AND source_id = $2 AND directory_user_id = $3;
+
+-- name: GetManagedUserForDeletedDirectoryUser :one
+SELECT u.id, u.entity_id, u.username, u.display_name, u.english_name, u.employee_no, u.job_title, u.email, u.phone, u.avatar_url, u.lifecycle_status, u.user_type, u.primary_source_id, u.locale, u.created_at, u.updated_at
+FROM users u
+JOIN account_bindings deleted_binding
+  ON deleted_binding.entity_id = u.entity_id
+ AND deleted_binding.user_id = u.id
+JOIN directory_users deleted_user
+  ON deleted_user.entity_id = deleted_binding.entity_id
+ AND deleted_user.source_id = deleted_binding.source_id
+ AND deleted_user.id = deleted_binding.directory_user_id
+WHERE deleted_binding.entity_id = $1
+  AND deleted_binding.source_id = $2
+  AND deleted_binding.directory_user_id = $3
+  AND deleted_user.status = 'deleted'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM account_bindings active_binding
+    JOIN directory_users active_user
+      ON active_user.entity_id = active_binding.entity_id
+     AND active_user.source_id = active_binding.source_id
+     AND active_user.id = active_binding.directory_user_id
+    WHERE active_binding.entity_id = u.entity_id
+      AND active_binding.user_id = u.id
+      AND active_user.status <> 'deleted'
+  )
+LIMIT 1;
+
+-- name: GetDirectoryDepartmentByProviderIdentifier :one
+SELECT id, entity_id, source_id, external_department_id, parent_external_department_id, name, raw_profile, last_synced_at, created_at, updated_at
+FROM directory_departments
+WHERE entity_id = sqlc.arg('entity_id')
+  AND source_id = sqlc.arg('source_id')
+  AND sqlc.arg('identifier')::text <> ''
+  AND CASE lower(sqlc.arg('identifier_type')::text)
+    WHEN 'department_id' THEN
+      external_department_id = sqlc.arg('identifier')::text
+      OR raw_profile->>'department_id' = sqlc.arg('identifier')::text
+    WHEN 'open_department_id' THEN
+      external_department_id = sqlc.arg('identifier')::text
+      OR raw_profile->>'open_department_id' = sqlc.arg('identifier')::text
+    ELSE
+	  external_department_id = sqlc.arg('identifier')::text
+	  OR raw_profile->>'department_id' = sqlc.arg('identifier')::text
+	  OR raw_profile->>'open_department_id' = sqlc.arg('identifier')::text
+  END
+ORDER BY (external_department_id = sqlc.arg('identifier')::text) DESC, created_at ASC
+LIMIT 1;
+
+-- name: ListDirectoryDepartmentsByProviderIdentifier :many
+SELECT id, entity_id, source_id, external_department_id, parent_external_department_id, name, raw_profile, last_synced_at, created_at, updated_at
+FROM directory_departments
+WHERE entity_id = sqlc.arg('entity_id')
+  AND source_id = sqlc.arg('source_id')
+  AND sqlc.arg('identifier')::text <> ''
+  AND CASE lower(sqlc.arg('identifier_type')::text)
+    WHEN 'department_id' THEN
+      external_department_id = sqlc.arg('identifier')::text
+      OR raw_profile->>'department_id' = sqlc.arg('identifier')::text
+    WHEN 'open_department_id' THEN
+      external_department_id = sqlc.arg('identifier')::text
+      OR raw_profile->>'open_department_id' = sqlc.arg('identifier')::text
+    ELSE
+      external_department_id = sqlc.arg('identifier')::text
+      OR raw_profile->>'department_id' = sqlc.arg('identifier')::text
+      OR raw_profile->>'open_department_id' = sqlc.arg('identifier')::text
+  END
+ORDER BY created_at ASC, id ASC;
+
+-- name: DeleteDirectoryDepartmentByID :one
+DELETE FROM directory_departments
+WHERE entity_id = $1 AND source_id = $2 AND id = $3
+RETURNING id, entity_id, source_id, external_department_id, parent_external_department_id, name, raw_profile, last_synced_at, created_at, updated_at;
 
 -- name: GetManagedUserByUsername :one
 SELECT id, entity_id, username, display_name, english_name, employee_no, job_title, email, phone, avatar_url, lifecycle_status, user_type, primary_source_id, locale, created_at, updated_at
@@ -218,4 +383,15 @@ WHERE u.entity_id = $1
   AND ab.entity_id = $1
   AND ab.source_id = $2
   AND du.status = 'deleted'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM account_bindings active_ab
+    JOIN directory_users active_du
+      ON active_du.entity_id = active_ab.entity_id
+     AND active_du.source_id = active_ab.source_id
+     AND active_du.id = active_ab.directory_user_id
+    WHERE active_ab.entity_id = u.entity_id
+      AND active_ab.user_id = u.id
+      AND active_du.status <> 'deleted'
+  )
 ;

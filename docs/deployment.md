@@ -51,6 +51,8 @@ https://idbridge.example.com
 | `IDB_FEISHU_REDIRECT_URI` | 飞书必填 | `https://idbridge.example.com/api/auth/feishu/callback` | 飞书 OAuth 回调地址 |
 | `IDB_OIDC_KEY_ID` | 建议 | `prod-key-1` | OIDC/JWKS key id |
 | `IDB_OIDC_PRIVATE_KEY_PEM` | 生产必填 | 由 Secret 注入 | OIDC RSA 私钥 PEM；必须在所有 backend 副本中保持一致 |
+| `IDB_CONFIG_ENCRYPTION_KEY` | 建议 | 由 Secret 注入 | Base64 编码的 32 字节 AES-256 密钥；用于加密新保存的身份源配置，所有 backend 副本必须一致 |
+| `IDB_TRUSTED_PROXY_CIDRS` | 反向代理时必填 | `10.42.0.0/16` | 直接连接 backend 的可信路由 Caddy/Ingress 网段，多个 CIDR 用逗号分隔；仅这些来源的 `X-Forwarded-For`/`Forwarded` 会被采信 |
 | `IDB_DEFAULT_LOCALE` | 否 | `zh-CN` | `zh-CN` 或 `en-US` |
 | `IDB_SESSION_TTL_SECONDS` | 否 | `86400` | 用户会话 TTL |
 | `IDB_AUTH_CODE_TTL_SECONDS` | 否 | `300` | OIDC 授权码 TTL |
@@ -66,6 +68,8 @@ https://idbridge.example.com
 - `IDB_FEISHU_REDIRECT_URI` 必须在飞书开放平台中配置为 OAuth 回调地址。
 - 如果后端在内网 `http://idbridge:8080`，但用户访问域名是 `https://idbridge.example.com`，`IDB_OIDC_ISSUER` 仍然必须写外部可访问地址。
 - 生产环境必须通过 Secret 注入 `IDB_OIDC_PRIVATE_KEY_PEM`，不得提交到仓库或写入普通 ConfigMap。未配置时服务会为兼容旧部署临时生成密钥，但进程重启会改变 JWKS，不能作为生产长期方案。
+- `IDB_CONFIG_ENCRYPTION_KEY` 未配置时仍可读取和保存旧版明文配置，便于无中断升级；配置后，新建或再次保存的身份源配置会使用带版本标识的密文，旧明文配置仍可读取。
+- `IDB_TRUSTED_PROXY_CIDRS` 应填写直接连接 backend 的最后一跳代理网段；使用“IDC Edge Caddy → IdBridge 路由 Caddy → backend”时，应填写路由 Caddy 的网段，而不是 Edge 或终端用户公网网段。未配置时后端会忽略转发头并保留原始直连地址，以保持旧版限流行为；经反向代理的生产部署必须配置该变量，且禁止为了方便填写 `0.0.0.0/0` 或 `::/0`。
 
 ### 3.1 OIDC 签名密钥上线步骤
 
@@ -81,15 +85,27 @@ openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048
 3. 在一次受控发布窗口内切换全部 backend 副本；旧版本签发的 access/id token 默认最多有效 15 分钟。发布前先等待该窗口结束或让依赖方刷新 token，避免旧公钥缓存造成短暂验签失败。
 4. 发布后访问 `/api/.well-known/jwks.json`，确认 `kid` 与配置一致；重启一个副本后再次确认 JWKS 不变。
 
-后续发布保持同一 Secret 和 `kid`，不会影响现有 `client_id`、回调地址、用户、应用或 client secret hash。密钥轮换应作为单独的兼容发布执行，保留旧公钥直到最长 token 有效期和缓存期结束。
+后续发布保持同一 Secret 和 `kid`，不会影响现有 `client_id`、`client_secret`、回调地址、用户或应用。密钥轮换应作为单独的兼容发布执行，保留旧公钥直到最长 token 有效期和缓存期结束。
+
+### 3.2 身份源配置加密的兼容上线
+
+生成并保管配置加密密钥：
+
+```bash
+openssl rand -base64 32
+```
+
+现有生产环境建议分两阶段上线：
+
+1. 先备份数据库并部署新版本，暂不设置 `IDB_CONFIG_ENCRYPTION_KEY`，确认现有身份源仍能读取、登录与同步。
+2. 回滚观察窗口结束后，把同一密钥注入全部 backend 副本并滚动重启。
+3. 之后新建或更新身份源时，该条配置会自动转为密文；未修改的旧配置继续兼容读取，不要求停机批量迁移。
+
+密钥一旦启用不得丢失或在副本间不一致。已有配置被加密后，如需回滚到不支持该密文格式的旧程序，必须同时恢复启用加密前的数据库备份；不能只回滚镜像。
 
 ## 4. 数据库初始化
 
-当前版本使用一个首次初始化 SQL：
-
-```text
-backend/migrations/000001_schema_baseline.sql
-```
+数据库变更位于 `backend/migrations/`，必须按编号依次执行。全新数据库从 `000001_schema_baseline.sql` 开始；现有数据库只执行尚未应用的增量迁移，不得重复导入基线或重建已有表。
 
 执行迁移：
 
@@ -160,6 +176,7 @@ make k8s-deploy-frontend
 - `IDB_OIDC_ISSUER`
 - `IDB_WEB_BASE_URL`
 - `IDB_FEISHU_REDIRECT_URI`
+- `IDB_TRUSTED_PROXY_CIDRS`
 - TLS Secret
 - Ingress host
 
@@ -180,6 +197,24 @@ pg_restore --clean --if-exists --no-owner --dbname="$DATABASE_URL" idbridge-YYYY
 ```
 
 恢复后必须验证迁移版本、OIDC discovery、JWKS、管理员登录和一个既有 OIDC 应用的授权码流程。不要通过删除或重建数据库来排查单个应用、用户或同步问题。
+
+### 6.2 现有生产环境升级顺序
+
+本版本的数据库迁移为增量变更，不重建用户、应用、OIDC client 或账号绑定。建议按以下顺序升级：
+
+1. 记录当前镜像版本、迁移版本和所有 Secret，并完成数据库备份。
+2. 对备份恢复出的非生产数据库执行 `goose status` 和 `goose up`，验证迁移可重复检查且现有数据可读取。
+3. 在生产维护窗口先执行 `goose up`。不要执行 `goose down`，也不要重新导入 `000001_schema_baseline.sql`。
+4. 保持原有 `IDB_OIDC_PRIVATE_KEY_PEM`、`IDB_OIDC_KEY_ID` 和现有域名不变，逐个替换 backend 副本，等待 `/readyz` 成功后再替换下一个。
+5. backend 全部就绪后再发布 frontend 静态资源。
+6. 验证一个既有管理员会话、一个既有用户登录、一个既有 OIDC client 的授权码换票，以及一次身份源读取；无需删除或重建任何现有应用。
+7. 如需回滚程序镜像，保留已经执行的向前兼容增量列，不要回滚数据库迁移。若期间已启用身份源配置加密，则按 3.2 节保留新程序与密钥，或恢复启用前备份。
+
+全量同步的清理语义比旧版本更严格。首次升级后执行全量同步前，应先在恢复出的非生产副本核对源端快照和清理结果；生产环境是否触发同步由部署方在维护窗口决定。
+
+`000007_webhook_recovery.sql` 只给 `sync_jobs` 增加恢复元数据、索引和独立的 source lease 表，不删除或改写用户、应用、绑定和既有同步记录。新 backend 启动后会立即检查未完成的 webhook job，之后默认每 30 秒检查一次；多副本通过数据库 lease 避免同一身份源被同时领取。执行失败的 webhook job 会按 1 分钟、5 分钟、30 分钟、2 小时退避，累计 5 次失败后才进入终态 `failed`，成功消费则进入 `succeeded`。发布期间旧副本仍可按原 SQL 写入，新增列的默认值保证这些记录可由新副本恢复。
+
+`000007` 和 `000009` 使用 PostgreSQL 并发索引并由 goose 以非事务方式逐步执行，避免在历史回填和建索引期间持续阻塞生产写入；迁移步骤可安全重试，不要在外层额外包裹事务。`000008` 会把既有 OIDC client 标记为 `secret_required=false`，保持原换票行为；升级后由新后台创建的 client 才会显式标记为 `true`。`000009` 只增加授权码/token hash 查询索引，不改变凭证数据。
 
 ## 7. 反向代理配置
 
@@ -234,6 +269,25 @@ OIDC 集成推荐使用 `/api` 前缀下的发现文档：
 https://idbridge.example.com/api/.well-known/openid-configuration
 ```
 
+### 7.3 双层 Caddy 的客户端地址
+
+如果链路为“IDC Edge Caddy → 仓库内路由 Caddy → backend”，需要分别建立两段信任，不能把未知公网地址直接加入 backend 的可信列表：
+
+1. Edge Caddy 正确写入 `X-Forwarded-For`。
+2. 路由 Caddy 在全局 `servers` 配置中仅信任 Edge Caddy 的实际 CIDR，例如：
+
+```caddyfile
+{
+	servers {
+		trusted_proxies static 192.0.2.10/32 2001:db8::10/128
+	}
+}
+```
+
+3. backend 的 `IDB_TRUSTED_PROXY_CIDRS` 仅填写路由 Caddy 到 backend 使用的实际 CIDR。
+
+如果第 2 步缺失，路由 Caddy 会把 Edge 地址当作直连客户端，backend 无法得到终端用户地址，登录与 token 交换限流可能被错误聚合。示例 CIDR 仅为文档地址，部署时必须替换；不要信任所有公网地址。
+
 ## 8. 飞书配置
 
 在飞书开放平台创建企业自建应用，至少准备：
@@ -261,7 +315,8 @@ https://idbridge.example.com/api/auth/feishu/callback
 - 当前版本只开放飞书作为主身份源。
 - 同一公司内主身份源互斥。
 - 员工登录以飞书 SSO 和飞书工作台 SSO 为主；本地账号只是用户侧登录兜底能力，不作为身份源配置。
-- 全量同步必须和飞书当前快照一致：已存在用户保持 ULID 不变，飞书快照中缺失的同步用户软删除。
+- 全量同步成功后必须和飞书当前快照一致：已存在用户保持 ULID 不变，源端缺失的部门和目录用户会被清理，对应受管账号按既有归档规则处理。
+- 远端快照获取完成后，完整数据库变更与同步成功状态在同一事务提交；任一数据库写入失败会回滚本次快照，不会暴露半完成结果。
 
 ## 9. 管理员和账号
 

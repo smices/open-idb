@@ -17,6 +17,15 @@ SELECT id, entity_id, type, name, status, sync_enabled, created_at
 FROM identity_sources
 WHERE entity_id = $1 AND id = $2;
 
+-- name: GetIdentitySourceConfigByID :one
+SELECT id,
+       entity_id,
+       type,
+       status,
+       COALESCE(config_encrypted, '{}'::bytea) AS config
+FROM identity_sources
+WHERE entity_id = $1 AND id = $2;
+
 -- name: UpdateIdentitySource :one
 UPDATE identity_sources
 SET name = COALESCE(sqlc.narg('name'), name),

@@ -6,12 +6,17 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/ory/fosite"
+	"github.com/smices/open-idb/internal/db/generated"
+	"github.com/smices/open-idb/internal/id"
 )
 
 func TestNewServiceRequiresCoreDependencies(t *testing.T) {
@@ -106,15 +111,31 @@ func TestValidateAuthorizeRequestDelegatesToFosite(t *testing.T) {
 	}
 }
 
-func TestEffectiveAuthorizeScopesUsesAllowedClientScopes(t *testing.T) {
+func TestEffectiveAuthorizeScopesKeepsRequestedSubset(t *testing.T) {
 	got, err := effectiveAuthorizeScopes(
-		[]string{"openid", "profile", "email"},
+		[]string{"openid", "email"},
 		[]string{"openid", "profile", "email", "directory:read"},
 	)
 	if err != nil {
 		t.Fatalf("effectiveAuthorizeScopes() error = %v", err)
 	}
-	want := []string{"openid", "profile", "email", "directory:read"}
+	want := []string{"openid", "email"}
+	if len(got) != len(want) {
+		t.Fatalf("scopes = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("scopes = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func TestEffectiveAuthorizeScopesFallsBackToAllowedScopesForLegacyEmptyRequest(t *testing.T) {
+	got, err := effectiveAuthorizeScopes(nil, []string{"openid", "profile", "email"})
+	if err != nil {
+		t.Fatalf("effectiveAuthorizeScopes() error = %v", err)
+	}
+	want := []string{"openid", "profile", "email"}
 	if len(got) != len(want) {
 		t.Fatalf("scopes = %#v, want %#v", got, want)
 	}
@@ -132,6 +153,18 @@ func TestEffectiveAuthorizeScopesRejectsScopeOutsideClientGrant(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("effectiveAuthorizeScopes() error = nil, want error")
+	}
+}
+
+func TestCanRedirectAuthorizationErrorOnlyToRegisteredURI(t *testing.T) {
+	store := newExchangeTestStore()
+	service := newExchangeTestService(t, store)
+
+	if !service.canRedirectAuthorizationError(context.Background(), store.client.EntityID, store.client.ClientID, store.client.RedirectUris[0]) {
+		t.Fatal("registered redirect URI was rejected")
+	}
+	if service.canRedirectAuthorizationError(context.Background(), store.client.EntityID, store.client.ClientID, "https://attacker.example/callback") {
+		t.Fatal("unregistered redirect URI was accepted")
 	}
 }
 
@@ -159,6 +192,202 @@ func TestParseIdentitySourcesAcceptsDecodedJSONArray(t *testing.T) {
 	if len(got) != 2 || got[0] != "feishu" || got[1] != "ldap" {
 		t.Fatalf("parseIdentitySources decoded array = %#v", got)
 	}
+}
+
+func TestExchangeCodeInfersEntityFromAuthorizationCode(t *testing.T) {
+	store := newExchangeTestStore()
+	service := newExchangeTestService(t, store)
+
+	response, err := service.ExchangeCode(context.Background(), exchangeTokenInput(store, ""))
+	if err != nil {
+		t.Fatalf("ExchangeCode() error = %v", err)
+	}
+	if response.AccessToken == "" || response.IDToken == "" {
+		t.Fatalf("ExchangeCode() response = %#v, want signed tokens", response)
+	}
+}
+
+func TestExchangeCodeRejectsProvidedInvalidClientSecret(t *testing.T) {
+	store := newExchangeTestStore()
+	store.client.SecretRequired = true
+	service := newExchangeTestService(t, store)
+	input := exchangeTokenInput(store, store.code.EntityID)
+	input.ClientSecret = "wrong-secret"
+	input.ClientSecretProvided = true
+
+	if _, err := service.ExchangeCode(context.Background(), input); err == nil {
+		t.Fatal("ExchangeCode() error = nil, want invalid client error")
+	}
+}
+
+func TestExchangeCodeRequiresSecretForNewClient(t *testing.T) {
+	store := newExchangeTestStore()
+	store.client.SecretRequired = true
+	service := newExchangeTestService(t, store)
+
+	_, err := service.ExchangeCode(context.Background(), exchangeTokenInput(store, store.code.EntityID))
+	if !errors.Is(err, ErrInvalidClient) {
+		t.Fatalf("ExchangeCode() error = %v, want %v", err, ErrInvalidClient)
+	}
+}
+
+func TestExchangeCodeAcceptsValidSecretForNewClient(t *testing.T) {
+	store := newExchangeTestStore()
+	store.client.SecretRequired = true
+	service := newExchangeTestService(t, store)
+	input := exchangeTokenInput(store, store.code.EntityID)
+	input.ClientSecret = store.client.ClientSecretHash.String
+	input.ClientSecretProvided = true
+
+	if _, err := service.ExchangeCode(context.Background(), input); err != nil {
+		t.Fatalf("ExchangeCode() error = %v, want valid client secret to succeed", err)
+	}
+}
+
+func TestExchangeCodeAllowsLegacyClientWithoutSecret(t *testing.T) {
+	store := newExchangeTestStore()
+	service := newExchangeTestService(t, store)
+	input := exchangeTokenInput(store, store.code.EntityID)
+
+	if _, err := service.ExchangeCode(context.Background(), input); err != nil {
+		t.Fatalf("ExchangeCode() error = %v, want legacy exchange to remain compatible", err)
+	}
+}
+
+func TestExchangeCodeConsumesCodeAndPersistsTokensAtomically(t *testing.T) {
+	store := newExchangeTestStore()
+	service := newExchangeTestService(t, store)
+
+	if _, err := service.ExchangeCode(context.Background(), exchangeTokenInput(store, store.code.EntityID)); err != nil {
+		t.Fatalf("ExchangeCode() error = %v", err)
+	}
+	if store.finalizeCalls != 1 {
+		t.Fatalf("FinalizeAuthorizationCodeExchange() calls = %d, want 1", store.finalizeCalls)
+	}
+	if store.markUsedCalls != 0 || store.createTokenCalls != 0 {
+		t.Fatalf("legacy persistence calls = mark:%d create:%d, want none", store.markUsedCalls, store.createTokenCalls)
+	}
+}
+
+type exchangeTestStore struct {
+	code             generated.OauthAuthorizationCode
+	client           generated.OidcClient
+	finalizeCalls    int
+	markUsedCalls    int
+	createTokenCalls int
+}
+
+func newExchangeTestStore() *exchangeTestStore {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	entityID := id.NewULID()
+	userID := id.NewULID()
+	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	digest := sha256.Sum256([]byte(verifier))
+	return &exchangeTestStore{
+		code: generated.OauthAuthorizationCode{
+			ID:                  id.NewULID(),
+			EntityID:            entityID,
+			ClientID:            "client-1",
+			UserID:              userID,
+			CodeHash:            HashToken("code-1"),
+			RedirectUri:         "https://app.example.test/callback",
+			Scopes:              []string{"openid", "email"},
+			CodeChallenge:       base64.RawURLEncoding.EncodeToString(digest[:]),
+			CodeChallengeMethod: CodeChallengeS256,
+			Nonce:               pgtype.Text{String: "nonce-1", Valid: true},
+			ExpiresAt:           pgtype.Timestamptz{Time: now.Add(5 * time.Minute), Valid: true},
+		},
+		client: generated.OidcClient{
+			ID:               id.NewULID(),
+			EntityID:         entityID,
+			ApplicationID:    id.NewULID(),
+			ClientID:         "client-1",
+			ClientSecretHash: pgtype.Text{String: "secret-1", Valid: true},
+			RedirectUris:     []string{"https://app.example.test/callback"},
+			AllowedScopes:    []string{"openid", "profile", "email"},
+			Status:           "active",
+		},
+	}
+}
+
+func exchangeTokenInput(store *exchangeTestStore, entityID string) TokenInput {
+	return TokenInput{
+		EntityID:     entityID,
+		ClientID:     store.code.ClientID,
+		Code:         "code-1",
+		RedirectURI:  store.code.RedirectUri,
+		CodeVerifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+	}
+}
+
+func newExchangeTestService(t *testing.T, store Store) *Service {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	service, err := NewService(ServiceConfig{
+		Issuer:         "https://idb.example.test",
+		KeyID:          "dev-key-1",
+		PrivateKey:     key,
+		Store:          store,
+		Now:            func() time.Time { return time.Unix(1_800_000_000, 0).UTC() },
+		AuthCodeTTL:    5 * time.Minute,
+		IDTokenTTL:     15 * time.Minute,
+		AccessTokenTTL: 15 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	return service
+}
+
+func (s *exchangeTestStore) GetOIDCClientByClientID(context.Context, generated.GetOIDCClientByClientIDParams) (generated.OidcClient, error) {
+	return s.client, nil
+}
+func (s *exchangeTestStore) GetUserLifecycleStatus(context.Context, generated.GetUserLifecycleStatusParams) (string, error) {
+	return "active", nil
+}
+func (s *exchangeTestStore) GetUserClaimsForToken(context.Context, generated.GetUserClaimsForTokenParams) (generated.GetUserClaimsForTokenRow, error) {
+	return generated.GetUserClaimsForTokenRow{Username: "ada", DisplayName: "Ada", IdentitySources: []interface{}{"feishu"}}, nil
+}
+func (s *exchangeTestStore) HasApplicationAccess(context.Context, generated.HasApplicationAccessParams) (pgtype.Bool, error) {
+	return pgtype.Bool{Bool: true, Valid: true}, nil
+}
+func (s *exchangeTestStore) GetUserRolesForToken(context.Context, generated.GetUserRolesForTokenParams) ([]string, error) {
+	return []string{"employee"}, nil
+}
+func (s *exchangeTestStore) GetPermissionsVersion(context.Context, string) (int64, error) {
+	return 1, nil
+}
+func (s *exchangeTestStore) GetResourceScopesVersion(context.Context, string) (int64, error) {
+	return 1, nil
+}
+func (s *exchangeTestStore) CreateAuthorizationCode(context.Context, generated.CreateAuthorizationCodeParams) (generated.OauthAuthorizationCode, error) {
+	return s.code, nil
+}
+func (s *exchangeTestStore) GetAuthorizationCode(context.Context, generated.GetAuthorizationCodeParams) (generated.OauthAuthorizationCode, error) {
+	return s.code, nil
+}
+func (s *exchangeTestStore) GetAuthorizationCodeByHash(context.Context, string) (generated.OauthAuthorizationCode, error) {
+	return s.code, nil
+}
+func (s *exchangeTestStore) MarkAuthorizationCodeUsed(context.Context, generated.MarkAuthorizationCodeUsedParams) (generated.OauthAuthorizationCode, error) {
+	s.markUsedCalls++
+	return s.code, nil
+}
+func (s *exchangeTestStore) CreateOAuthToken(context.Context, generated.CreateOAuthTokenParams) (generated.OauthToken, error) {
+	s.createTokenCalls++
+	return generated.OauthToken{}, nil
+}
+func (s *exchangeTestStore) FinalizeAuthorizationCodeExchange(context.Context, generated.FinalizeAuthorizationCodeExchangeParams) (generated.FinalizeAuthorizationCodeExchangeRow, error) {
+	s.finalizeCalls++
+	return generated.FinalizeAuthorizationCodeExchangeRow{
+		ID:       s.code.ID,
+		EntityID: s.code.EntityID,
+		ClientID: s.code.ClientID,
+		UserID:   s.code.UserID,
+	}, nil
 }
 
 func newTestService(t *testing.T) *Service {

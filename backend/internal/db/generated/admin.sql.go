@@ -72,7 +72,7 @@ func (q *Queries) DeleteApplication(ctx context.Context, arg DeleteApplicationPa
 }
 
 const getApplicationByID = `-- name: GetApplicationByID :one
-SELECT id, entity_id, name, type, status, created_at, updated_at
+SELECT id, entity_id, name, type, status, created_at, updated_at, config
 FROM applications
 WHERE entity_id = $1 AND id = $2
 `
@@ -93,6 +93,7 @@ func (q *Queries) GetApplicationByID(ctx context.Context, arg GetApplicationByID
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Config,
 	)
 	return i, err
 }
@@ -173,7 +174,7 @@ func (q *Queries) GetUserByID(ctx context.Context, arg GetUserByIDParams) (User,
 
 const listAllSyncJobs = `-- name: ListAllSyncJobs :many
 
-SELECT id, entity_id, source_id, type, provider, status, trace_id, started_at, finished_at, error_message, stats
+SELECT id, entity_id, source_id, type, provider, status, trace_id, started_at, finished_at, error_message, stats, event_id, attempt_count, next_attempt_at, last_attempt_at
 FROM sync_jobs
 WHERE entity_id = $1
 ORDER BY started_at DESC
@@ -208,6 +209,10 @@ func (q *Queries) ListAllSyncJobs(ctx context.Context, arg ListAllSyncJobsParams
 			&i.FinishedAt,
 			&i.ErrorMessage,
 			&i.Stats,
+			&i.EventID,
+			&i.AttemptCount,
+			&i.NextAttemptAt,
+			&i.LastAttemptAt,
 		); err != nil {
 			return nil, err
 		}
@@ -234,16 +239,26 @@ type ListApplicationsParams struct {
 	Offset   int32  `json:"offset"`
 }
 
+type ListApplicationsRow struct {
+	ID        string             `json:"id"`
+	EntityID  string             `json:"entity_id"`
+	Name      string             `json:"name"`
+	Type      string             `json:"type"`
+	Status    string             `json:"status"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 // === Applications ===
-func (q *Queries) ListApplications(ctx context.Context, arg ListApplicationsParams) ([]Application, error) {
+func (q *Queries) ListApplications(ctx context.Context, arg ListApplicationsParams) ([]ListApplicationsRow, error) {
 	rows, err := q.db.Query(ctx, listApplications, arg.EntityID, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Application{}
+	items := []ListApplicationsRow{}
 	for rows.Next() {
-		var i Application
+		var i ListApplicationsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.EntityID,
@@ -329,9 +344,10 @@ const updateApplication = `-- name: UpdateApplication :one
 UPDATE applications
 SET name = COALESCE($3, name),
     status = COALESCE($4, status),
+    config = COALESCE($5::jsonb, config),
     updated_at = now()
 WHERE entity_id = $1 AND id = $2
-RETURNING id, entity_id, name, type, status, created_at, updated_at
+RETURNING id, entity_id, name, type, status, created_at, updated_at, config
 `
 
 type UpdateApplicationParams struct {
@@ -339,6 +355,7 @@ type UpdateApplicationParams struct {
 	ID       string      `json:"id"`
 	Name     pgtype.Text `json:"name"`
 	Status   pgtype.Text `json:"status"`
+	Config   []byte      `json:"config"`
 }
 
 func (q *Queries) UpdateApplication(ctx context.Context, arg UpdateApplicationParams) (Application, error) {
@@ -347,6 +364,7 @@ func (q *Queries) UpdateApplication(ctx context.Context, arg UpdateApplicationPa
 		arg.ID,
 		arg.Name,
 		arg.Status,
+		arg.Config,
 	)
 	var i Application
 	err := row.Scan(
@@ -357,6 +375,7 @@ func (q *Queries) UpdateApplication(ctx context.Context, arg UpdateApplicationPa
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Config,
 	)
 	return i, err
 }

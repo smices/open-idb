@@ -18,6 +18,25 @@ type applicationTestService struct {
 	createApplicationFn func(context.Context, string, string, string) (ApplicationResponse, error)
 }
 
+type applicationDetailTestService struct {
+	*applicationTestService
+	getDetailFn    func(context.Context, string, string) (ApplicationDetailResponse, error)
+	createDetailFn func(context.Context, string, ApplicationWriteInput) (ApplicationDetailResponse, error)
+	updateDetailFn func(context.Context, string, string, ApplicationWriteInput) (ApplicationDetailResponse, error)
+}
+
+func (s *applicationDetailTestService) GetApplicationDetail(ctx context.Context, entityID, id string) (ApplicationDetailResponse, error) {
+	return s.getDetailFn(ctx, entityID, id)
+}
+
+func (s *applicationDetailTestService) CreateApplicationDetail(ctx context.Context, entityID string, input ApplicationWriteInput) (ApplicationDetailResponse, error) {
+	return s.createDetailFn(ctx, entityID, input)
+}
+
+func (s *applicationDetailTestService) UpdateApplicationDetail(ctx context.Context, entityID, id string, input ApplicationWriteInput) (ApplicationDetailResponse, error) {
+	return s.updateDetailFn(ctx, entityID, id, input)
+}
+
 func (s *applicationTestService) CreateApplication(ctx context.Context, entityID, name, appType string) (ApplicationResponse, error) {
 	if s.createApplicationFn == nil {
 		return ApplicationResponse{}, fmt.Errorf("unexpected CreateApplication call")
@@ -76,5 +95,82 @@ func TestApplicationHandlerCreateRejectsUnsupportedType(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), `"error":"invalid_application_type"`) {
 		t.Fatalf("body = %s", rr.Body.String())
+	}
+}
+
+func TestApplicationHandlerCreatesCompleteOIDCApplicationInOneServiceCall(t *testing.T) {
+	legacyCalled := false
+	base := &applicationTestService{mockUserService: &mockUserService{}}
+	base.createApplicationFn = func(context.Context, string, string, string) (ApplicationResponse, error) {
+		legacyCalled = true
+		return ApplicationResponse{}, nil
+	}
+	service := &applicationDetailTestService{applicationTestService: base}
+	service.createDetailFn = func(_ context.Context, entityID string, input ApplicationWriteInput) (ApplicationDetailResponse, error) {
+		if entityID != "01HZZZZZZZ0000000000000099" {
+			t.Fatalf("entityID = %q", entityID)
+		}
+		if input.Type != "oidc_client" || input.OIDCClient == nil {
+			t.Fatalf("input = %#v", input)
+		}
+		if len(input.OIDCClient.RedirectURIs) != 1 || input.OIDCClient.RedirectURIs[0] != "https://client.example/callback" {
+			t.Fatalf("redirect URIs = %#v", input.OIDCClient.RedirectURIs)
+		}
+		return ApplicationDetailResponse{
+			ApplicationResponse: ApplicationResponse{ID: "01HZZZZZZZ0000000000000010", Name: input.Name, Type: input.Type, Status: "active"},
+			OIDCClient:          &OIDCClientResponse{ClientID: "client-id", ClientSecret: "readable-secret"},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/sapi/applications", strings.NewReader(`{
+		"name":"Complete OIDC App",
+		"type":"oidc_client",
+		"status":"active",
+		"oidc_client":{"redirect_uris":["https://client.example/callback"],"pkce_required":true}
+	}`))
+	req.AddCookie(adminTestSessionCookie())
+	rr := httptest.NewRecorder()
+
+	newApplicationTestRouter(service).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if rr.Header().Get("Cache-Control") != "no-store" || rr.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("application create cache headers = %#v", rr.Header())
+	}
+	if legacyCalled {
+		t.Fatal("legacy CreateApplication was called instead of the complete mutation")
+	}
+	if !strings.Contains(rr.Body.String(), `"client_secret":"readable-secret"`) {
+		t.Fatalf("response does not contain the readable client secret: %s", rr.Body.String())
+	}
+}
+
+func TestApplicationHandlerUpdatePassesEditableOIDCCallbacks(t *testing.T) {
+	service := &applicationDetailTestService{applicationTestService: &applicationTestService{mockUserService: &mockUserService{}}}
+	service.updateDetailFn = func(_ context.Context, _, _ string, input ApplicationWriteInput) (ApplicationDetailResponse, error) {
+		if input.OIDCClient == nil || len(input.OIDCClient.RedirectURIs) != 1 || input.OIDCClient.RedirectURIs[0] != "https://new.example/callback" {
+			t.Fatalf("input = %#v", input)
+		}
+		return ApplicationDetailResponse{ApplicationResponse: ApplicationResponse{Name: input.Name, Type: "oidc_client", Status: input.Status}}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/sapi/applications/01HZZZZZZZ0000000000000010", strings.NewReader(`{
+		"name":"Updated OIDC App",
+		"type":"oidc_client",
+		"status":"active",
+		"oidc_client":{"redirect_uris":["https://new.example/callback"]}
+	}`))
+	req.AddCookie(adminTestSessionCookie())
+	rr := httptest.NewRecorder()
+
+	newApplicationTestRouter(service).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if rr.Header().Get("Cache-Control") != "no-store" || rr.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("application update cache headers = %#v", rr.Header())
 	}
 }

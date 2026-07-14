@@ -64,6 +64,7 @@ type Application struct {
 	Status    string             `json:"status"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	Config    []byte             `json:"config"`
 }
 
 type ApplicationAssignment struct {
@@ -274,6 +275,7 @@ type OidcClient struct {
 	Status             string             `json:"status"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	SecretRequired     bool               `json:"secret_required"`
 }
 
 type Organization struct {
@@ -353,17 +355,21 @@ type Session struct {
 }
 
 type SyncJob struct {
-	ID           string             `json:"id"`
-	EntityID     string             `json:"entity_id"`
-	SourceID     string             `json:"source_id"`
-	Type         string             `json:"type"`
-	Provider     string             `json:"provider"`
-	Status       string             `json:"status"`
-	TraceID      string             `json:"trace_id"`
-	StartedAt    pgtype.Timestamptz `json:"started_at"`
-	FinishedAt   pgtype.Timestamptz `json:"finished_at"`
-	ErrorMessage pgtype.Text        `json:"error_message"`
-	Stats        []byte             `json:"stats"`
+	ID            string             `json:"id"`
+	EntityID      string             `json:"entity_id"`
+	SourceID      string             `json:"source_id"`
+	Type          string             `json:"type"`
+	Provider      string             `json:"provider"`
+	Status        string             `json:"status"`
+	TraceID       string             `json:"trace_id"`
+	StartedAt     pgtype.Timestamptz `json:"started_at"`
+	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
+	ErrorMessage  pgtype.Text        `json:"error_message"`
+	Stats         []byte             `json:"stats"`
+	EventID       pgtype.Text        `json:"event_id"`
+	AttemptCount  int32              `json:"attempt_count"`
+	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
+	LastAttemptAt pgtype.Timestamptz `json:"last_attempt_at"`
 }
 
 type User struct {
@@ -390,4 +396,13 @@ type UserRole struct {
 	UserID    string             `json:"user_id"`
 	RoleID    string             `json:"role_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type WebhookSyncLease struct {
+	EntityID       string             `json:"entity_id"`
+	SourceID       string             `json:"source_id"`
+	ClaimToken     string             `json:"claim_token"`
+	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }

@@ -5,9 +5,11 @@ package adminapi
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -294,6 +296,16 @@ func (s *AdminService) auditTxLogger(txQueries *generated.Queries) (*audit.Servi
 	return audit.NewService(txQueries), true
 }
 
+func (s *AdminService) auditWriterForTx(txQueries *generated.Queries) *auditWriter {
+	if s.audit == nil || s.audit.logger == nil {
+		return nil
+	}
+	if _, ok := s.audit.logger.(*audit.Service); ok {
+		return &auditWriter{logger: audit.NewService(txQueries)}
+	}
+	return s.audit
+}
+
 func (s *AdminService) UpdateUserLifecycle(ctx context.Context, entityID, id string, status string) (UserResponse, error) {
 	before, _ := s.GetUserByID(ctx, entityID, id)
 	row, err := s.queries.UpdateUserLifecycle(ctx, generated.UpdateUserLifecycleParams{
@@ -364,7 +376,7 @@ func (s *AdminService) ListApplications(ctx context.Context, entityID string, li
 	}
 	apps := make([]ApplicationResponse, 0, len(rows))
 	for _, row := range rows {
-		apps = append(apps, applicationFromRow(row))
+		apps = append(apps, applicationFromListRow(row))
 	}
 	return apps, nil
 }
@@ -384,7 +396,15 @@ func (s *AdminService) GetApplicationByID(ctx context.Context, entityID, id stri
 	return applicationFromRow(row), nil
 }
 
+func (s *AdminService) GetApplicationDetail(ctx context.Context, entityID, id string) (ApplicationDetailResponse, error) {
+	return applicationDetailFromQueries(ctx, s.queries, entityID, id)
+}
+
 func (s *AdminService) CreateApplication(ctx context.Context, entityID string, name, appType string) (ApplicationResponse, error) {
+	if s.txStarter != nil {
+		detail, err := s.createApplicationDetail(ctx, entityID, ApplicationWriteInput{Name: name, Type: appType}, false)
+		return detail.ApplicationResponse, err
+	}
 	row, err := s.queries.CreateApplication(ctx, generated.CreateApplicationParams{
 		EntityID: entityID,
 		Name:     name,
@@ -394,13 +414,24 @@ func (s *AdminService) CreateApplication(ctx context.Context, entityID string, n
 		return ApplicationResponse{}, err
 	}
 	resp := applicationFromRow(row)
-	if err := s.audit.logCreate(ctx, ulidString(entityID), "", "application", resp.ID, resp); err != nil {
+	if err := s.audit.logCreate(ctx, ulidString(entityID), "", "application", resp.ID, applicationResponseForAudit(resp)); err != nil {
 		return ApplicationResponse{}, err
 	}
 	return resp, nil
 }
 
 func (s *AdminService) UpdateApplication(ctx context.Context, entityID, id string, name, status pgtype.Text) (ApplicationResponse, error) {
+	if s.txStarter != nil {
+		detail, err := s.UpdateApplicationDetail(ctx, entityID, id, ApplicationWriteInput{
+			Name:   textValue(name),
+			Status: textValue(status),
+		})
+		return detail.ApplicationResponse, err
+	}
+	before, err := s.GetApplicationByID(ctx, entityID, id)
+	if err != nil {
+		return ApplicationResponse{}, err
+	}
 	row, err := s.queries.UpdateApplication(ctx, generated.UpdateApplicationParams{
 		EntityID: entityID,
 		ID:       id,
@@ -410,14 +441,461 @@ func (s *AdminService) UpdateApplication(ctx context.Context, entityID, id strin
 	if err != nil {
 		return ApplicationResponse{}, err
 	}
-	return applicationFromRow(row), nil
+	after := applicationFromRow(row)
+	if err := s.audit.logUpdate(ctx, ulidString(entityID), "", "application", after.ID, applicationResponseForAudit(before), applicationResponseForAudit(after)); err != nil {
+		return ApplicationResponse{}, err
+	}
+	return after, nil
 }
 
 func (s *AdminService) DeleteApplication(ctx context.Context, entityID, id string) error {
-	return s.queries.DeleteApplication(ctx, generated.DeleteApplicationParams{
+	if s.txStarter == nil {
+		return fmt.Errorf("admin service transaction starter is not configured")
+	}
+	tx, err := s.txStarter.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	txQueries := s.queries.WithTx(tx)
+	before, err := applicationDetailFromQueries(ctx, txQueries, entityID, id)
+	if err != nil {
+		return err
+	}
+	if err := txQueries.DeleteApplication(ctx, generated.DeleteApplicationParams{EntityID: entityID, ID: id}); err != nil {
+		return err
+	}
+	if err := s.auditWriterForTx(txQueries).logDelete(ctx, ulidString(entityID), "", "application", ulidString(id), applicationDetailForAudit(before)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+type apiClientApplicationConfig struct {
+	ClientID      string   `json:"client_id"`
+	ClientSecret  string   `json:"client_secret"`
+	AllowedScopes []string `json:"allowed_scopes"`
+}
+
+type internalApplicationConfig struct {
+	AppURL      string `json:"app_url"`
+	CallbackURL string `json:"callback_url"`
+	Description string `json:"description"`
+}
+
+func (s *AdminService) CreateApplicationDetail(ctx context.Context, entityID string, input ApplicationWriteInput) (ApplicationDetailResponse, error) {
+	return s.createApplicationDetail(ctx, entityID, input, true)
+}
+
+func (s *AdminService) createApplicationDetail(ctx context.Context, entityID string, input ApplicationWriteInput, requireComplete bool) (ApplicationDetailResponse, error) {
+	input.Name = strings.TrimSpace(input.Name)
+	input.Type = strings.TrimSpace(input.Type)
+	input.Status = strings.TrimSpace(input.Status)
+	if input.Name == "" || !isValidApplicationType(input.Type) {
+		return ApplicationDetailResponse{}, &applicationRequestError{message: "name and a valid type are required"}
+	}
+	if input.Status == "" {
+		input.Status = "active"
+	}
+	if !isValidApplicationStatus(input.Status) {
+		return ApplicationDetailResponse{}, &applicationRequestError{message: "status must be active or disabled"}
+	}
+	if requireComplete {
+		if err := normalizeCompleteApplicationCreate(&input); err != nil {
+			return ApplicationDetailResponse{}, err
+		}
+	}
+	config := json.RawMessage(`{}`)
+	var err error
+	if applicationConfigProvided(input.Config) {
+		config, err = normalizeApplicationConfig(input.Type, input.Config)
+		if err != nil {
+			return ApplicationDetailResponse{}, err
+		}
+	}
+	if input.Type != "oidc_client" && input.OIDCClient != nil {
+		return ApplicationDetailResponse{}, &applicationRequestError{message: "oidc_client settings are only valid for oidc_client applications"}
+	}
+	if s.txStarter == nil {
+		return ApplicationDetailResponse{}, fmt.Errorf("admin service transaction starter is not configured")
+	}
+
+	tx, err := s.txStarter.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ApplicationDetailResponse{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	txQueries := s.queries.WithTx(tx)
+	row, err := txQueries.CreateApplication(ctx, generated.CreateApplicationParams{
+		EntityID: entityID,
+		Name:     input.Name,
+		Type:     input.Type,
+		Status:   optionalText(input.Status),
+		Config:   config,
+	})
+	if err != nil {
+		return ApplicationDetailResponse{}, err
+	}
+	detail := ApplicationDetailResponse{ApplicationResponse: applicationFromRow(row)}
+	if input.OIDCClient != nil {
+		client, err := createOIDCClientForApplication(ctx, txQueries, entityID, row.ID, row.Status, *input.OIDCClient)
+		if err != nil {
+			return ApplicationDetailResponse{}, err
+		}
+		detail.OIDCClient = client
+	}
+	if err := s.auditWriterForTx(txQueries).logCreate(ctx, ulidString(entityID), "", "application", detail.ID, applicationDetailForAudit(detail)); err != nil {
+		return ApplicationDetailResponse{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ApplicationDetailResponse{}, err
+	}
+	return detail, nil
+}
+
+func normalizeCompleteApplicationCreate(input *ApplicationWriteInput) error {
+	switch input.Type {
+	case "oidc_client":
+		if input.OIDCClient == nil {
+			return &applicationRequestError{message: "oidc_client settings are required"}
+		}
+		redirectURIs, err := normalizeOIDCRedirectURIs(input.OIDCClient.RedirectURIs, true)
+		if err != nil {
+			return err
+		}
+		input.OIDCClient.RedirectURIs = redirectURIs
+	case "api_client", "internal_app":
+		if !applicationConfigProvided(input.Config) {
+			return &applicationRequestError{message: input.Type + " config is required"}
+		}
+	}
+	return nil
+}
+
+func normalizeOIDCRedirectURIs(values []string, required bool) ([]string, error) {
+	if values == nil {
+		if !required {
+			return nil, nil
+		}
+		return nil, &applicationRequestError{message: "oidc_client requires at least one redirect_uri"}
+	}
+	if len(values) == 0 {
+		return nil, &applicationRequestError{message: "oidc_client requires at least one redirect_uri"}
+	}
+	normalized := make([]string, 0, len(values))
+	for _, raw := range values {
+		value := strings.TrimSpace(raw)
+		redirectURI, err := url.ParseRequestURI(value)
+		if err != nil || redirectURI.Host == "" || (redirectURI.Scheme != "https" && redirectURI.Scheme != "http") {
+			return nil, &applicationRequestError{message: "redirect_uris must contain absolute http or https URLs"}
+		}
+		normalized = append(normalized, value)
+	}
+	return normalized, nil
+}
+
+func (s *AdminService) UpdateApplicationDetail(ctx context.Context, entityID, id string, input ApplicationWriteInput) (ApplicationDetailResponse, error) {
+	if s.txStarter == nil {
+		return ApplicationDetailResponse{}, fmt.Errorf("admin service transaction starter is not configured")
+	}
+	tx, err := s.txStarter.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ApplicationDetailResponse{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	txQueries := s.queries.WithTx(tx)
+	before, err := applicationDetailFromQueries(ctx, txQueries, entityID, id)
+	if err != nil {
+		return ApplicationDetailResponse{}, err
+	}
+	if input.Type != "" && input.Type != before.Type {
+		return ApplicationDetailResponse{}, &applicationRequestError{message: "application type cannot be changed"}
+	}
+	if input.OIDCClient != nil && before.Type != "oidc_client" {
+		return ApplicationDetailResponse{}, &applicationRequestError{message: "oidc_client settings are only valid for oidc_client applications"}
+	}
+	if input.Status != "" && !isValidApplicationStatus(input.Status) {
+		return ApplicationDetailResponse{}, &applicationRequestError{message: "status must be active or disabled"}
+	}
+	var config []byte
+	if applicationConfigProvided(input.Config) {
+		config, err = normalizeApplicationConfig(before.Type, input.Config)
+		if err != nil {
+			return ApplicationDetailResponse{}, err
+		}
+	}
+	row, err := txQueries.UpdateApplication(ctx, generated.UpdateApplicationParams{
 		EntityID: entityID,
 		ID:       id,
+		Name:     optionalText(strings.TrimSpace(input.Name)),
+		Status:   optionalText(strings.TrimSpace(input.Status)),
+		Config:   config,
 	})
+	if err != nil {
+		return ApplicationDetailResponse{}, err
+	}
+	after := ApplicationDetailResponse{ApplicationResponse: applicationFromRow(row), OIDCClient: before.OIDCClient}
+	if input.OIDCClient != nil {
+		if before.OIDCClient == nil {
+			client, err := createOIDCClientForApplication(ctx, txQueries, entityID, id, row.Status, *input.OIDCClient)
+			if err != nil {
+				return ApplicationDetailResponse{}, err
+			}
+			after.OIDCClient = client
+		} else {
+			client, err := updateOIDCClientForApplication(ctx, txQueries, entityID, row.Status, *before.OIDCClient, *input.OIDCClient)
+			if err != nil {
+				return ApplicationDetailResponse{}, err
+			}
+			after.OIDCClient = &client
+		}
+	}
+	if err := s.auditWriterForTx(txQueries).logUpdate(ctx, ulidString(entityID), "", "application", after.ID, applicationDetailForAudit(before), applicationDetailForAudit(after)); err != nil {
+		return ApplicationDetailResponse{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ApplicationDetailResponse{}, err
+	}
+	return after, nil
+}
+
+func applicationDetailFromQueries(ctx context.Context, queries *generated.Queries, entityID, id string) (ApplicationDetailResponse, error) {
+	row, err := queries.GetApplicationByID(ctx, generated.GetApplicationByIDParams{EntityID: entityID, ID: id})
+	if err != nil {
+		return ApplicationDetailResponse{}, err
+	}
+	detail := ApplicationDetailResponse{ApplicationResponse: applicationFromRow(row)}
+	if row.Type != "oidc_client" {
+		return detail, nil
+	}
+	clientRow, err := queries.GetOIDCClientByApplicationID(ctx, generated.GetOIDCClientByApplicationIDParams{
+		EntityID: entityID, ApplicationID: id,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return detail, nil
+	}
+	if err != nil {
+		return ApplicationDetailResponse{}, err
+	}
+	client := oidcClientFromRow(clientRow)
+	detail.OIDCClient = &client
+	return detail, nil
+}
+
+func newOIDCClientParams(entityID, applicationID, status string, input ApplicationOIDCClientInput) (generated.CreateOIDCClientParams, error) {
+	redirectURIs, err := normalizeOIDCRedirectURIs(input.RedirectURIs, true)
+	if err != nil {
+		return generated.CreateOIDCClientParams{}, err
+	}
+	input.RedirectURIs = redirectURIs
+	clientID := strings.TrimSpace(input.ClientID)
+	if clientID == "" {
+		var err error
+		clientID, err = generateOIDCClientID()
+		if err != nil {
+			return generated.CreateOIDCClientParams{}, err
+		}
+	}
+	secret, err := generateRandomSecret(32)
+	if err != nil {
+		return generated.CreateOIDCClientParams{}, err
+	}
+	if len(input.AllowedScopes) == 0 {
+		input.AllowedScopes = []string{"openid", "profile", "email"}
+	}
+	if len(input.GrantTypes) == 0 {
+		input.GrantTypes = []string{"authorization_code"}
+	}
+	if len(input.ResponseTypes) == 0 {
+		input.ResponseTypes = []string{"code"}
+	}
+	if input.RedirectURIs == nil {
+		input.RedirectURIs = []string{}
+	}
+	pkceRequired := true
+	if input.PKCERequired != nil {
+		pkceRequired = *input.PKCERequired
+	}
+	provider, appID, appSecret, err := normalizeWorkplaceConfig(
+		stringPointerValue(input.WorkplaceProvider),
+		stringPointerValue(input.WorkplaceAppID),
+		stringPointerValue(input.WorkplaceAppSecret),
+	)
+	if err != nil {
+		return generated.CreateOIDCClientParams{}, &applicationRequestError{message: err.Error()}
+	}
+	return generated.CreateOIDCClientParams{
+		EntityID:           entityID,
+		ApplicationID:      applicationID,
+		ClientID:           clientID,
+		ClientSecretHash:   pgtype.Text{String: secret, Valid: true},
+		RedirectUris:       input.RedirectURIs,
+		AllowedScopes:      input.AllowedScopes,
+		GrantTypes:         input.GrantTypes,
+		ResponseTypes:      input.ResponseTypes,
+		PkceRequired:       pkceRequired,
+		WorkplaceProvider:  provider,
+		WorkplaceAppID:     appID,
+		WorkplaceAppSecret: appSecret,
+		Status:             optionalText(status),
+	}, nil
+}
+
+func createOIDCClientForApplication(ctx context.Context, queries *generated.Queries, entityID, applicationID, status string, input ApplicationOIDCClientInput) (*OIDCClientResponse, error) {
+	params, err := newOIDCClientParams(entityID, applicationID, status, input)
+	if err != nil {
+		return nil, err
+	}
+	row, err := queries.CreateOIDCClient(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+	if err := queries.GrantApplicationAccessToRoleCode(ctx, generated.GrantApplicationAccessToRoleCodeParams{
+		EntityID: entityID, ApplicationID: applicationID, Code: "employee",
+	}); err != nil {
+		return nil, err
+	}
+	client := oidcClientFromRow(row)
+	return &client, nil
+}
+
+func updateOIDCClientForApplication(ctx context.Context, queries *generated.Queries, entityID, status string, before OIDCClientResponse, input ApplicationOIDCClientInput) (OIDCClientResponse, error) {
+	if input.ClientID != "" && strings.TrimSpace(input.ClientID) != before.ClientID {
+		return OIDCClientResponse{}, &applicationRequestError{message: "client_id cannot be changed"}
+	}
+	if input.RedirectURIs != nil {
+		redirectURIs, err := normalizeOIDCRedirectURIs(input.RedirectURIs, false)
+		if err != nil {
+			return OIDCClientResponse{}, err
+		}
+		input.RedirectURIs = redirectURIs
+	}
+	provider, appID, appSecret, err := normalizeApplicationWorkplaceUpdate(before, input)
+	if err != nil {
+		return OIDCClientResponse{}, &applicationRequestError{message: err.Error()}
+	}
+	var pkce pgtype.Bool
+	if input.PKCERequired != nil {
+		pkce = pgtype.Bool{Bool: *input.PKCERequired, Valid: true}
+	}
+	row, err := queries.UpdateOIDCClient(ctx, generated.UpdateOIDCClientParams{
+		EntityID:           entityID,
+		ID:                 before.ID,
+		RedirectUris:       input.RedirectURIs,
+		AllowedScopes:      input.AllowedScopes,
+		GrantTypes:         input.GrantTypes,
+		ResponseTypes:      input.ResponseTypes,
+		PkceRequired:       pkce,
+		WorkplaceProvider:  provider,
+		WorkplaceAppID:     appID,
+		WorkplaceAppSecret: appSecret,
+		Status:             optionalText(status),
+	})
+	if err != nil {
+		return OIDCClientResponse{}, err
+	}
+	return oidcClientFromRow(row), nil
+}
+
+func normalizeApplicationWorkplaceUpdate(before OIDCClientResponse, input ApplicationOIDCClientInput) (pgtype.Text, pgtype.Text, pgtype.Text, error) {
+	provider := before.WorkplaceProvider
+	appID := before.WorkplaceAppID
+	appSecret := before.WorkplaceAppSecret
+	if input.WorkplaceProvider != nil {
+		provider = *input.WorkplaceProvider
+	}
+	if input.WorkplaceAppID != nil {
+		appID = *input.WorkplaceAppID
+	}
+	if input.WorkplaceAppSecret != nil {
+		appSecret = *input.WorkplaceAppSecret
+	}
+
+	provider, appID, appSecret, err := normalizeWorkplaceConfig(provider, appID, appSecret)
+	if err != nil {
+		return pgtype.Text{}, pgtype.Text{}, pgtype.Text{}, err
+	}
+	return pgtype.Text{String: provider, Valid: input.WorkplaceProvider != nil},
+		pgtype.Text{String: appID, Valid: input.WorkplaceAppID != nil},
+		pgtype.Text{String: appSecret, Valid: input.WorkplaceAppSecret != nil}, nil
+}
+
+func stringPointerValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func normalizeApplicationConfig(appType string, raw json.RawMessage) (json.RawMessage, error) {
+	switch appType {
+	case "oidc_client":
+		return json.RawMessage(`{}`), nil
+	case "api_client":
+		var config apiClientApplicationConfig
+		if err := json.Unmarshal(raw, &config); err != nil {
+			return nil, &applicationRequestError{message: "invalid api_client config"}
+		}
+		config.ClientID = strings.TrimSpace(config.ClientID)
+		config.ClientSecret = strings.TrimSpace(config.ClientSecret)
+		if config.ClientID == "" || config.ClientSecret == "" {
+			return nil, &applicationRequestError{message: "api_client client_id and client_secret are required"}
+		}
+		if config.AllowedScopes == nil {
+			config.AllowedScopes = []string{}
+		}
+		encoded, err := json.Marshal(config)
+		return encoded, err
+	case "internal_app":
+		var config internalApplicationConfig
+		if err := json.Unmarshal(raw, &config); err != nil {
+			return nil, &applicationRequestError{message: "invalid internal_app config"}
+		}
+		config.AppURL = strings.TrimSpace(config.AppURL)
+		config.CallbackURL = strings.TrimSpace(config.CallbackURL)
+		config.Description = strings.TrimSpace(config.Description)
+		encoded, err := json.Marshal(config)
+		return encoded, err
+	default:
+		return nil, &applicationRequestError{message: "invalid application type"}
+	}
+}
+
+func applicationConfigProvided(config json.RawMessage) bool {
+	value := strings.TrimSpace(string(config))
+	return value != "" && value != "null"
+}
+
+func isValidApplicationStatus(status string) bool {
+	return status == "active" || status == "disabled"
+}
+
+func applicationResponseForAudit(application ApplicationResponse) ApplicationResponse {
+	application.Config = sanitizedApplicationConfig(application.Config)
+	return application
+}
+
+func applicationDetailForAudit(application ApplicationDetailResponse) ApplicationDetailResponse {
+	application.ApplicationResponse = applicationResponseForAudit(application.ApplicationResponse)
+	if application.OIDCClient != nil {
+		client := oidcClientForAudit(*application.OIDCClient)
+		application.OIDCClient = &client
+	}
+	return application
+}
+
+func sanitizedApplicationConfig(config json.RawMessage) json.RawMessage {
+	var value map[string]interface{}
+	if err := json.Unmarshal(config, &value); err != nil {
+		return json.RawMessage(`{}`)
+	}
+	delete(value, "client_secret")
+	delete(value, "workplace_app_secret")
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return encoded
 }
 
 func (s *AdminService) ListApplicationRoleAssignments(ctx context.Context, entityID, applicationID string) ([]ApplicationRoleAssignmentResponse, error) {
@@ -763,7 +1241,7 @@ func (s *AdminService) ListOIDCClients(ctx context.Context, entityID string, lim
 	}
 	clients := make([]OIDCClientResponse, 0, len(rows))
 	for _, row := range rows {
-		clients = append(clients, oidcClientFromRow(row))
+		clients = append(clients, oidcClientFromListRow(row))
 	}
 	return clients, nil
 }
@@ -780,24 +1258,7 @@ func (s *AdminService) GetOIDCClientByID(ctx context.Context, entityID, id strin
 	if err != nil {
 		return OIDCClientResponse{}, err
 	}
-	return OIDCClientResponse{
-		ID:                 ulidString(row.ID),
-		EntityID:           ulidString(row.EntityID),
-		ApplicationID:      ulidString(row.ApplicationID),
-		ClientID:           row.ClientID,
-		ClientSecret:       textValue(row.ClientSecretHash),
-		RedirectURIs:       row.RedirectUris,
-		AllowedScopes:      row.AllowedScopes,
-		GrantTypes:         row.GrantTypes,
-		ResponseTypes:      row.ResponseTypes,
-		PKCERequired:       row.PkceRequired,
-		WorkplaceProvider:  row.WorkplaceProvider,
-		WorkplaceAppID:     row.WorkplaceAppID,
-		WorkplaceAppSecret: row.WorkplaceAppSecret,
-		Status:             row.Status,
-		CreatedAt:          row.CreatedAt.Time.Format(time.RFC3339),
-		UpdatedAt:          row.UpdatedAt.Time.Format(time.RFC3339),
-	}, nil
+	return oidcClientFromRow(row), nil
 }
 
 func (s *AdminService) CreateOIDCClient(ctx context.Context, params generated.CreateOIDCClientParams) (OIDCClientResponse, string, error) {
@@ -806,7 +1267,7 @@ func (s *AdminService) CreateOIDCClient(ctx context.Context, params generated.Cr
 	if err != nil {
 		return OIDCClientResponse{}, "", err
 	}
-	params.ClientSecretHash = pgtype.Text{String: hashSecret(secret), Valid: true}
+	params.ClientSecretHash = pgtype.Text{String: secret, Valid: true}
 
 	row, err := s.queries.CreateOIDCClient(ctx, params)
 	if err != nil {
@@ -819,24 +1280,8 @@ func (s *AdminService) CreateOIDCClient(ctx context.Context, params generated.Cr
 	}); err != nil {
 		return OIDCClientResponse{}, "", err
 	}
-	resp := OIDCClientResponse{
-		ID:                 ulidString(row.ID),
-		EntityID:           ulidString(row.EntityID),
-		ApplicationID:      ulidString(row.ApplicationID),
-		ClientID:           row.ClientID,
-		RedirectURIs:       row.RedirectUris,
-		AllowedScopes:      row.AllowedScopes,
-		GrantTypes:         row.GrantTypes,
-		ResponseTypes:      row.ResponseTypes,
-		PKCERequired:       row.PkceRequired,
-		WorkplaceProvider:  row.WorkplaceProvider,
-		WorkplaceAppID:     row.WorkplaceAppID,
-		WorkplaceAppSecret: row.WorkplaceAppSecret,
-		Status:             row.Status,
-		CreatedAt:          row.CreatedAt.Time.Format(time.RFC3339),
-		UpdatedAt:          row.UpdatedAt.Time.Format(time.RFC3339),
-	}
-	if err := s.audit.logCreate(ctx, ulidString(params.EntityID), "", "oidc_client", resp.ID, resp); err != nil {
+	resp := oidcClientFromRow(row)
+	if err := s.audit.logCreate(ctx, ulidString(params.EntityID), "", "oidc_client", resp.ID, oidcClientForAudit(resp)); err != nil {
 		return OIDCClientResponse{}, "", err
 	}
 	return resp, secret, nil
@@ -844,29 +1289,12 @@ func (s *AdminService) CreateOIDCClient(ctx context.Context, params generated.Cr
 
 func (s *AdminService) UpdateOIDCClient(ctx context.Context, params generated.UpdateOIDCClientParams) (OIDCClientResponse, error) {
 	before, _ := s.GetOIDCClientByID(ctx, params.EntityID, params.ID)
-	before.ClientSecret = ""
 	row, err := s.queries.UpdateOIDCClient(ctx, params)
 	if err != nil {
 		return OIDCClientResponse{}, err
 	}
-	after := OIDCClientResponse{
-		ID:                 ulidString(row.ID),
-		EntityID:           ulidString(row.EntityID),
-		ApplicationID:      ulidString(row.ApplicationID),
-		ClientID:           row.ClientID,
-		RedirectURIs:       row.RedirectUris,
-		AllowedScopes:      row.AllowedScopes,
-		GrantTypes:         row.GrantTypes,
-		ResponseTypes:      row.ResponseTypes,
-		PKCERequired:       row.PkceRequired,
-		WorkplaceProvider:  row.WorkplaceProvider,
-		WorkplaceAppID:     row.WorkplaceAppID,
-		WorkplaceAppSecret: row.WorkplaceAppSecret,
-		Status:             row.Status,
-		CreatedAt:          row.CreatedAt.Time.Format(time.RFC3339),
-		UpdatedAt:          row.UpdatedAt.Time.Format(time.RFC3339),
-	}
-	if err := s.audit.logUpdate(ctx, ulidString(params.EntityID), "", "oidc_client", after.ID, before, after); err != nil {
+	after := oidcClientFromRow(row)
+	if err := s.audit.logUpdate(ctx, ulidString(params.EntityID), "", "oidc_client", after.ID, oidcClientForAudit(before), oidcClientForAudit(after)); err != nil {
 		return OIDCClientResponse{}, err
 	}
 	return after, nil
@@ -874,7 +1302,6 @@ func (s *AdminService) UpdateOIDCClient(ctx context.Context, params generated.Up
 
 func (s *AdminService) DeleteOIDCClient(ctx context.Context, entityID, id string) error {
 	before, _ := s.GetOIDCClientByID(ctx, entityID, id)
-	before.ClientSecret = ""
 	err := s.queries.DeleteOIDCClient(ctx, generated.DeleteOIDCClientParams{
 		EntityID: entityID,
 		ID:       id,
@@ -882,7 +1309,7 @@ func (s *AdminService) DeleteOIDCClient(ctx context.Context, entityID, id string
 	if err != nil {
 		return err
 	}
-	if err := s.audit.logDelete(ctx, ulidString(entityID), "", "oidc_client", ulidString(id), before); err != nil {
+	if err := s.audit.logDelete(ctx, ulidString(entityID), "", "oidc_client", ulidString(id), oidcClientForAudit(before)); err != nil {
 		return err
 	}
 	return nil
@@ -896,28 +1323,12 @@ func (s *AdminService) RotateOIDCClientSecret(ctx context.Context, entityID, id 
 	row, err := s.queries.RotateOIDCClientSecret(ctx, generated.RotateOIDCClientSecretParams{
 		EntityID:         entityID,
 		ID:               id,
-		ClientSecretHash: pgtype.Text{String: hashSecret(secret), Valid: true},
+		ClientSecretHash: pgtype.Text{String: secret, Valid: true},
 	})
 	if err != nil {
 		return OIDCClientResponse{}, "", err
 	}
-	resp := OIDCClientResponse{
-		ID:                 ulidString(row.ID),
-		EntityID:           ulidString(row.EntityID),
-		ApplicationID:      ulidString(row.ApplicationID),
-		ClientID:           row.ClientID,
-		RedirectURIs:       row.RedirectUris,
-		AllowedScopes:      row.AllowedScopes,
-		GrantTypes:         row.GrantTypes,
-		ResponseTypes:      row.ResponseTypes,
-		PKCERequired:       row.PkceRequired,
-		WorkplaceProvider:  row.WorkplaceProvider,
-		WorkplaceAppID:     row.WorkplaceAppID,
-		WorkplaceAppSecret: row.WorkplaceAppSecret,
-		Status:             row.Status,
-		CreatedAt:          row.CreatedAt.Time.Format(time.RFC3339),
-		UpdatedAt:          row.UpdatedAt.Time.Format(time.RFC3339),
-	}
+	resp := oidcClientFromRow(row)
 	if err := s.audit.logAction(ctx, audit.Event{
 		EntityID:     ulidString(entityID),
 		ActorType:    "user",
@@ -928,6 +1339,12 @@ func (s *AdminService) RotateOIDCClientSecret(ctx context.Context, entityID, id 
 		return OIDCClientResponse{}, "", err
 	}
 	return resp, secret, nil
+}
+
+func oidcClientForAudit(client OIDCClientResponse) OIDCClientResponse {
+	client.ClientSecret = ""
+	client.WorkplaceAppSecret = ""
+	return client
 }
 
 func generateRandomSecret(length int) (string, error) {
@@ -956,10 +1373,4 @@ func textValue(value pgtype.Text) string {
 		return ""
 	}
 	return value.String
-}
-
-func hashSecret(secret string) string {
-	// Simple hash for now - in production use bcrypt or argon2
-	// The SSO package already uses SHA-256 for token hashing
-	return secret
 }

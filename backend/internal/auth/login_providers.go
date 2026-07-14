@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/smices/open-idb/internal/db/generated"
+	"github.com/smices/open-idb/internal/id"
 	"github.com/smices/open-idb/internal/secureconfig"
 )
 
@@ -35,6 +36,7 @@ type FeishuProviderConfig struct {
 // *generated.Queries satisfies this interface.
 type providerQueries interface {
 	ListLoginProviders(ctx context.Context, entityID string) ([]generated.ListLoginProvidersRow, error)
+	GetIdentitySourceConfigByID(ctx context.Context, arg generated.GetIdentitySourceConfigByIDParams) (generated.GetIdentitySourceConfigByIDRow, error)
 	GetOIDCClientByClientID(ctx context.Context, arg generated.GetOIDCClientByClientIDParams) (generated.OidcClient, error)
 	GetEntityBySlug(ctx context.Context, slug string) (generated.BusinessEntity, error)
 }
@@ -159,6 +161,52 @@ func (s *LoginProviderService) ResolveFeishuConfig(ctx context.Context, entityID
 		return FeishuProviderConfig{}, fmt.Errorf("feishu app_id and app_secret are not configured")
 	}
 
+	return cfg, nil
+}
+
+// ResolveFeishuSourceConfig reads one exact identity source. Sync and webhook
+// callers must not silently use another Feishu source from the same entity.
+func (s *LoginProviderService) ResolveFeishuSourceConfig(ctx context.Context, entityID string, sourceID string) (FeishuProviderConfig, error) {
+	entityULID, err := resolveEntityRef(ctx, s.queries, entityID)
+	if err != nil {
+		return FeishuProviderConfig{}, fmt.Errorf("invalid entity_id: %w", err)
+	}
+	sourceID = strings.TrimSpace(sourceID)
+	if err := id.ValidateULID(sourceID); err != nil {
+		return FeishuProviderConfig{}, fmt.Errorf("invalid source_id: %w", err)
+	}
+	row, err := s.queries.GetIdentitySourceConfigByID(ctx, generated.GetIdentitySourceConfigByIDParams{
+		EntityID: entityULID,
+		ID:       sourceID,
+	})
+	if err != nil {
+		return FeishuProviderConfig{}, err
+	}
+	if row.Type != "feishu" {
+		return FeishuProviderConfig{}, fmt.Errorf("identity source is not a feishu source")
+	}
+	if row.Status != "active" {
+		return FeishuProviderConfig{}, fmt.Errorf("feishu identity source is not active")
+	}
+	stored, err := s.parseStoredFeishuProviderConfig(row.Config)
+	if err != nil {
+		return FeishuProviderConfig{}, err
+	}
+	cfg := FeishuProviderConfig{
+		AppID:             strings.TrimSpace(stored.AppID),
+		AppSecret:         strings.TrimSpace(stored.AppSecret),
+		VerificationToken: strings.TrimSpace(stored.VerificationToken),
+		EncryptKey:        strings.TrimSpace(stored.EncryptKey),
+	}
+	if cfg.AppID == "" {
+		cfg.AppID = strings.TrimSpace(s.feishuAppID)
+	}
+	if cfg.AppSecret == "" {
+		cfg.AppSecret = strings.TrimSpace(s.feishuAppSecret)
+	}
+	if cfg.AppID == "" || cfg.AppSecret == "" {
+		return FeishuProviderConfig{}, fmt.Errorf("feishu app_id and app_secret are not configured")
+	}
 	return cfg, nil
 }
 

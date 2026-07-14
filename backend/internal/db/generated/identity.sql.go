@@ -231,6 +231,36 @@ func (q *Queries) CreateManagedUser(ctx context.Context, arg CreateManagedUserPa
 	return i, err
 }
 
+const deleteDirectoryDepartmentByID = `-- name: DeleteDirectoryDepartmentByID :one
+DELETE FROM directory_departments
+WHERE entity_id = $1 AND source_id = $2 AND id = $3
+RETURNING id, entity_id, source_id, external_department_id, parent_external_department_id, name, raw_profile, last_synced_at, created_at, updated_at
+`
+
+type DeleteDirectoryDepartmentByIDParams struct {
+	EntityID string `json:"entity_id"`
+	SourceID string `json:"source_id"`
+	ID       string `json:"id"`
+}
+
+func (q *Queries) DeleteDirectoryDepartmentByID(ctx context.Context, arg DeleteDirectoryDepartmentByIDParams) (DirectoryDepartment, error) {
+	row := q.db.QueryRow(ctx, deleteDirectoryDepartmentByID, arg.EntityID, arg.SourceID, arg.ID)
+	var i DirectoryDepartment
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.SourceID,
+		&i.ExternalDepartmentID,
+		&i.ParentExternalDepartmentID,
+		&i.Name,
+		&i.RawProfile,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const deleteMissingDirectoryDepartments = `-- name: DeleteMissingDirectoryDepartments :many
 DELETE FROM directory_departments
 WHERE entity_id = $1
@@ -274,6 +304,35 @@ func (q *Queries) DeleteMissingDirectoryDepartments(ctx context.Context, arg Del
 		return nil, err
 	}
 	return items, nil
+}
+
+const getAccountBindingByDirectoryUserID = `-- name: GetAccountBindingByDirectoryUserID :one
+SELECT id, entity_id, user_id, source_id, directory_user_id, provider_uid, provider_union_id, is_primary, bound_at
+FROM account_bindings
+WHERE entity_id = $1 AND source_id = $2 AND directory_user_id = $3
+`
+
+type GetAccountBindingByDirectoryUserIDParams struct {
+	EntityID        string `json:"entity_id"`
+	SourceID        string `json:"source_id"`
+	DirectoryUserID string `json:"directory_user_id"`
+}
+
+func (q *Queries) GetAccountBindingByDirectoryUserID(ctx context.Context, arg GetAccountBindingByDirectoryUserIDParams) (AccountBinding, error) {
+	row := q.db.QueryRow(ctx, getAccountBindingByDirectoryUserID, arg.EntityID, arg.SourceID, arg.DirectoryUserID)
+	var i AccountBinding
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.UserID,
+		&i.SourceID,
+		&i.DirectoryUserID,
+		&i.ProviderUid,
+		&i.ProviderUnionID,
+		&i.IsPrimary,
+		&i.BoundAt,
+	)
+	return i, err
 }
 
 const getAccountBindingByProviderUID = `-- name: GetAccountBindingByProviderUID :one
@@ -335,6 +394,58 @@ func (q *Queries) GetAccountBindingByProviderUnionID(ctx context.Context, arg Ge
 	return i, err
 }
 
+const getDirectoryDepartmentByProviderIdentifier = `-- name: GetDirectoryDepartmentByProviderIdentifier :one
+SELECT id, entity_id, source_id, external_department_id, parent_external_department_id, name, raw_profile, last_synced_at, created_at, updated_at
+FROM directory_departments
+WHERE entity_id = $1
+  AND source_id = $2
+  AND $3::text <> ''
+  AND CASE lower($4::text)
+    WHEN 'department_id' THEN
+      external_department_id = $3::text
+      OR raw_profile->>'department_id' = $3::text
+    WHEN 'open_department_id' THEN
+      external_department_id = $3::text
+      OR raw_profile->>'open_department_id' = $3::text
+    ELSE
+	  external_department_id = $3::text
+	  OR raw_profile->>'department_id' = $3::text
+	  OR raw_profile->>'open_department_id' = $3::text
+  END
+ORDER BY (external_department_id = $3::text) DESC, created_at ASC
+LIMIT 1
+`
+
+type GetDirectoryDepartmentByProviderIdentifierParams struct {
+	EntityID       string `json:"entity_id"`
+	SourceID       string `json:"source_id"`
+	Identifier     string `json:"identifier"`
+	IdentifierType string `json:"identifier_type"`
+}
+
+func (q *Queries) GetDirectoryDepartmentByProviderIdentifier(ctx context.Context, arg GetDirectoryDepartmentByProviderIdentifierParams) (DirectoryDepartment, error) {
+	row := q.db.QueryRow(ctx, getDirectoryDepartmentByProviderIdentifier,
+		arg.EntityID,
+		arg.SourceID,
+		arg.Identifier,
+		arg.IdentifierType,
+	)
+	var i DirectoryDepartment
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.SourceID,
+		&i.ExternalDepartmentID,
+		&i.ParentExternalDepartmentID,
+		&i.Name,
+		&i.RawProfile,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getDirectoryUserByExternalID = `-- name: GetDirectoryUserByExternalID :one
 SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
 FROM directory_users
@@ -349,6 +460,74 @@ type GetDirectoryUserByExternalIDParams struct {
 
 func (q *Queries) GetDirectoryUserByExternalID(ctx context.Context, arg GetDirectoryUserByExternalIDParams) (DirectoryUser, error) {
 	row := q.db.QueryRow(ctx, getDirectoryUserByExternalID, arg.EntityID, arg.SourceID, arg.ExternalUserID)
+	var i DirectoryUser
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.SourceID,
+		&i.ExternalUserID,
+		&i.ExternalUnionID,
+		&i.ExternalOpenID,
+		&i.Name,
+		&i.EnglishName,
+		&i.EmployeeNo,
+		&i.JobTitle,
+		&i.Email,
+		&i.Phone,
+		&i.AvatarUrl,
+		&i.Status,
+		&i.RawProfile,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getDirectoryUserByProviderIdentifier = `-- name: GetDirectoryUserByProviderIdentifier :one
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
+FROM directory_users
+WHERE entity_id = $1
+  AND source_id = $2
+  AND $3::text <> ''
+  AND CASE lower($4::text)
+    WHEN 'user_id' THEN
+      external_user_id = $3::text
+      OR raw_profile->>'user_id' = $3::text
+    WHEN 'open_id' THEN
+      external_open_id = $3::text
+      OR external_user_id = $3::text
+      OR raw_profile->>'open_id' = $3::text
+    WHEN 'union_id' THEN
+      external_union_id = $3::text
+      OR external_user_id = $3::text
+      OR raw_profile->>'union_id' = $3::text
+    ELSE
+	  external_user_id = $3::text
+	  OR external_open_id = $3::text
+	  OR external_union_id = $3::text
+	  OR raw_profile->>'user_id' = $3::text
+	  OR raw_profile->>'open_id' = $3::text
+	  OR raw_profile->>'union_id' = $3::text
+  END
+ORDER BY (external_user_id = $3::text) DESC, created_at ASC
+LIMIT 1
+`
+
+type GetDirectoryUserByProviderIdentifierParams struct {
+	EntityID       string `json:"entity_id"`
+	SourceID       string `json:"source_id"`
+	Identifier     string `json:"identifier"`
+	IdentifierType string `json:"identifier_type"`
+}
+
+func (q *Queries) GetDirectoryUserByProviderIdentifier(ctx context.Context, arg GetDirectoryUserByProviderIdentifierParams) (DirectoryUser, error) {
+	row := q.db.QueryRow(ctx, getDirectoryUserByProviderIdentifier,
+		arg.EntityID,
+		arg.SourceID,
+		arg.Identifier,
+		arg.IdentifierType,
+	)
 	var i DirectoryUser
 	err := row.Scan(
 		&i.ID,
@@ -492,6 +671,246 @@ func (q *Queries) GetManagedUserByUsername(ctx context.Context, arg GetManagedUs
 	return i, err
 }
 
+const getManagedUserForDeletedDirectoryUser = `-- name: GetManagedUserForDeletedDirectoryUser :one
+SELECT u.id, u.entity_id, u.username, u.display_name, u.english_name, u.employee_no, u.job_title, u.email, u.phone, u.avatar_url, u.lifecycle_status, u.user_type, u.primary_source_id, u.locale, u.created_at, u.updated_at
+FROM users u
+JOIN account_bindings deleted_binding
+  ON deleted_binding.entity_id = u.entity_id
+ AND deleted_binding.user_id = u.id
+JOIN directory_users deleted_user
+  ON deleted_user.entity_id = deleted_binding.entity_id
+ AND deleted_user.source_id = deleted_binding.source_id
+ AND deleted_user.id = deleted_binding.directory_user_id
+WHERE deleted_binding.entity_id = $1
+  AND deleted_binding.source_id = $2
+  AND deleted_binding.directory_user_id = $3
+  AND deleted_user.status = 'deleted'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM account_bindings active_binding
+    JOIN directory_users active_user
+      ON active_user.entity_id = active_binding.entity_id
+     AND active_user.source_id = active_binding.source_id
+     AND active_user.id = active_binding.directory_user_id
+    WHERE active_binding.entity_id = u.entity_id
+      AND active_binding.user_id = u.id
+      AND active_user.status <> 'deleted'
+  )
+LIMIT 1
+`
+
+type GetManagedUserForDeletedDirectoryUserParams struct {
+	EntityID        string `json:"entity_id"`
+	SourceID        string `json:"source_id"`
+	DirectoryUserID string `json:"directory_user_id"`
+}
+
+func (q *Queries) GetManagedUserForDeletedDirectoryUser(ctx context.Context, arg GetManagedUserForDeletedDirectoryUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, getManagedUserForDeletedDirectoryUser, arg.EntityID, arg.SourceID, arg.DirectoryUserID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.Username,
+		&i.DisplayName,
+		&i.EnglishName,
+		&i.EmployeeNo,
+		&i.JobTitle,
+		&i.Email,
+		&i.Phone,
+		&i.AvatarUrl,
+		&i.LifecycleStatus,
+		&i.UserType,
+		&i.PrimarySourceID,
+		&i.Locale,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const listAccountBindingsByProviderUnionID = `-- name: ListAccountBindingsByProviderUnionID :many
+SELECT id, entity_id, user_id, source_id, directory_user_id, provider_uid, provider_union_id, is_primary, bound_at
+FROM account_bindings
+WHERE entity_id = $1 AND source_id = $2 AND provider_union_id = $3 AND provider_union_id <> ''
+ORDER BY bound_at ASC, id ASC
+`
+
+type ListAccountBindingsByProviderUnionIDParams struct {
+	EntityID        string      `json:"entity_id"`
+	SourceID        string      `json:"source_id"`
+	ProviderUnionID pgtype.Text `json:"provider_union_id"`
+}
+
+func (q *Queries) ListAccountBindingsByProviderUnionID(ctx context.Context, arg ListAccountBindingsByProviderUnionIDParams) ([]AccountBinding, error) {
+	rows, err := q.db.Query(ctx, listAccountBindingsByProviderUnionID, arg.EntityID, arg.SourceID, arg.ProviderUnionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AccountBinding{}
+	for rows.Next() {
+		var i AccountBinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.UserID,
+			&i.SourceID,
+			&i.DirectoryUserID,
+			&i.ProviderUid,
+			&i.ProviderUnionID,
+			&i.IsPrimary,
+			&i.BoundAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDirectoryDepartmentsByProviderIdentifier = `-- name: ListDirectoryDepartmentsByProviderIdentifier :many
+SELECT id, entity_id, source_id, external_department_id, parent_external_department_id, name, raw_profile, last_synced_at, created_at, updated_at
+FROM directory_departments
+WHERE entity_id = $1
+  AND source_id = $2
+  AND $3::text <> ''
+  AND CASE lower($4::text)
+    WHEN 'department_id' THEN
+      external_department_id = $3::text
+      OR raw_profile->>'department_id' = $3::text
+    WHEN 'open_department_id' THEN
+      external_department_id = $3::text
+      OR raw_profile->>'open_department_id' = $3::text
+    ELSE
+      external_department_id = $3::text
+      OR raw_profile->>'department_id' = $3::text
+      OR raw_profile->>'open_department_id' = $3::text
+  END
+ORDER BY created_at ASC, id ASC
+`
+
+type ListDirectoryDepartmentsByProviderIdentifierParams struct {
+	EntityID       string `json:"entity_id"`
+	SourceID       string `json:"source_id"`
+	Identifier     string `json:"identifier"`
+	IdentifierType string `json:"identifier_type"`
+}
+
+func (q *Queries) ListDirectoryDepartmentsByProviderIdentifier(ctx context.Context, arg ListDirectoryDepartmentsByProviderIdentifierParams) ([]DirectoryDepartment, error) {
+	rows, err := q.db.Query(ctx, listDirectoryDepartmentsByProviderIdentifier,
+		arg.EntityID,
+		arg.SourceID,
+		arg.Identifier,
+		arg.IdentifierType,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DirectoryDepartment{}
+	for rows.Next() {
+		var i DirectoryDepartment
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.SourceID,
+			&i.ExternalDepartmentID,
+			&i.ParentExternalDepartmentID,
+			&i.Name,
+			&i.RawProfile,
+			&i.LastSyncedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDirectoryUsersByProviderIdentifier = `-- name: ListDirectoryUsersByProviderIdentifier :many
+SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
+FROM directory_users
+WHERE entity_id = $1
+  AND source_id = $2
+  AND $3::text <> ''
+  AND CASE lower($4::text)
+    WHEN 'user_id' THEN
+      external_user_id = $3::text
+      OR raw_profile->>'user_id' = $3::text
+    WHEN 'open_id' THEN
+      external_open_id = $3::text
+      OR external_user_id = $3::text
+      OR raw_profile->>'open_id' = $3::text
+    WHEN 'union_id' THEN
+      external_union_id = $3::text
+      OR external_user_id = $3::text
+      OR raw_profile->>'union_id' = $3::text
+    ELSE
+      false
+  END
+ORDER BY created_at ASC, id ASC
+`
+
+type ListDirectoryUsersByProviderIdentifierParams struct {
+	EntityID       string `json:"entity_id"`
+	SourceID       string `json:"source_id"`
+	Identifier     string `json:"identifier"`
+	IdentifierType string `json:"identifier_type"`
+}
+
+func (q *Queries) ListDirectoryUsersByProviderIdentifier(ctx context.Context, arg ListDirectoryUsersByProviderIdentifierParams) ([]DirectoryUser, error) {
+	rows, err := q.db.Query(ctx, listDirectoryUsersByProviderIdentifier,
+		arg.EntityID,
+		arg.SourceID,
+		arg.Identifier,
+		arg.IdentifierType,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DirectoryUser{}
+	for rows.Next() {
+		var i DirectoryUser
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.SourceID,
+			&i.ExternalUserID,
+			&i.ExternalUnionID,
+			&i.ExternalOpenID,
+			&i.Name,
+			&i.EnglishName,
+			&i.EmployeeNo,
+			&i.JobTitle,
+			&i.Email,
+			&i.Phone,
+			&i.AvatarUrl,
+			&i.Status,
+			&i.RawProfile,
+			&i.LastSyncedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEntities = `-- name: ListEntities :many
 SELECT id, name, slug, status, default_locale, brand_name, logo_url, login_message, created_at
 FROM business_entities
@@ -548,6 +967,17 @@ WHERE u.entity_id = $1
   AND ab.entity_id = $1
   AND ab.source_id = $2
   AND du.status = 'deleted'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM account_bindings active_ab
+    JOIN directory_users active_du
+      ON active_du.entity_id = active_ab.entity_id
+     AND active_du.source_id = active_ab.source_id
+     AND active_du.id = active_ab.directory_user_id
+    WHERE active_ab.entity_id = u.entity_id
+      AND active_ab.user_id = u.id
+      AND active_du.status <> 'deleted'
+  )
 `
 
 type ListManagedUsersForDeletedDirectoryUsersParams struct {
@@ -590,6 +1020,47 @@ func (q *Queries) ListManagedUsersForDeletedDirectoryUsers(ctx context.Context, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const markDirectoryUserDeletedByID = `-- name: MarkDirectoryUserDeletedByID :one
+UPDATE directory_users
+SET status = 'deleted',
+    last_synced_at = now(),
+    updated_at = now()
+WHERE entity_id = $1 AND source_id = $2 AND id = $3
+RETURNING id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
+`
+
+type MarkDirectoryUserDeletedByIDParams struct {
+	EntityID string `json:"entity_id"`
+	SourceID string `json:"source_id"`
+	ID       string `json:"id"`
+}
+
+func (q *Queries) MarkDirectoryUserDeletedByID(ctx context.Context, arg MarkDirectoryUserDeletedByIDParams) (DirectoryUser, error) {
+	row := q.db.QueryRow(ctx, markDirectoryUserDeletedByID, arg.EntityID, arg.SourceID, arg.ID)
+	var i DirectoryUser
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.SourceID,
+		&i.ExternalUserID,
+		&i.ExternalUnionID,
+		&i.ExternalOpenID,
+		&i.Name,
+		&i.EnglishName,
+		&i.EmployeeNo,
+		&i.JobTitle,
+		&i.Email,
+		&i.Phone,
+		&i.AvatarUrl,
+		&i.Status,
+		&i.RawProfile,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const markMissingDirectoryUsersDeleted = `-- name: MarkMissingDirectoryUsersDeleted :many
@@ -688,6 +1159,88 @@ func (q *Queries) UpdateAccountBindingFromDirectory(ctx context.Context, arg Upd
 		&i.ProviderUnionID,
 		&i.IsPrimary,
 		&i.BoundAt,
+	)
+	return i, err
+}
+
+const updateDirectoryUserByID = `-- name: UpdateDirectoryUserByID :one
+UPDATE directory_users
+SET external_user_id = $1,
+    external_union_id = $2,
+    external_open_id = $3,
+    name = $4,
+    english_name = $5,
+    employee_no = $6,
+    job_title = $7,
+    email = $8,
+    phone = $9,
+    avatar_url = $10,
+    status = $11,
+    raw_profile = $12,
+    last_synced_at = now(),
+    updated_at = now()
+WHERE entity_id = $13
+  AND source_id = $14
+  AND id = $15
+RETURNING id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
+`
+
+type UpdateDirectoryUserByIDParams struct {
+	ExternalUserID  string      `json:"external_user_id"`
+	ExternalUnionID pgtype.Text `json:"external_union_id"`
+	ExternalOpenID  pgtype.Text `json:"external_open_id"`
+	Name            string      `json:"name"`
+	EnglishName     string      `json:"english_name"`
+	EmployeeNo      string      `json:"employee_no"`
+	JobTitle        string      `json:"job_title"`
+	Email           pgtype.Text `json:"email"`
+	Phone           pgtype.Text `json:"phone"`
+	AvatarUrl       pgtype.Text `json:"avatar_url"`
+	Status          string      `json:"status"`
+	RawProfile      []byte      `json:"raw_profile"`
+	EntityID        string      `json:"entity_id"`
+	SourceID        string      `json:"source_id"`
+	ID              string      `json:"id"`
+}
+
+func (q *Queries) UpdateDirectoryUserByID(ctx context.Context, arg UpdateDirectoryUserByIDParams) (DirectoryUser, error) {
+	row := q.db.QueryRow(ctx, updateDirectoryUserByID,
+		arg.ExternalUserID,
+		arg.ExternalUnionID,
+		arg.ExternalOpenID,
+		arg.Name,
+		arg.EnglishName,
+		arg.EmployeeNo,
+		arg.JobTitle,
+		arg.Email,
+		arg.Phone,
+		arg.AvatarUrl,
+		arg.Status,
+		arg.RawProfile,
+		arg.EntityID,
+		arg.SourceID,
+		arg.ID,
+	)
+	var i DirectoryUser
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.SourceID,
+		&i.ExternalUserID,
+		&i.ExternalUnionID,
+		&i.ExternalOpenID,
+		&i.Name,
+		&i.EnglishName,
+		&i.EmployeeNo,
+		&i.JobTitle,
+		&i.Email,
+		&i.Phone,
+		&i.AvatarUrl,
+		&i.Status,
+		&i.RawProfile,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

@@ -11,11 +11,173 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimDueWebhookJobsBySource = `-- name: ClaimDueWebhookJobsBySource :many
+WITH due_jobs AS (
+    SELECT job.id
+    FROM sync_jobs job
+    WHERE job.entity_id = $2
+      AND job.source_id = $3
+      AND job.type = 'webhook'
+      AND job.status = 'running'
+      AND job.next_attempt_at <= now()
+      AND (
+          $4::text = ''
+          OR EXISTS (
+              SELECT 1
+              FROM webhook_sync_leases lease
+              WHERE lease.entity_id = job.entity_id
+                AND lease.source_id = job.source_id
+                AND lease.claim_token = $4::text
+                AND lease.lease_expires_at > now()
+          )
+      )
+    ORDER BY job.started_at
+    LIMIT $5::integer
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE sync_jobs job
+SET attempt_count = job.attempt_count + 1,
+    last_attempt_at = now(),
+    next_attempt_at = now() + make_interval(secs => $1::integer)
+FROM due_jobs
+WHERE job.id = due_jobs.id
+RETURNING job.id, job.entity_id, job.source_id, job.type, job.provider, job.status, job.trace_id, job.started_at, job.finished_at, job.error_message, job.stats, job.event_id, job.attempt_count, job.next_attempt_at, job.last_attempt_at
+`
+
+type ClaimDueWebhookJobsBySourceParams struct {
+	LeaseSeconds int32  `json:"lease_seconds"`
+	EntityID     string `json:"entity_id"`
+	SourceID     string `json:"source_id"`
+	ClaimToken   string `json:"claim_token"`
+	BatchSize    int32  `json:"batch_size"`
+}
+
+func (q *Queries) ClaimDueWebhookJobsBySource(ctx context.Context, arg ClaimDueWebhookJobsBySourceParams) ([]SyncJob, error) {
+	rows, err := q.db.Query(ctx, claimDueWebhookJobsBySource,
+		arg.LeaseSeconds,
+		arg.EntityID,
+		arg.SourceID,
+		arg.ClaimToken,
+		arg.BatchSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SyncJob{}
+	for rows.Next() {
+		var i SyncJob
+		if err := rows.Scan(
+			&i.ID,
+			&i.EntityID,
+			&i.SourceID,
+			&i.Type,
+			&i.Provider,
+			&i.Status,
+			&i.TraceID,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.ErrorMessage,
+			&i.Stats,
+			&i.EventID,
+			&i.AttemptCount,
+			&i.NextAttemptAt,
+			&i.LastAttemptAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const claimDueWebhookSyncSources = `-- name: ClaimDueWebhookSyncSources :many
+WITH due_sources AS MATERIALIZED (
+    SELECT
+        job.entity_id,
+        job.source_id,
+        min(job.provider)::text AS provider,
+        min(job.started_at) AS oldest_started_at
+    FROM sync_jobs job
+    LEFT JOIN webhook_sync_leases lease
+      ON lease.entity_id = job.entity_id
+     AND lease.source_id = job.source_id
+    WHERE job.type = 'webhook'
+      AND job.status = 'running'
+      AND job.next_attempt_at <= now()
+      AND (lease.entity_id IS NULL OR lease.lease_expires_at <= now())
+    GROUP BY job.entity_id, job.source_id
+    ORDER BY oldest_started_at
+    LIMIT $1::integer
+), claimed AS (
+    INSERT INTO webhook_sync_leases (entity_id, source_id, claim_token, lease_expires_at)
+    SELECT
+        entity_id,
+        source_id,
+        $2::text,
+        now() + make_interval(secs => $3::integer)
+    FROM due_sources
+    ON CONFLICT (entity_id, source_id) DO UPDATE
+    SET claim_token = EXCLUDED.claim_token,
+        lease_expires_at = EXCLUDED.lease_expires_at,
+        updated_at = now()
+    WHERE webhook_sync_leases.lease_expires_at <= now()
+    RETURNING entity_id, source_id, claim_token
+)
+SELECT claimed.entity_id, claimed.source_id, due_sources.provider, claimed.claim_token
+FROM claimed
+JOIN due_sources
+  ON due_sources.entity_id = claimed.entity_id
+ AND due_sources.source_id = claimed.source_id
+ORDER BY due_sources.oldest_started_at
+`
+
+type ClaimDueWebhookSyncSourcesParams struct {
+	BatchSize    int32  `json:"batch_size"`
+	ClaimToken   string `json:"claim_token"`
+	LeaseSeconds int32  `json:"lease_seconds"`
+}
+
+type ClaimDueWebhookSyncSourcesRow struct {
+	EntityID   string `json:"entity_id"`
+	SourceID   string `json:"source_id"`
+	Provider   string `json:"provider"`
+	ClaimToken string `json:"claim_token"`
+}
+
+func (q *Queries) ClaimDueWebhookSyncSources(ctx context.Context, arg ClaimDueWebhookSyncSourcesParams) ([]ClaimDueWebhookSyncSourcesRow, error) {
+	rows, err := q.db.Query(ctx, claimDueWebhookSyncSources, arg.BatchSize, arg.ClaimToken, arg.LeaseSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimDueWebhookSyncSourcesRow{}
+	for rows.Next() {
+		var i ClaimDueWebhookSyncSourcesRow
+		if err := rows.Scan(
+			&i.EntityID,
+			&i.SourceID,
+			&i.Provider,
+			&i.ClaimToken,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createSyncJob = `-- name: CreateSyncJob :one
 
 INSERT INTO sync_jobs (entity_id, source_id, type, provider, status, trace_id)
 VALUES ($1, $2, $3, $4, 'running', $5)
-RETURNING id, entity_id, source_id, type, provider, status, trace_id, started_at, finished_at, error_message, stats
+RETURNING id, entity_id, source_id, type, provider, status, trace_id, started_at, finished_at, error_message, stats, event_id, attempt_count, next_attempt_at, last_attempt_at
 `
 
 type CreateSyncJobParams struct {
@@ -48,6 +210,56 @@ func (q *Queries) CreateSyncJob(ctx context.Context, arg CreateSyncJobParams) (S
 		&i.FinishedAt,
 		&i.ErrorMessage,
 		&i.Stats,
+		&i.EventID,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LastAttemptAt,
+	)
+	return i, err
+}
+
+const createWebhookSyncJob = `-- name: CreateWebhookSyncJob :one
+INSERT INTO sync_jobs (entity_id, source_id, type, provider, status, trace_id, event_id)
+VALUES ($1, $2, 'webhook', $3, 'running', $4, $5)
+ON CONFLICT (entity_id, source_id, event_id)
+    WHERE type = 'webhook' AND event_id IS NOT NULL
+DO UPDATE SET event_id = EXCLUDED.event_id
+RETURNING id, entity_id, source_id, type, provider, status, trace_id, started_at, finished_at, error_message, stats, event_id, attempt_count, next_attempt_at, last_attempt_at
+`
+
+type CreateWebhookSyncJobParams struct {
+	EntityID string      `json:"entity_id"`
+	SourceID string      `json:"source_id"`
+	Provider string      `json:"provider"`
+	TraceID  string      `json:"trace_id"`
+	EventID  pgtype.Text `json:"event_id"`
+}
+
+func (q *Queries) CreateWebhookSyncJob(ctx context.Context, arg CreateWebhookSyncJobParams) (SyncJob, error) {
+	row := q.db.QueryRow(ctx, createWebhookSyncJob,
+		arg.EntityID,
+		arg.SourceID,
+		arg.Provider,
+		arg.TraceID,
+		arg.EventID,
+	)
+	var i SyncJob
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.SourceID,
+		&i.Type,
+		&i.Provider,
+		&i.Status,
+		&i.TraceID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.ErrorMessage,
+		&i.Stats,
+		&i.EventID,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LastAttemptAt,
 	)
 	return i, err
 }
@@ -59,7 +271,7 @@ SET status = 'failed',
     error_message = $3,
     stats = $4
 WHERE entity_id = $1 AND id = $2
-RETURNING id, entity_id, source_id, type, provider, status, trace_id, started_at, finished_at, error_message, stats
+RETURNING id, entity_id, source_id, type, provider, status, trace_id, started_at, finished_at, error_message, stats, event_id, attempt_count, next_attempt_at, last_attempt_at
 `
 
 type FailSyncJobParams struct {
@@ -89,6 +301,10 @@ func (q *Queries) FailSyncJob(ctx context.Context, arg FailSyncJobParams) (SyncJ
 		&i.FinishedAt,
 		&i.ErrorMessage,
 		&i.Stats,
+		&i.EventID,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LastAttemptAt,
 	)
 	return i, err
 }
@@ -97,9 +313,10 @@ const finishSyncJob = `-- name: FinishSyncJob :one
 UPDATE sync_jobs
 SET status = 'succeeded',
     finished_at = now(),
+    error_message = NULL,
     stats = $3
 WHERE entity_id = $1 AND id = $2
-RETURNING id, entity_id, source_id, type, provider, status, trace_id, started_at, finished_at, error_message, stats
+RETURNING id, entity_id, source_id, type, provider, status, trace_id, started_at, finished_at, error_message, stats, event_id, attempt_count, next_attempt_at, last_attempt_at
 `
 
 type FinishSyncJobParams struct {
@@ -123,12 +340,16 @@ func (q *Queries) FinishSyncJob(ctx context.Context, arg FinishSyncJobParams) (S
 		&i.FinishedAt,
 		&i.ErrorMessage,
 		&i.Stats,
+		&i.EventID,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LastAttemptAt,
 	)
 	return i, err
 }
 
 const listSyncJobsBySource = `-- name: ListSyncJobsBySource :many
-SELECT id, entity_id, source_id, type, provider, status, trace_id, started_at, finished_at, error_message, stats
+SELECT id, entity_id, source_id, type, provider, status, trace_id, started_at, finished_at, error_message, stats, event_id, attempt_count, next_attempt_at, last_attempt_at
 FROM sync_jobs
 WHERE entity_id = $1 AND source_id = $2
 ORDER BY started_at DESC
@@ -162,6 +383,10 @@ func (q *Queries) ListSyncJobsBySource(ctx context.Context, arg ListSyncJobsBySo
 			&i.FinishedAt,
 			&i.ErrorMessage,
 			&i.Stats,
+			&i.EventID,
+			&i.AttemptCount,
+			&i.NextAttemptAt,
+			&i.LastAttemptAt,
 		); err != nil {
 			return nil, err
 		}
@@ -171,4 +396,76 @@ func (q *Queries) ListSyncJobsBySource(ctx context.Context, arg ListSyncJobsBySo
 		return nil, err
 	}
 	return items, nil
+}
+
+const releaseWebhookSyncLease = `-- name: ReleaseWebhookSyncLease :execrows
+DELETE FROM webhook_sync_leases
+WHERE entity_id = $1
+  AND source_id = $2
+  AND claim_token = $3
+`
+
+type ReleaseWebhookSyncLeaseParams struct {
+	EntityID   string `json:"entity_id"`
+	SourceID   string `json:"source_id"`
+	ClaimToken string `json:"claim_token"`
+}
+
+func (q *Queries) ReleaseWebhookSyncLease(ctx context.Context, arg ReleaseWebhookSyncLeaseParams) (int64, error) {
+	result, err := q.db.Exec(ctx, releaseWebhookSyncLease, arg.EntityID, arg.SourceID, arg.ClaimToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const rescheduleWebhookSyncJob = `-- name: RescheduleWebhookSyncJob :one
+UPDATE sync_jobs
+SET status = 'running',
+    finished_at = NULL,
+    error_message = $1,
+    stats = $2,
+    next_attempt_at = now() + make_interval(secs => $3::integer)
+WHERE entity_id = $4
+  AND id = $5
+  AND type = 'webhook'
+  AND status = 'running'
+RETURNING id, entity_id, source_id, type, provider, status, trace_id, started_at, finished_at, error_message, stats, event_id, attempt_count, next_attempt_at, last_attempt_at
+`
+
+type RescheduleWebhookSyncJobParams struct {
+	ErrorMessage pgtype.Text `json:"error_message"`
+	Stats        []byte      `json:"stats"`
+	DelaySeconds int32       `json:"delay_seconds"`
+	EntityID     string      `json:"entity_id"`
+	ID           string      `json:"id"`
+}
+
+func (q *Queries) RescheduleWebhookSyncJob(ctx context.Context, arg RescheduleWebhookSyncJobParams) (SyncJob, error) {
+	row := q.db.QueryRow(ctx, rescheduleWebhookSyncJob,
+		arg.ErrorMessage,
+		arg.Stats,
+		arg.DelaySeconds,
+		arg.EntityID,
+		arg.ID,
+	)
+	var i SyncJob
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.SourceID,
+		&i.Type,
+		&i.Provider,
+		&i.Status,
+		&i.TraceID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.ErrorMessage,
+		&i.Stats,
+		&i.EventID,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LastAttemptAt,
+	)
+	return i, err
 }

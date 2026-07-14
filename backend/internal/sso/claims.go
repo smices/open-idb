@@ -16,6 +16,7 @@ type TokenSubject struct {
 	UserID                string
 	ClientID              string
 	SessionID             string
+	Nonce                 string
 	Name                  string
 	Email                 string
 	PhoneNumber           string
@@ -45,6 +46,7 @@ func BuildIDTokenClaims(issuer string, subject TokenSubject, now time.Time, ttl 
 	addIfNotEmpty(claims, "phone_number", subject.PhoneNumber)
 	addIfNotEmpty(claims, "picture", subject.Picture)
 	addIfNotEmpty(claims, "preferred_username", subject.PreferredUsername)
+	addIfNotEmpty(claims, "nonce", subject.Nonce)
 	return claims
 }
 

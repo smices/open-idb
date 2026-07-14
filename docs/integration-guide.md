@@ -77,7 +77,9 @@ IDB_FEISHU_REDIRECT_URI='https://idbridge.example.com/api/auth/feishu/callback'
 - “组织架构”显示公司、部门树和同步来的员工。
 - “账号管理”显示 IdBridge 内可登录、可授权、可分配角色和应用访问的账号。
 - 通讯录档案和账号对象不是同一个概念。
-- 全量同步按飞书快照收敛：匹配到既有用户时保留 IdBridge ULID。飞书中缺失的目录记录会标记为 `deleted`；对应受管账号会被归档并从活动 `users` 中移除，以释放用户名和绑定。
+- 全量同步按飞书快照收敛：匹配到既有用户时保留 IdBridge ULID，源端缺失的部门和目录用户会被清理；对应受管账号会按既有规则归档并从活动 `users` 中移除。
+- 远端快照拉取成功后，本次全量同步的数据库变更与成功状态原子提交；任一写入失败会整体回滚，不会留下半完成快照。
+- 飞书 webhook 先持久化为同步任务；相同身份源下重复的 `event_id` 只保留一条。服务重启或副本切换后，后台 worker 会恢复未完成任务并执行增量同步；临时失败按持久化退避重试，成功后任务状态为 `succeeded`，达到重试上限后为 `failed`。
 
 ## 2. 业务应用接入 IdBridge
 
@@ -107,14 +109,14 @@ IDB_FEISHU_REDIRECT_URI='https://idbridge.example.com/api/auth/feishu/callback'
 - `response_type`: `code`
 - PKCE: enabled
 
-应用抽屉会显示可复制的接入信息：
+应用详情会显示完整配置，并可一次复制为 JSON，内容包括可再次读取的 `client_secret`：
 
-- Discovery
-- Authorization Endpoint
-- Token Endpoint
-- UserInfo Endpoint
-- Feishu 登录模板
-- Feishu 工作台 SSO 模板
+- 应用基本信息与状态
+- `client_id`、`client_secret`
+- 回调 URI、scope、grant type、response type 与 PKCE 配置
+- 已配置的工作台提供方字段
+
+Discovery、Authorization、Token 和 UserInfo 地址按下节的公开端点配置，不会作为派生字段写入应用详情 JSON。
 
 ### 2.2 推荐端点
 
@@ -148,7 +150,7 @@ https://idbridge.example.com/api/oauth2/authorize?response_type=code&client_id=<
 https://app.example.com/auth/oidc/callback?code=<code>&state=<state>
 ```
 
-业务应用后端换 token：
+业务应用后端可以在表单中提交 client 凭据换 token：
 
 ```http
 POST /api/oauth2/token HTTP/1.1
@@ -162,6 +164,14 @@ client_id=<client_id>&
 client_secret=<client_secret>&
 code_verifier=<code_verifier>
 ```
+
+也可以使用标准 HTTP Basic 认证，此时表单不必重复提交 `client_id` 和 `client_secret`：
+
+```http
+Authorization: Basic <base64(client_id:client_secret)>
+```
+
+`entity_id` 和 `X-IDB-Entity-ID` 仍为兼容参数；标准授权码换票可由一次性授权码定位所属实体，不要求第三方应用额外传递租户头。
 
 业务应用必须校验：
 

@@ -46,6 +46,36 @@ func (q *Queries) GetSSOTokenByHash(ctx context.Context, arg GetSSOTokenByHashPa
 	return i, err
 }
 
+const getSSOTokenByHashGlobally = `-- name: GetSSOTokenByHashGlobally :one
+SELECT token.id, token.entity_id, token.user_id, token.client_id, token.token_type, token.token_hash, token.scopes, token.revoked_at, token.expires_at, token.created_at
+FROM oauth_tokens token
+WHERE token.token_hash = $1
+  AND NOT EXISTS (
+      SELECT 1
+      FROM oauth_tokens duplicate
+      WHERE duplicate.token_hash = token.token_hash
+        AND duplicate.entity_id <> token.entity_id
+  )
+`
+
+func (q *Queries) GetSSOTokenByHashGlobally(ctx context.Context, tokenHash string) (OauthToken, error) {
+	row := q.db.QueryRow(ctx, getSSOTokenByHashGlobally, tokenHash)
+	var i OauthToken
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.UserID,
+		&i.ClientID,
+		&i.TokenType,
+		&i.TokenHash,
+		&i.Scopes,
+		&i.RevokedAt,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getUserInfoForClaims = `-- name: GetUserInfoForClaims :one
 SELECT id, entity_id, username, display_name, email, phone, avatar_url, locale
 FROM users
@@ -98,4 +128,24 @@ type RevokeSSOTokenByHashParams struct {
 func (q *Queries) RevokeSSOTokenByHash(ctx context.Context, arg RevokeSSOTokenByHashParams) error {
 	_, err := q.db.Exec(ctx, revokeSSOTokenByHash, arg.EntityID, arg.TokenHash)
 	return err
+}
+
+const revokeSSOTokenByHashGlobally = `-- name: RevokeSSOTokenByHashGlobally :one
+UPDATE oauth_tokens token
+SET revoked_at = now()
+WHERE token.token_hash = $1
+  AND NOT EXISTS (
+      SELECT 1
+      FROM oauth_tokens duplicate
+      WHERE duplicate.token_hash = token.token_hash
+        AND duplicate.entity_id <> token.entity_id
+  )
+RETURNING token.entity_id
+`
+
+func (q *Queries) RevokeSSOTokenByHashGlobally(ctx context.Context, tokenHash string) (string, error) {
+	row := q.db.QueryRow(ctx, revokeSSOTokenByHashGlobally, tokenHash)
+	var entity_id string
+	err := row.Scan(&entity_id)
+	return entity_id, err
 }

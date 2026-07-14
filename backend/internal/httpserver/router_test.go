@@ -252,6 +252,38 @@ func TestPublicAuthAndProtocolRoutesRemainReachable(t *testing.T) {
 	}
 }
 
+func TestLogoutRoutesReachHandlersWithoutUsableSessionCookie(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		path       string
+		cookieName string
+		cookie     string
+	}{
+		{name: "user missing cookie", path: "/api/auth/logout"},
+		{name: "user expired cookie", path: "/api/auth/logout", cookieName: "idb_session", cookie: "expired"},
+		{name: "admin missing cookie", path: "/sapi/logout"},
+		{name: "admin expired cookie", path: "/sapi/logout", cookieName: "idb_admin_session", cookie: "expired"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tc.path, nil)
+			if tc.cookieName != "" {
+				req.AddCookie(&http.Cookie{Name: tc.cookieName, Value: tc.cookie})
+			}
+			rec := httptest.NewRecorder()
+
+			NewRouter(func(r chi.Router) {
+				r.Post(tc.path, func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusNoContent)
+				})
+			}).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+			}
+		})
+	}
+}
+
 func addSessionCookie(t *testing.T, req *http.Request) {
 	t.Helper()
 	session, err := auth.EncodeSession(auth.Session{

@@ -88,6 +88,10 @@ type AdminAuthService interface {
 	SetManagedAdminPassword(ctx context.Context, session AdminSession, id string, password string) error
 }
 
+type adminSessionRevoker interface {
+	RevokeAdminSession(ctx context.Context, sessionID string) error
+}
+
 type AdminHandler struct {
 	service    AdminAuthService
 	audit      AuditEventWriter
@@ -115,6 +119,7 @@ func (h *AdminHandler) SetEphemeralStore(store ephemeral.Store) {
 
 func (h AdminHandler) RegisterRoutes(r chi.Router) {
 	r.Post("/sapi/login/account", h.loginAccount)
+	r.Post("/sapi/logout", h.logout)
 	r.Get("/sapi/me", h.currentAdmin)
 	r.Patch("/sapi/me", h.updateAdminProfile)
 	r.Post("/sapi/me/password", h.updateAdminPassword)
@@ -166,17 +171,28 @@ func (h AdminHandler) loginAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "session_create_failed", "could not create admin session")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     "idb_admin_session",
-		Value:    session.ID,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   isHTTPSRequest(r),
-		SameSite: http.SameSiteLaxMode,
-		Expires:  session.ExpiresAt,
-		MaxAge:   int(time.Until(session.ExpiresAt).Seconds()),
-	})
+	setAdminSessionCookie(w, r, session.ID, session.ExpiresAt)
 	http.Redirect(w, r, safeReturnToWithDefault(r.PostForm.Get("return_to"), "/admin"), http.StatusFound)
+}
+
+func (h AdminHandler) logout(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie(adminSessionCookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		clearAdminSessionCookie(w, r)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	revoker, ok := h.service.(adminSessionRevoker)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "logout_unavailable", "admin session revocation is unavailable")
+		return
+	}
+	if err := revoker.RevokeAdminSession(r.Context(), cookie.Value); err != nil {
+		writeError(w, http.StatusInternalServerError, "logout_failed", "admin session could not be revoked")
+		return
+	}
+	clearAdminSessionCookie(w, r)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h AdminHandler) currentAdmin(w http.ResponseWriter, r *http.Request) {
@@ -427,7 +443,7 @@ func (h AdminHandler) readAdminSession(w http.ResponseWriter, r *http.Request) (
 	if ok {
 		return session, true
 	}
-	cookie, err := r.Cookie("idb_admin_session")
+	cookie, err := r.Cookie(adminSessionCookieName)
 	if err != nil || cookie.Value == "" {
 		writeError(w, http.StatusUnauthorized, "admin_session_required", "idb_admin_session cookie is required")
 		return AdminSession{}, false

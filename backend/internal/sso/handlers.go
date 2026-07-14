@@ -119,6 +119,19 @@ func (h Handler) authorize(w http.ResponseWriter, r *http.Request) {
 			TraceID:      traceID,
 			After:        map[string]string{"reason": err.Error(), "client_id": input.ClientID},
 		})
+		if h.service.canRedirectAuthorizationError(r.Context(), input.EntityID, input.ClientID, input.RedirectURI) {
+			params := map[string]string{
+				"error":             "invalid_request",
+				"error_description": err.Error(),
+			}
+			if input.State != "" {
+				params["state"] = input.State
+			}
+			if redirectURL, redirectErr := authorizationRedirectURL(input.RedirectURI, params); redirectErr == nil {
+				http.Redirect(w, r, redirectURL, http.StatusFound)
+				return
+			}
+		}
 		writeError(w, http.StatusBadRequest, "invalid_authorize_request", err.Error())
 		return
 	}
@@ -136,16 +149,29 @@ func (h Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		After:        map[string]interface{}{"client_id": input.ClientID, "scopes": input.Scopes},
 	})
 
-	redirectURL := input.RedirectURI
-	separator := "?"
-	if strings.Contains(redirectURL, "?") {
-		separator = "&"
-	}
-	redirectURL = redirectURL + separator + "code=" + code
+	params := map[string]string{"code": code}
 	if input.State != "" {
-		redirectURL += "&state=" + input.State
+		params["state"] = input.State
+	}
+	redirectURL, err := authorizationRedirectURL(input.RedirectURI, params)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "unable to build authorization redirect")
+		return
 	}
 	http.Redirect(w, r, redirectURL, http.StatusFound)
+}
+
+func authorizationRedirectURL(redirectURI string, params map[string]string) (string, error) {
+	u, err := url.Parse(redirectURI)
+	if err != nil {
+		return "", err
+	}
+	query := u.Query()
+	for key, value := range params {
+		query.Set(key, value)
+	}
+	u.RawQuery = query.Encode()
+	return u.String(), nil
 }
 
 func shouldRestartAuthorizeLogin(err error) bool {
@@ -172,7 +198,12 @@ func (h Handler) token(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unsupported_grant_type", "grant_type must be authorization_code")
 		return
 	}
-	clientID := r.PostForm.Get("client_id")
+	clientID, clientSecret, clientSecretProvided, err := tokenClientCredentials(r)
+	if err != nil {
+		w.Header().Set("WWW-Authenticate", `Basic realm="oauth2/token"`)
+		writeError(w, http.StatusUnauthorized, "invalid_client", err.Error())
+		return
+	}
 	limitKey := ephemeral.Key("rate:token_exchange", clientID, r.RemoteAddr)
 	limit, limitErr := ephemeral.CheckLimit(r.Context(), h.ephemeral, limitKey, 30, time.Minute)
 	if limitErr != nil {
@@ -185,17 +216,50 @@ func (h Handler) token(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response, err := h.service.ExchangeCode(r.Context(), TokenInput{
-		EntityID:     firstNonEmpty(r.Header.Get("X-IDB-Entity-ID"), r.PostForm.Get("entity_id")),
-		ClientID:     clientID,
-		Code:         r.PostForm.Get("code"),
-		RedirectURI:  r.PostForm.Get("redirect_uri"),
-		CodeVerifier: r.PostForm.Get("code_verifier"),
+		EntityID:             firstNonEmpty(r.Header.Get("X-IDB-Entity-ID"), r.PostForm.Get("entity_id")),
+		ClientID:             clientID,
+		ClientSecret:         clientSecret,
+		ClientSecretProvided: clientSecretProvided,
+		Code:                 r.PostForm.Get("code"),
+		RedirectURI:          r.PostForm.Get("redirect_uri"),
+		CodeVerifier:         r.PostForm.Get("code_verifier"),
 	})
 	if err != nil {
+		if errors.Is(err, ErrInvalidClient) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="oauth2/token"`)
+			writeError(w, http.StatusUnauthorized, "invalid_client", err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid_grant", err.Error())
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	writeJSON(w, http.StatusOK, response)
+}
+
+func tokenClientCredentials(r *http.Request) (clientID string, clientSecret string, clientSecretProvided bool, err error) {
+	formClientID := r.PostForm.Get("client_id")
+	formSecrets, formSecretProvided := r.PostForm["client_secret"]
+	formSecret := ""
+	if formSecretProvided && len(formSecrets) > 0 {
+		formSecret = formSecrets[0]
+	}
+
+	basicClientID, basicSecret, basicProvided := r.BasicAuth()
+	if !basicProvided {
+		if scheme, _, found := strings.Cut(r.Header.Get("Authorization"), " "); found && strings.EqualFold(scheme, "Basic") {
+			return "", "", false, fmt.Errorf("invalid basic client credentials")
+		}
+		return formClientID, formSecret, formSecretProvided, nil
+	}
+	if formClientID != "" && formClientID != basicClientID {
+		return "", "", false, fmt.Errorf("conflicting client identifiers")
+	}
+	if formSecretProvided && formSecret != basicSecret {
+		return "", "", false, fmt.Errorf("conflicting client secrets")
+	}
+	return basicClientID, basicSecret, true, nil
 }
 
 func (h Handler) userinfo(w http.ResponseWriter, r *http.Request) {
@@ -212,13 +276,8 @@ func (h Handler) userinfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entityID := r.Header.Get("X-IDB-Entity-ID")
-	if entityID == "" {
-		writeError(w, http.StatusUnauthorized, "invalid_token", "entity id is required")
-		return
-	}
-
 	tokenHash := HashToken(rawToken)
+	entityID := r.Header.Get("X-IDB-Entity-ID")
 	tokenRecord, err := h.service.IntrospectToken(r.Context(), entityID, tokenHash)
 	if err != nil {
 		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token", error_description="token is invalid, revoked, or expired"`)
@@ -231,7 +290,7 @@ func (h Handler) userinfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userInfo, err := h.service.GetUserInfo(r.Context(), entityID, tokenRecord.UserID)
+	userInfo, err := h.service.GetUserInfo(r.Context(), tokenRecord.EntityID, tokenRecord.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "unable to load user info")
 		return
@@ -255,17 +314,15 @@ func (h Handler) revoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entityID := firstNonEmpty(r.Header.Get("X-IDB-Entity-ID"), r.PostForm.Get("entity_id"))
-	if entityID == "" {
-		// Cannot scope the query without a entity; still return 200 per RFC 7009.
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
 	// token_type_hint is accepted but not used to change behavior — we hash
 	// and look up regardless. Valid values: "access_token", "refresh_token".
 	tokenHash := HashToken(rawToken)
+	entityID = h.service.revokeTokenAndResolveEntity(r.Context(), entityID, tokenHash)
+	if entityID == "" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	traceID := id.NewULID()
-	_ = h.service.RevokeToken(r.Context(), entityID, tokenHash)
 	h.writeAudit(r, auditmodel.Event{
 		EntityID:     entityID,
 		ActorType:    "user",

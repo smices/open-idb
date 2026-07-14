@@ -470,57 +470,192 @@ function UserDetailPage({ id }) {
   );
 }
 
+function defaultApplicationValues() {
+  return {
+    type: 'oidc_client',
+    status: 'active',
+    redirect_uris: [],
+    allowed_scopes: ['openid', 'profile', 'email'],
+    grant_types: ['authorization_code'],
+    response_types: ['code'],
+    pkce_required: true,
+    workplace_provider: '',
+  };
+}
+
+function applicationFormValues(application) {
+  return {
+    ...defaultApplicationValues(),
+    ...application,
+    ...(application?.config || {}),
+    ...(application?.oidc_client || {}),
+  };
+}
+
+function validOIDCRedirectURIs(values) {
+  if (!Array.isArray(values) || values.length === 0) return true;
+  return values.every((value) => {
+    try {
+      const parsed = new URL(String(value).trim());
+      return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    } catch {
+      return false;
+    }
+  });
+}
+
+function applicationWritePayload(values, editing = false) {
+  const payload = {
+    name: values.name,
+    type: values.type || 'oidc_client',
+    status: values.status,
+  };
+  if (values.type === 'oidc_client') {
+    payload.config = {};
+    payload.oidc_client = {
+      client_id: values.client_id,
+      redirect_uris: values.redirect_uris || [],
+      allowed_scopes: values.allowed_scopes || [],
+      grant_types: values.grant_types || [],
+      response_types: values.response_types || [],
+      pkce_required: values.pkce_required,
+      workplace_provider: values.workplace_provider || '',
+      workplace_app_id: values.workplace_app_id || '',
+      workplace_app_secret: values.workplace_app_secret || '',
+    };
+  } else if (values.type === 'api_client') {
+    const clientId = values.client_id || '';
+    const clientSecret = values.client_secret || '';
+    if (!editing || clientId || clientSecret) {
+      payload.config = {
+        client_id: clientId,
+        client_secret: clientSecret,
+        allowed_scopes: values.allowed_scopes || [],
+      };
+    }
+  } else {
+    payload.config = {
+      app_url: values.app_url || '',
+      callback_url: values.callback_url || '',
+      description: values.description || '',
+    };
+  }
+  return payload;
+}
+
 function ApplicationsPage() {
   const { t } = useTranslation();
   const { message } = AntApp.useApp();
   const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [form] = Form.useForm();
-  const { loading, data, reload } = useLoader(async () => {
-    const [apps, clients] = await Promise.all([api.listApplications({ limit: 100 }), api.listOIDCClients({ limit: 200 }).catch(() => ({ clients: [] }))]);
-    return { apps: apps.applications || [], clients: clients.clients || [] };
-  }, []);
-  const oidcClientFor = (app) => {
-    const client = data?.clients?.find((item) => item.application_id === app?.id) || null;
-    return client;
+  const { loading, data, reload } = useLoader(() => api.listApplications({ limit: 100 }), []);
+  const createApplication = () => {
+    setSelected(null);
+    form.resetFields();
+    form.setFieldsValue(defaultApplicationValues());
+    setOpen(true);
   };
-  const applicationJsonFor = (app) => ({ ...app, oidc_client: oidcClientFor(app) });
+  const editApplication = async (row) => {
+    try {
+      const application = await api.getApplication(row.id);
+      setSelected(application);
+      form.resetFields();
+      form.setFieldsValue(applicationFormValues(application));
+      setOpen(true);
+    } catch (error) {
+      message.error(errorMessage(error));
+    }
+  };
+  const viewApplication = async (row) => {
+    try {
+      setViewing(await api.getApplication(row.id));
+    } catch (error) {
+      message.error(errorMessage(error));
+    }
+  };
   const save = async () => {
-    const values = await form.validateFields();
-    if (selected) {
-      await api.updateApplication(selected.id, { name: values.name, status: values.status });
-      const client = data?.clients?.find((item) => item.application_id === selected.id);
-      if (selected.type === 'oidc_client' && client) await api.updateOIDCClient(client.id, { redirect_uris: values.redirect_uris, allowed_scopes: values.allowed_scopes, grant_types: values.grant_types, response_types: values.response_types, pkce_required: values.pkce_required, workplace_provider: values.workplace_provider, workplace_app_id: values.workplace_app_id, workplace_app_secret: values.workplace_app_secret, status: values.status });
+    let values;
+    try {
+      values = await form.validateFields();
+    } catch {
+      return;
     }
-    else {
-      const app = await api.createApplication({ name: values.name, type: values.type || 'oidc_client' });
-      if (values.type === 'oidc_client') {
-        await api.createOIDCClient({ application_id: app.id, client_id: values.client_id, redirect_uris: values.redirect_uris || [], allowed_scopes: values.allowed_scopes, grant_types: values.grant_types, response_types: values.response_types, pkce_required: values.pkce_required, workplace_provider: values.workplace_provider, workplace_app_id: values.workplace_app_id, workplace_app_secret: values.workplace_app_secret });
-      }
+    setSaving(true);
+    try {
+      const payload = applicationWritePayload(values, Boolean(selected));
+      if (selected) await api.updateApplication(selected.id, payload);
+      else await api.createApplication(payload);
+      message.success(t('applications.saveSuccess'));
+      setOpen(false);
+      await reload();
+    } catch (error) {
+      message.error(errorMessage(error));
+    } finally {
+      setSaving(false);
     }
-    message.success(t('common.updateSuccess'));
-    setOpen(false);
-    reload();
+  };
+  const removeApplication = async (row) => {
+    try {
+      await api.deleteApplication(row.id);
+      message.success(t('common.deleteSuccess'));
+      await reload();
+    } catch (error) {
+      message.error(errorMessage(error));
+    }
   };
   return (
     <div className="page-stack">
-      <div className="toolbar"><div /><Button type="primary" icon={<Plus size={16} />} onClick={() => { setSelected(null); form.resetFields(); form.setFieldsValue({ type: 'oidc_client', status: 'active', redirect_uris: [], allowed_scopes: ['openid', 'profile'], grant_types: ['authorization_code'], response_types: ['code'], pkce_required: true, workplace_provider: '' }); setOpen(true); }}>{t('common.create')}</Button></div>
-      <Table rowKey="id" loading={loading} dataSource={data?.apps || []} columns={[
+      <div className="toolbar"><div /><Button type="primary" icon={<Plus size={16} />} onClick={createApplication}>{t('common.create')}</Button></div>
+      <Table rowKey="id" loading={loading} dataSource={data?.applications || []} columns={[
         { title: t('applications.name'), dataIndex: 'name' },
         { title: t('applications.type'), dataIndex: 'type', render: (v) => t(`applications.type.${v}`, v) },
         { title: t('applications.status'), dataIndex: 'status', render: (v) => <Tag>{t(`applications.status.${v}`, v)}</Tag> },
         { title: t('applications.updatedAt'), dataIndex: 'updated_at', render: formatDate },
         { title: t('common.actions'), render: (_, row) => <Space>
-          <Button size="small" onClick={() => setViewing(row)}>{t('common.view')}</Button>
-          <Button size="small" onClick={() => { const client = data?.clients?.find((item) => item.application_id === row.id); setSelected(row); form.setFieldsValue({ ...row, ...client }); setOpen(true); }}>{t('common.edit')}</Button>
-          <Popconfirm title={t('common.delete')} onConfirm={async () => { await api.deleteApplication(row.id); reload(); }}><Button danger size="small">{t('common.delete')}</Button></Popconfirm>
+          <Button size="small" onClick={() => viewApplication(row)}>{t('common.view')}</Button>
+          <Button size="small" onClick={() => editApplication(row)}>{t('common.edit')}</Button>
+          <Popconfirm title={t('common.delete')} onConfirm={() => removeApplication(row)}><Button danger size="small">{t('common.delete')}</Button></Popconfirm>
         </Space> },
       ]} />
-      <Modal title={selected ? t('common.edit') : t('common.create')} open={open} onOk={save} onCancel={() => setOpen(false)}>
-        <Form form={form} layout="vertical"><Form.Item name="name" label={t('applications.name')} rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="type" label={t('applications.type')}><Select disabled={Boolean(selected)} options={APPLICATION_TYPES.map((value) => ({ value, label: t(`applications.type.${value}`, value) }))} /></Form.Item><Form.Item name="status" label={t('applications.status')}><Select options={['active', 'disabled'].map((value) => ({ value, label: t(`applications.status.${value}`, value) }))} /></Form.Item><Form.Item noStyle shouldUpdate={(prev, next) => prev.type !== next.type}>{() => form.getFieldValue('type') === 'oidc_client' ? <><Form.Item name="client_id" label={t('applications.clientId')}><Input disabled={Boolean(selected)} placeholder={t('applications.autoWhenEmpty')} /></Form.Item><Form.Item name="redirect_uris" label={t('applications.redirectUris')}><Select mode="tags" /></Form.Item><Form.Item name="allowed_scopes" label={t('applications.scopes')}><Select mode="tags" /></Form.Item><Form.Item name="grant_types" label={t('applications.grantTypes')}><Select mode="tags" /></Form.Item><Form.Item name="response_types" label={t('applications.responseTypes')}><Select mode="tags" /></Form.Item><Form.Item name="pkce_required" label={t('applications.pkce')} valuePropName="checked"><Switch /></Form.Item><Form.Item name="workplace_provider" label={t('applications.workplaceProvider')}><Select onChange={(value) => { if (!value) form.setFieldsValue({ workplace_app_id: '', workplace_app_secret: '' }); }} options={[{ value: '', label: t('applications.workplaceProvider.none') }, { value: 'feishu', label: t('applications.workplaceProvider.feishu') }]} /></Form.Item><Form.Item name="workplace_app_id" label={t('applications.workplaceAppId')}><Input /></Form.Item><Form.Item name="workplace_app_secret" label={t('applications.workplaceAppSecret')}><Input.Password /></Form.Item></> : null}</Form.Item></Form>
+      <Modal width={720} title={selected ? t('common.edit') : t('common.create')} open={open} confirmLoading={saving} onOk={save} onCancel={() => setOpen(false)}>
+        <Form form={form} layout="vertical">
+          <Form.Item name="name" label={t('applications.name')} rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="type" label={t('applications.type')} rules={[{ required: true }]}><Select disabled={Boolean(selected)} options={APPLICATION_TYPES.map((value) => ({ value, label: t(`applications.type.${value}`, value) }))} /></Form.Item>
+          <Form.Item name="status" label={t('applications.status')} rules={[{ required: true }]}><Select options={['active', 'disabled'].map((value) => ({ value, label: t(`applications.status.${value}`, value) }))} /></Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, next) => prev.type !== next.type}>
+            {() => {
+              const type = form.getFieldValue('type');
+              if (type === 'oidc_client') return <>
+                <Form.Item name="client_id" label={t('applications.clientId')}><Input disabled={Boolean(selected)} placeholder={t('applications.autoWhenEmpty')} /></Form.Item>
+                <Form.Item name="client_secret" label={t('applications.clientSecret')}><Input readOnly placeholder={t('applications.autoWhenEmpty')} /></Form.Item>
+                <Form.Item name="redirect_uris" label={t('applications.redirectUris')} rules={[{ required: true, type: 'array', min: 1 }, { validator: (_, values) => validOIDCRedirectURIs(values) ? Promise.resolve() : Promise.reject(new Error(t('applications.invalidRedirectUris'))) }]}><Select mode="tags" /></Form.Item>
+                <Form.Item name="allowed_scopes" label={t('applications.scopes')}><Select mode="tags" /></Form.Item>
+                <Form.Item name="grant_types" label={t('applications.grantTypes')}><Select mode="tags" /></Form.Item>
+                <Form.Item name="response_types" label={t('applications.responseTypes')}><Select mode="tags" /></Form.Item>
+                <Form.Item name="pkce_required" label={t('applications.pkce')} valuePropName="checked"><Switch /></Form.Item>
+                <Form.Item name="workplace_provider" label={t('applications.workplaceProvider')}><Select onChange={(value) => { if (!value) form.setFieldsValue({ workplace_app_id: '', workplace_app_secret: '' }); }} options={[{ value: '', label: t('applications.workplaceProvider.none') }, { value: 'feishu', label: t('applications.workplaceProvider.feishu') }]} /></Form.Item>
+                <Form.Item name="workplace_app_id" label={t('applications.workplaceAppId')}><Input /></Form.Item>
+                <Form.Item name="workplace_app_secret" label={t('applications.workplaceAppSecret')}><Input /></Form.Item>
+              </>;
+              if (type === 'api_client') return <>
+                <Form.Item name="client_id" label={t('applications.clientId')} rules={[{ required: !selected || Boolean(selected?.config?.client_id || selected?.config?.client_secret) }]}><Input /></Form.Item>
+                <Form.Item name="client_secret" label={t('applications.clientSecret')} rules={[{ required: !selected || Boolean(selected?.config?.client_id || selected?.config?.client_secret) }]}><Input /></Form.Item>
+                <Form.Item name="allowed_scopes" label={t('applications.scopes')}><Select mode="tags" /></Form.Item>
+              </>;
+              if (type === 'internal_app') return <>
+                <Form.Item name="app_url" label={t('applications.appUrl')}><Input /></Form.Item>
+                <Form.Item name="callback_url" label={t('applications.callbackUrl')}><Input /></Form.Item>
+                <Form.Item name="description" label={t('applications.description')}><Input.TextArea rows={3} /></Form.Item>
+              </>;
+              return null;
+            }}
+          </Form.Item>
+        </Form>
       </Modal>
-      <Modal title={t('common.view')} open={Boolean(viewing)} footer={<Button onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify(applicationJsonFor(viewing), null, 2)); message.success(t('common.copySuccess')); } catch { message.error(t('common.copyFailed')); } }}>{t('common.copy')}</Button>} onCancel={() => setViewing(null)}><pre className="json-box">{JSON.stringify(applicationJsonFor(viewing), null, 2)}</pre></Modal>
+      <Modal width={720} title={t('common.view')} open={Boolean(viewing)} footer={<Button onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify(viewing, null, 2)); message.success(t('common.copySuccess')); } catch { message.error(t('common.copyFailed')); } }}>{t('common.copy')}</Button>} onCancel={() => setViewing(null)}><pre className="json-box">{JSON.stringify(viewing, null, 2)}</pre></Modal>
     </div>
   );
 }

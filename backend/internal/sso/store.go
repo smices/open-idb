@@ -25,7 +25,9 @@ type UserAuthorizationStore interface {
 type AuthorizationCodeStore interface {
 	CreateAuthorizationCode(ctx context.Context, arg generated.CreateAuthorizationCodeParams) (generated.OauthAuthorizationCode, error)
 	GetAuthorizationCode(ctx context.Context, arg generated.GetAuthorizationCodeParams) (generated.OauthAuthorizationCode, error)
+	GetAuthorizationCodeByHash(ctx context.Context, codeHash string) (generated.OauthAuthorizationCode, error)
 	MarkAuthorizationCodeUsed(ctx context.Context, arg generated.MarkAuthorizationCodeUsedParams) (generated.OauthAuthorizationCode, error)
+	FinalizeAuthorizationCodeExchange(ctx context.Context, arg generated.FinalizeAuthorizationCodeExchangeParams) (generated.FinalizeAuthorizationCodeExchangeRow, error)
 }
 
 type OAuthTokenStore interface {
@@ -49,4 +51,12 @@ type TokenLookupStore interface {
 	LookupToken(ctx context.Context, entityID string, tokenHash string) (SSOTokenLookup, error)
 	MarkTokenRevoked(ctx context.Context, entityID string, tokenHash string) error
 	FetchUserInfo(ctx context.Context, entityID string, userID string) (UserInfoClaims, error)
+}
+
+// GlobalTokenLookupStore is an optional capability used when standard OAuth
+// clients do not send the IdBridge-specific entity header. Implementations
+// must reject token hashes that exist in more than one entity.
+type GlobalTokenLookupStore interface {
+	LookupTokenGlobally(ctx context.Context, tokenHash string) (SSOTokenLookup, error)
+	MarkTokenRevokedGlobally(ctx context.Context, tokenHash string) (string, error)
 }

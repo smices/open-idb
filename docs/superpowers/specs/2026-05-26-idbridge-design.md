@@ -286,7 +286,7 @@ oidc_clients
 - id
 - application_id
 - client_id
-- client_secret_hash
+- client_secret          可再次读取的客户端凭据；历史数据库列名可为兼容保留
 - redirect_uris
 - allowed_scopes
 - grant_types
@@ -453,21 +453,22 @@ If the user is logging into a business application, IdBridge must also check app
 
 ```text
 1. Admin or worker triggers full sync.
-2. Worker fetches Feishu departments.
-3. Worker fetches Feishu users.
+2. Worker fetches and validates the complete Feishu department/user snapshot outside the database transaction.
+3. Worker starts one database transaction for the snapshot.
 4. Worker upserts directory_departments.
 5. Worker upserts directory_users.
 6. Worker creates or updates managed users.
 7. Worker creates or updates account bindings.
 8. Worker maps departments where configured.
 9. Worker disables or locks users whose source identity is disabled, according to policy.
-10. Worker writes sync job audit and per-user audit events.
+10. Worker marks the sync job succeeded and commits the complete snapshot atomically.
+11. Worker writes committed-result audit events and invalidates organization caches.
 ```
 
 Failure behavior:
 
 - Feishu API failure marks the sync job as failed.
-- Successfully processed batches are not rolled back.
+- Any database write failure rolls back the complete snapshot; the job is then marked failed outside that transaction.
 - Sync errors must be visible in admin UI.
 - Sync jobs must include trace IDs and structured logs.
 
@@ -476,14 +477,14 @@ Failure behavior:
 The first version supports Authorization Code + PKCE.
 
 ```text
-1. Internal application redirects to /oauth2/authorize.
+1. Internal application redirects to /api/oauth2/authorize.
 2. IdBridge validates client_id, redirect_uri, response_type, scope, and PKCE challenge.
 3. IdBridge checks whether the user has an active session.
 4. If no session exists, IdBridge starts login.
 5. If a session exists, IdBridge checks application access.
 6. If access is denied, IdBridge rejects authorization and writes audit logs.
 7. If access is allowed, IdBridge issues an authorization code.
-8. Client exchanges code at /oauth2/token.
+8. Client exchanges code at /api/oauth2/token.
 9. IdBridge signs ID token and access token.
 10. Client establishes its own application session.
 ```
@@ -491,8 +492,8 @@ The first version supports Authorization Code + PKCE.
 ## API Boundaries
 
 ```text
-/admin/v1/*       Admin console APIs
-/oauth2/*         OIDC/OAuth2 protocol endpoints
+/sapi/*           Admin console APIs
+/api/oauth2/*     OIDC/OAuth2 protocol endpoints
 /internal/v1/*    Internal application authorization, permission query, audit ingestion
 ```
 
@@ -523,7 +524,7 @@ Onboard 时必须提供：
 - application 元信息（所属实体、名称、状态、类型）
 - oidc_client 元信息（client_id、redirect_uris、allowed_scopes、grant_types）
 - `pkce_required=true`
-- `client_secret_hash`（MVP 可由运维先置空后补充）
+- `client_secret`（由签发方生成并允许管理员在应用详情 JSON 中再次读取）
 
 运行时检查：
 
@@ -591,22 +592,21 @@ Onboard 时必须提供：
 Important endpoints:
 
 ```text
-/admin/v1/users
-/admin/v1/directory-users
-/admin/v1/identity-sources
-/admin/v1/applications
-/admin/v1/roles
-/admin/v1/permissions
-/admin/v1/resource-scopes
-/admin/v1/audit-logs
-/admin/v1/sync-jobs
+/sapi/users
+/sapi/directory-users
+/sapi/identity-sources
+/sapi/applications
+/sapi/roles
+/sapi/permissions
+/sapi/audit-logs
+/sapi/sync-jobs
 
-/oauth2/authorize
-/oauth2/token
-/oauth2/userinfo
-/oauth2/revoke
-/.well-known/openid-configuration
-/.well-known/jwks.json
+/api/oauth2/authorize
+/api/oauth2/token
+/api/oauth2/userinfo
+/api/oauth2/revoke
+/api/.well-known/openid-configuration
+/api/.well-known/jwks.json
 
 /internal/v1/introspect
 /internal/v1/permissions/check
@@ -798,8 +798,8 @@ Contract tests:
 
 - `/.well-known/openid-configuration`
 - `/.well-known/jwks.json`
-- `/oauth2/token`
-- `/oauth2/userinfo`
+- `/api/oauth2/token`
+- `/api/oauth2/userinfo`
 - `/internal/v1/permissions/check`
 
 ## Future Phases

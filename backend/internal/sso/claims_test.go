@@ -22,6 +22,7 @@ func TestBuildIDTokenClaims(t *testing.T) {
 	assertClaim(t, claims, "aud", subject.ClientID)
 	assertClaim(t, claims, "entity_id", subject.EntityID)
 	assertClaim(t, claims, "sid", subject.SessionID)
+	assertClaim(t, claims, "nonce", "nonce-1")
 	assertClaim(t, claims, "locale", "zh-CN")
 	assertClaim(t, claims, "name", "Ada Lovelace")
 	assertClaim(t, claims, "email", "ada@example.test")
@@ -108,6 +109,7 @@ func testTokenSubject() TokenSubject {
 		UserID:            "user-1",
 		ClientID:          "client-1",
 		SessionID:         "session-1",
+		Nonce:             "nonce-1",
 		Name:              "Ada Lovelace",
 		Email:             "ada@example.test",
 		PhoneNumber:       "+8613800000000",

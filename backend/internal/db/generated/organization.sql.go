@@ -88,14 +88,22 @@ func (q *Queries) CountDepartments(ctx context.Context, arg CountDepartmentsPara
 const countDirectoryUsersByDepartmentExternalID = `-- name: CountDirectoryUsersByDepartmentExternalID :one
 SELECT count(*)::bigint
 FROM directory_users
-WHERE entity_id = $1
-  AND source_id = $2
-  AND (
-    raw_profile->'department_ids' ? $3::text
-    OR raw_profile->'departmentIds' ? $3::text
-    OR raw_profile->'department_id_list' ? $3::text
-    OR raw_profile->>'department_id' = $3::text
-    OR raw_profile->>'departmentId' = $3::text
+WHERE directory_users.entity_id = $1
+  AND directory_users.source_id = $2
+  AND directory_users.status <> 'deleted'
+  AND EXISTS (
+    SELECT 1
+    FROM directory_departments target_department
+    WHERE target_department.entity_id = directory_users.entity_id
+      AND target_department.source_id = directory_users.source_id
+      AND target_department.external_department_id = $3::text
+      AND (
+        directory_users.raw_profile->'department_ids' ?| ARRAY[target_department.external_department_id, COALESCE(target_department.raw_profile->>'department_id', ''), COALESCE(target_department.raw_profile->>'open_department_id', '')]
+        OR directory_users.raw_profile->'departmentIds' ?| ARRAY[target_department.external_department_id, COALESCE(target_department.raw_profile->>'department_id', ''), COALESCE(target_department.raw_profile->>'open_department_id', '')]
+        OR directory_users.raw_profile->'department_id_list' ?| ARRAY[target_department.external_department_id, COALESCE(target_department.raw_profile->>'department_id', ''), COALESCE(target_department.raw_profile->>'open_department_id', '')]
+        OR directory_users.raw_profile->>'department_id' = ANY(ARRAY[target_department.external_department_id, COALESCE(target_department.raw_profile->>'department_id', ''), COALESCE(target_department.raw_profile->>'open_department_id', '')])
+        OR directory_users.raw_profile->>'departmentId' = ANY(ARRAY[target_department.external_department_id, COALESCE(target_department.raw_profile->>'department_id', ''), COALESCE(target_department.raw_profile->>'open_department_id', '')])
+      )
   )
 `
 
@@ -166,6 +174,7 @@ const countRootDirectoryUsers = `-- name: CountRootDirectoryUsers :one
 SELECT count(*)::bigint
 FROM directory_users
 WHERE entity_id = $1
+  AND status <> 'deleted'
   AND (
     raw_profile->'department_ids' ? '0'
     OR raw_profile->'departmentIds' ? '0'
@@ -361,6 +370,27 @@ func (q *Queries) DeleteOrganization(ctx context.Context, arg DeleteOrganization
 	return err
 }
 
+const deleteSourceDepartmentByExternalID = `-- name: DeleteSourceDepartmentByExternalID :execrows
+DELETE FROM departments
+WHERE entity_id = $1
+  AND source_id = $2
+  AND external_department_id = $3
+`
+
+type DeleteSourceDepartmentByExternalIDParams struct {
+	EntityID             string      `json:"entity_id"`
+	SourceID             pgtype.Text `json:"source_id"`
+	ExternalDepartmentID pgtype.Text `json:"external_department_id"`
+}
+
+func (q *Queries) DeleteSourceDepartmentByExternalID(ctx context.Context, arg DeleteSourceDepartmentByExternalIDParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSourceDepartmentByExternalID, arg.EntityID, arg.SourceID, arg.ExternalDepartmentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getDepartmentByID = `-- name: GetDepartmentByID :one
 SELECT id, entity_id, organization_id, name, parent_id, source_id, external_department_id, created_at, updated_at
 FROM departments
@@ -374,6 +404,37 @@ type GetDepartmentByIDParams struct {
 
 func (q *Queries) GetDepartmentByID(ctx context.Context, arg GetDepartmentByIDParams) (Department, error) {
 	row := q.db.QueryRow(ctx, getDepartmentByID, arg.EntityID, arg.ID)
+	var i Department
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.OrganizationID,
+		&i.Name,
+		&i.ParentID,
+		&i.SourceID,
+		&i.ExternalDepartmentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getDepartmentBySourceExternalID = `-- name: GetDepartmentBySourceExternalID :one
+SELECT id, entity_id, organization_id, name, parent_id, source_id, external_department_id, created_at, updated_at
+FROM departments
+WHERE entity_id = $1
+  AND source_id = $2
+  AND external_department_id = $3
+`
+
+type GetDepartmentBySourceExternalIDParams struct {
+	EntityID             string      `json:"entity_id"`
+	SourceID             pgtype.Text `json:"source_id"`
+	ExternalDepartmentID pgtype.Text `json:"external_department_id"`
+}
+
+func (q *Queries) GetDepartmentBySourceExternalID(ctx context.Context, arg GetDepartmentBySourceExternalIDParams) (Department, error) {
+	row := q.db.QueryRow(ctx, getDepartmentBySourceExternalID, arg.EntityID, arg.SourceID, arg.ExternalDepartmentID)
 	var i Department
 	err := row.Scan(
 		&i.ID,
@@ -612,16 +673,24 @@ func (q *Queries) ListDepartments(ctx context.Context, arg ListDepartmentsParams
 const listDirectoryUsersByDepartmentExternalID = `-- name: ListDirectoryUsersByDepartmentExternalID :many
 SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
 FROM directory_users
-WHERE entity_id = $1
-  AND source_id = $2
-  AND (
-    raw_profile->'department_ids' ? $3::text
-    OR raw_profile->'departmentIds' ? $3::text
-    OR raw_profile->'department_id_list' ? $3::text
-    OR raw_profile->>'department_id' = $3::text
-    OR raw_profile->>'departmentId' = $3::text
+WHERE directory_users.entity_id = $1
+  AND directory_users.source_id = $2
+  AND directory_users.status <> 'deleted'
+  AND EXISTS (
+    SELECT 1
+    FROM directory_departments target_department
+    WHERE target_department.entity_id = directory_users.entity_id
+      AND target_department.source_id = directory_users.source_id
+      AND target_department.external_department_id = $3::text
+      AND (
+        directory_users.raw_profile->'department_ids' ?| ARRAY[target_department.external_department_id, COALESCE(target_department.raw_profile->>'department_id', ''), COALESCE(target_department.raw_profile->>'open_department_id', '')]
+        OR directory_users.raw_profile->'departmentIds' ?| ARRAY[target_department.external_department_id, COALESCE(target_department.raw_profile->>'department_id', ''), COALESCE(target_department.raw_profile->>'open_department_id', '')]
+        OR directory_users.raw_profile->'department_id_list' ?| ARRAY[target_department.external_department_id, COALESCE(target_department.raw_profile->>'department_id', ''), COALESCE(target_department.raw_profile->>'open_department_id', '')]
+        OR directory_users.raw_profile->>'department_id' = ANY(ARRAY[target_department.external_department_id, COALESCE(target_department.raw_profile->>'department_id', ''), COALESCE(target_department.raw_profile->>'open_department_id', '')])
+        OR directory_users.raw_profile->>'departmentId' = ANY(ARRAY[target_department.external_department_id, COALESCE(target_department.raw_profile->>'department_id', ''), COALESCE(target_department.raw_profile->>'open_department_id', '')])
+      )
   )
-ORDER BY name ASC, created_at ASC
+ORDER BY directory_users.name ASC, directory_users.created_at ASC
 LIMIT $4 OFFSET $5
 `
 
@@ -883,6 +952,7 @@ const listRootDirectoryUsers = `-- name: ListRootDirectoryUsers :many
 SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
 FROM directory_users
 WHERE entity_id = $1
+  AND status <> 'deleted'
   AND (
     raw_profile->'department_ids' ? '0'
     OR raw_profile->'departmentIds' ? '0'
@@ -1108,6 +1178,7 @@ const searchOrganizationTreeUsers = `-- name: SearchOrganizationTreeUsers :many
 SELECT id, entity_id, source_id, external_user_id, external_union_id, external_open_id, name, english_name, employee_no, job_title, email, phone, avatar_url, status, raw_profile, last_synced_at, created_at, updated_at
 FROM directory_users
 WHERE entity_id = $1
+  AND status <> 'deleted'
   AND (
     name ILIKE '%' || $2::text || '%'
     OR english_name ILIKE '%' || $2::text || '%'
@@ -1279,7 +1350,10 @@ VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (entity_id, source_id, external_department_id) WHERE source_id IS NOT NULL AND external_department_id IS NOT NULL
 DO UPDATE SET
     name = EXCLUDED.name,
-    parent_id = EXCLUDED.parent_id,
+    parent_id = CASE
+      WHEN $7::boolean THEN departments.parent_id
+      ELSE EXCLUDED.parent_id
+    END,
     organization_id = EXCLUDED.organization_id,
     updated_at = now()
 RETURNING id, entity_id, organization_id, name, parent_id, source_id, external_department_id, created_at, updated_at
@@ -1292,6 +1366,7 @@ type UpsertDepartmentBySourceParams struct {
 	ParentID             pgtype.Text `json:"parent_id"`
 	SourceID             pgtype.Text `json:"source_id"`
 	ExternalDepartmentID pgtype.Text `json:"external_department_id"`
+	PreserveParent       bool        `json:"preserve_parent"`
 }
 
 func (q *Queries) UpsertDepartmentBySource(ctx context.Context, arg UpsertDepartmentBySourceParams) (Department, error) {
@@ -1302,6 +1377,7 @@ func (q *Queries) UpsertDepartmentBySource(ctx context.Context, arg UpsertDepart
 		arg.ParentID,
 		arg.SourceID,
 		arg.ExternalDepartmentID,
+		arg.PreserveParent,
 	)
 	var i Department
 	err := row.Scan(

@@ -107,6 +107,22 @@ RETURNING id, expires_at
 	return session, nil
 }
 
+func (s *AdminService) RevokeAdminSession(ctx context.Context, sessionID string) error {
+	if s == nil || s.pool == nil {
+		return fmt.Errorf("admin auth service is not configured")
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+	_, err := s.pool.Exec(ctx, `
+UPDATE admin_sessions
+SET revoked_at = COALESCE(revoked_at, now())
+WHERE id = $1
+`, sessionID)
+	return err
+}
+
 func (s *AdminService) CurrentAdmin(ctx context.Context, session AdminSession) (AdminCurrentUser, error) {
 	if s == nil || s.pool == nil {
 		return AdminCurrentUser{}, fmt.Errorf("admin auth service is not configured")

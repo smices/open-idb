@@ -12,10 +12,11 @@ import (
 // syncRequest is an internal message enqueued by TriggerFullSync and
 // consumed by the scheduler dispatch loop.
 type syncRequest struct {
-	EntityID string
-	SourceID string
-	Provider string
-	SyncType string
+	EntityID           string
+	SourceID           string
+	Provider           string
+	SyncType           string
+	RecoveryClaimToken string
 }
 
 // Scheduler manages an in-memory job queue for sync operations.  It
@@ -119,6 +120,29 @@ func (s *Scheduler) TriggerIncrementalSyncWithProvider(entityID, sourceID, provi
 	}
 }
 
+// TriggerRecoveredWebhookSync enqueues an incremental sync that owns a
+// database source lease. The boolean reports whether it entered the queue so
+// the poller can release a lease immediately when the queue is full.
+func (s *Scheduler) TriggerRecoveredWebhookSync(entityID, sourceID, provider, claimToken string) bool {
+	req := syncRequest{
+		EntityID:           entityID,
+		SourceID:           sourceID,
+		Provider:           provider,
+		SyncType:           "incremental",
+		RecoveryClaimToken: claimToken,
+	}
+	select {
+	case s.queue <- req:
+		s.logger.Info("persisted webhook sync enqueued",
+			zap.String("entity_id", entityID),
+			zap.String("source_id", sourceID),
+		)
+		return true
+	default:
+		return false
+	}
+}
+
 // Run starts the dispatch loop.  It reads requests from the queue and
 // launches each in its own goroutine, gated by the global and per-entity
 // semaphores.  It blocks until ctx is cancelled and all in-flight jobs
@@ -186,10 +210,11 @@ func (s *Scheduler) executeJob(ctx context.Context, req syncRequest) {
 	)
 
 	auditEvents, err := s.runner.Run(ctx, SyncJobRequest{
-		EntityID: req.EntityID,
-		SourceID: req.SourceID,
-		Provider: req.Provider,
-		SyncType: req.SyncType,
+		EntityID:           req.EntityID,
+		SourceID:           req.SourceID,
+		Provider:           req.Provider,
+		SyncType:           req.SyncType,
+		RecoveryClaimToken: req.RecoveryClaimToken,
 	})
 
 	// Always emit audit events (start + finish/fail), even on error.

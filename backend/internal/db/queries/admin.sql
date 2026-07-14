@@ -59,7 +59,7 @@ FROM applications
 WHERE entity_id = $1;
 
 -- name: GetApplicationByID :one
-SELECT id, entity_id, name, type, status, created_at, updated_at
+SELECT id, entity_id, name, type, status, created_at, updated_at, config
 FROM applications
 WHERE entity_id = $1 AND id = $2;
 
@@ -67,9 +67,10 @@ WHERE entity_id = $1 AND id = $2;
 UPDATE applications
 SET name = COALESCE(sqlc.narg('name'), name),
     status = COALESCE(sqlc.narg('status'), status),
+    config = COALESCE(sqlc.narg('config')::jsonb, config),
     updated_at = now()
 WHERE entity_id = $1 AND id = $2
-RETURNING id, entity_id, name, type, status, created_at, updated_at;
+RETURNING id, entity_id, name, type, status, created_at, updated_at, config;
 
 -- name: DeleteApplication :exec
 DELETE FROM applications
@@ -78,7 +79,7 @@ WHERE entity_id = $1 AND id = $2;
 -- === Sync Jobs ===
 
 -- name: ListAllSyncJobs :many
-SELECT id, entity_id, source_id, type, provider, status, trace_id, started_at, finished_at, error_message, stats
+SELECT id, entity_id, source_id, type, provider, status, trace_id, started_at, finished_at, error_message, stats, event_id, attempt_count, next_attempt_at, last_attempt_at
 FROM sync_jobs
 WHERE entity_id = $1
 ORDER BY started_at DESC

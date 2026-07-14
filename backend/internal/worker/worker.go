@@ -56,6 +56,7 @@ type Worker struct {
 	scheduler *Scheduler
 	audit     *AuditProcessor
 	cleanup   *CleanupRunner
+	webhooks  *WebhookRecoveryPoller
 
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
@@ -90,6 +91,12 @@ func (w *Worker) Scheduler() *Scheduler { return w.scheduler }
 // enqueue fire-and-forget audit events.
 func (w *Worker) AuditProcessor() *AuditProcessor { return w.audit }
 
+// SetWebhookRecoveryStore enables durable webhook recovery. It must be called
+// before Start so polling begins with the rest of the worker.
+func (w *Worker) SetWebhookRecoveryStore(store webhookRecoveryStore) {
+	w.webhooks = NewWebhookRecoveryPoller(store, w.scheduler, w.cfg.PollInterval, w.logger)
+}
+
 // Start launches all background goroutines.  It is safe to call only
 // once; subsequent calls are no-ops.
 func (w *Worker) Start(ctx context.Context) {
@@ -115,6 +122,14 @@ func (w *Worker) Start(ctx context.Context) {
 		defer w.wg.Done()
 		w.scheduler.Run(ctx)
 	}()
+
+	if w.webhooks != nil {
+		w.wg.Add(1)
+		go func() {
+			defer w.wg.Done()
+			w.webhooks.Run(ctx)
+		}()
+	}
 
 	if w.cleanup != nil {
 		w.wg.Add(1)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -48,11 +49,18 @@ type txStarter interface {
 // entity/source boundary from observing different upstream snapshots.
 var ErrSyncAlreadyRunning = errors.New("sync already running for this identity source")
 
+const (
+	webhookMaxAttempts int32 = 5
+	webhookClaimBatch        = 200
+	webhookClaimLease        = 5 * time.Minute
+)
+
 type FullSyncInput struct {
-	EntityID string
-	SourceID string
-	Provider string
-	SyncType SyncMode
+	EntityID           string
+	SourceID           string
+	Provider           string
+	SyncType           SyncMode
+	RecoveryClaimToken string
 }
 
 type FullSyncResult struct {
@@ -118,6 +126,7 @@ func (s *SyncService) SubmitWebhookEvent(ctx context.Context, entityID string, s
 	if err != nil {
 		return "", err
 	}
+	event.EventID = strings.TrimSpace(event.EventID)
 	if event.EventID == "" {
 		event.EventID = id.NewULID()
 	}
@@ -126,12 +135,12 @@ func (s *SyncService) SubmitWebhookEvent(ctx context.Context, entityID string, s
 		return "", err
 	}
 
-	job, err := s.queries.CreateSyncJob(ctx, generated.CreateSyncJobParams{
+	job, err := s.queries.CreateWebhookSyncJob(ctx, generated.CreateWebhookSyncJobParams{
 		EntityID: entity,
 		SourceID: source,
-		Type:     "webhook",
 		Provider: sourceRow.Type,
 		TraceID:  string(trace),
+		EventID:  pgtype.Text{String: event.EventID, Valid: true},
 	})
 	if err != nil {
 		return "", err
@@ -182,6 +191,12 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 	if err != nil {
 		return FullSyncResult{}, err
 	}
+	if input.SyncType == SyncModeIncremental && input.RecoveryClaimToken != "" {
+		// The recovery poller owns a source lease before the request reaches the
+		// runner. Register its release before trying the advisory sync lock so a
+		// busy source becomes immediately retryable instead of waiting for expiry.
+		defer s.releaseWebhookSyncLease(entityID, sourceID, input.RecoveryClaimToken)
+	}
 	releaseLock, err := s.acquireSourceLock(ctx, entityID, sourceID)
 	if err != nil {
 		return FullSyncResult{}, err
@@ -199,17 +214,26 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 		provider = source.Type
 	}
 
-	syncProvider, err := s.resolveProvider(ctx, input.EntityID, input.SourceID, provider)
-	if err != nil {
-		return FullSyncResult{}, err
-	}
-
 	if input.SyncType != SyncModeFull && input.SyncType != SyncModeIncremental {
 		input.SyncType = SyncModeFull
 	}
 
-	webhookJobs, err := s.pendingWebhookJobs(ctx, entityID, sourceID)
+	var webhookJobs []generated.SyncJob
+	if input.SyncType == SyncModeIncremental {
+		webhookJobs, err = s.claimPendingWebhookJobs(ctx, entityID, sourceID, input.RecoveryClaimToken)
+		if err != nil {
+			return FullSyncResult{}, err
+		}
+		// A recovery request can become stale while it waits in the in-memory
+		// scheduler. Do not call the provider after another replica consumed it.
+		if input.RecoveryClaimToken != "" && len(webhookJobs) == 0 {
+			return FullSyncResult{}, nil
+		}
+	}
+
+	syncProvider, err := s.resolveProvider(ctx, input.EntityID, input.SourceID, provider)
 	if err != nil {
+		_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, FullSyncResult{}, err)
 		return FullSyncResult{}, err
 	}
 
@@ -221,6 +245,7 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 		TraceID:  s.traceID(),
 	})
 	if err != nil {
+		_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, FullSyncResult{}, err)
 		return FullSyncResult{}, err
 	}
 	result := FullSyncResult{JobID: ulidString(job.ID)}
@@ -253,15 +278,98 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 		})
 		return result, err
 	}
+	users, err := uniqueDirectoryUsers(data.Users)
+	if err != nil {
+		_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
+		_ = s.failJob(ctx, entityID, job.ID, result, err)
+		return result, err
+	}
+	departments, err := prepareDirectoryDepartments(data.Departments)
+	if err != nil {
+		_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
+		_ = s.failJob(ctx, entityID, job.ID, result, err)
+		return result, err
+	}
 
-	presentExternalDepartmentIDs := make([]string, 0, len(data.Departments))
-	for _, department := range data.Departments {
-		department.ExternalDepartmentID = strings.TrimSpace(department.ExternalDepartmentID)
-		if department.ExternalDepartmentID == "" {
-			err := fmt.Errorf("directory department external id is required")
-			_ = s.failJob(ctx, entityID, job.ID, result, err)
-			return result, err
+	var auditEvents []audit.Event
+	if input.SyncType == SyncModeFull {
+		result, auditEvents, err = s.applyPreparedFullSync(ctx, input, entityID, sourceID, job.ID, traceID, departments, users, result)
+	} else {
+		result, auditEvents, err = s.applyPreparedSync(ctx, input, entityID, sourceID, job.ID, traceID, departments, users, data.DepartmentDeletions, data.UserDeletions, result, false)
+	}
+	if err != nil {
+		if input.SyncType == SyncModeIncremental {
+			for _, event := range auditEvents {
+				s.writeAudit(ctx, event)
+			}
 		}
+		_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
+		_ = s.failJob(ctx, entityID, job.ID, result, err)
+		return result, err
+	}
+	for _, event := range auditEvents {
+		s.writeAudit(ctx, event)
+	}
+
+	_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, nil)
+
+	// Emit sync finished event
+	s.writeAudit(ctx, audit.Event{
+		EntityID:     input.EntityID,
+		ActorType:    "sync_job",
+		Action:       audit.ActionSyncFinished,
+		ResourceType: "sync_job",
+		ResourceID:   result.JobID,
+		After:        result,
+		TraceID:      traceID,
+	})
+
+	return result, nil
+}
+
+// applyPreparedFullSync opens the mutation transaction only after the provider
+// snapshot has been fetched and validated. The service copy prevents concurrent
+// syncs for other sources from observing transaction-bound queries.
+func (s *SyncService) applyPreparedFullSync(ctx context.Context, input FullSyncInput, entityID, sourceID, jobID, traceID string, departments []DirectoryDepartment, users []DirectoryUser, result FullSyncResult) (FullSyncResult, []audit.Event, error) {
+	if s.txStarter == nil {
+		return result, nil, fmt.Errorf("sync service transaction starter is not configured")
+	}
+	tx, err := s.txStarter.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return result, nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(context.Background())
+		}
+	}()
+
+	txService := *s
+	txService.queries = s.queries.WithTx(tx)
+	txService.txStarter = nil
+	result, auditEvents, err := txService.applyPreparedSync(ctx, input, entityID, sourceID, jobID, traceID, departments, users, nil, nil, result, true)
+	if err != nil {
+		return result, auditEvents, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return result, auditEvents, err
+	}
+	committed = true
+	return result, auditEvents, nil
+}
+
+// applyPreparedSync writes an already fetched and validated snapshot through
+// the service's current query set. Full sync callers provide transaction-bound
+// queries and include the destructive reconciliation tail.
+func (s *SyncService) applyPreparedSync(ctx context.Context, input FullSyncInput, entityID, sourceID, jobID, traceID string, departments []DirectoryDepartment, users []DirectoryUser, departmentDeletions, userDeletions []DirectoryObjectDeletion, result FullSyncResult, reconcile bool) (FullSyncResult, []audit.Event, error) {
+	auditEvents := make([]audit.Event, 0, len(departments)+len(users))
+	resolvedDepartments, err := s.resolveDirectoryDepartmentIdentities(ctx, entityID, sourceID, departments)
+	if err != nil {
+		return result, auditEvents, err
+	}
+	presentExternalDepartmentIDs := make([]string, 0, len(resolvedDepartments))
+	for _, department := range resolvedDepartments {
 		presentExternalDepartmentIDs = append(presentExternalDepartmentIDs, department.ExternalDepartmentID)
 		if _, err := s.queries.UpsertDirectoryDepartment(ctx, generated.UpsertDirectoryDepartmentParams{
 			EntityID:                   entityID,
@@ -271,14 +379,10 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 			Name:                       department.Name,
 			RawProfile:                 department.RawProfile,
 		}); err != nil {
-			_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-			_ = s.failJob(ctx, entityID, job.ID, result, err)
-			return result, err
+			return result, auditEvents, err
 		}
 		result.DepartmentsUpserted++
-
-		// Per-department audit event
-		s.writeAudit(ctx, audit.Event{
+		auditEvents = append(auditEvents, audit.Event{
 			EntityID:     input.EntityID,
 			ActorType:    "sync_job",
 			Action:       audit.ActionSyncDepartmentUpdated,
@@ -289,40 +393,18 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 		})
 	}
 
-	// Step 8: Map directory_departments to organizational departments. A full
-	// sync must not succeed with a stale mapped department tree.
-	if err := s.mapDepartments(ctx, input, entityID, sourceID, data.Departments, traceID); err != nil {
-		_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-		_ = s.failJob(ctx, entityID, job.ID, result, err)
-		return result, err
+	if err := s.mapDepartments(ctx, input, entityID, sourceID, resolvedDepartments, traceID); err != nil {
+		return result, auditEvents, err
 	}
 
-	users := uniqueDirectoryUsers(data.Users)
 	presentExternalUserIDs := make([]string, 0, len(users))
 	for _, user := range users {
 		normalizedStatus := normalizeDirectoryStatus(user.Status)
-		presentExternalUserIDs = append(presentExternalUserIDs, user.ExternalUserID)
-		directoryUser, err := s.queries.UpsertDirectoryUser(ctx, generated.UpsertDirectoryUserParams{
-			EntityID:        entityID,
-			SourceID:        sourceID,
-			ExternalUserID:  user.ExternalUserID,
-			ExternalUnionID: textValue(user.ExternalUnionID),
-			ExternalOpenID:  textValue(user.ExternalOpenID),
-			Name:            user.Name,
-			EnglishName:     user.EnglishName,
-			EmployeeNo:      user.EmployeeNo,
-			JobTitle:        user.JobTitle,
-			Email:           textValue(user.Email),
-			Phone:           textValue(user.Phone),
-			AvatarUrl:       textValue(user.AvatarURL),
-			Status:          normalizedStatus,
-			RawProfile:      user.RawProfile,
-		})
+		directoryUser, err := s.upsertMatchedDirectoryUser(ctx, entityID, sourceID, user, normalizedStatus)
 		if err != nil {
-			_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-			_ = s.failJob(ctx, entityID, job.ID, result, err)
-			return result, err
+			return result, auditEvents, err
 		}
+		presentExternalUserIDs = append(presentExternalUserIDs, directoryUser.ExternalUserID)
 		result.UsersUpserted++
 		if normalizedStatus == "deleted" {
 			continue
@@ -330,23 +412,16 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 
 		binding, hasBinding, err := s.resolveAccountBinding(ctx, entityID, sourceID, directoryUser.ID, user)
 		if err != nil {
-			_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-			_ = s.failJob(ctx, entityID, job.ID, result, err)
-			return result, err
+			return result, auditEvents, err
 		}
 		if hasBinding {
-			// Existing user — update and check for lifecycle changes
 			newLifecycle := lifecycleForDirectoryStatus(user.Status)
 			if _, err := s.updateManagedUserFromDirectory(ctx, entityID, sourceID, binding.UserID, user, newLifecycle); err != nil {
-				_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-				_ = s.failJob(ctx, entityID, job.ID, result, err)
-				return result, err
+				return result, auditEvents, err
 			}
 			result.ManagedUsersUpdated++
-
-			// Emit sync.user.disabled when directory status disables the user
 			if newLifecycle == "disabled" {
-				s.writeAudit(ctx, audit.Event{
+				auditEvents = append(auditEvents, audit.Event{
 					EntityID:     input.EntityID,
 					ActorType:    "sync_job",
 					Action:       audit.ActionSyncUserDisabled,
@@ -366,18 +441,14 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 		if err == nil {
 			newLifecycle := lifecycleForDirectoryStatus(user.Status)
 			if _, err := s.updateManagedUserFromDirectory(ctx, entityID, sourceID, mergedUser.ID, user, newLifecycle); err != nil {
-				_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-				_ = s.failJob(ctx, entityID, job.ID, result, err)
-				return result, err
+				return result, auditEvents, err
 			}
 			if err := s.queries.AssignRoleToUserByCode(ctx, generated.AssignRoleToUserByCodeParams{
 				EntityID: entityID,
 				UserID:   mergedUser.ID,
 				Code:     "employee",
 			}); err != nil {
-				_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-				_ = s.failJob(ctx, entityID, job.ID, result, err)
-				return result, err
+				return result, auditEvents, err
 			}
 			result.ManagedUsersUpdated++
 			if _, err := s.queries.CreateAccountBinding(ctx, generated.CreateAccountBindingParams{
@@ -389,17 +460,13 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 				ProviderUnionID: textValue(user.ExternalUnionID),
 				IsPrimary:       true,
 			}); err != nil {
-				_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-				_ = s.failJob(ctx, entityID, job.ID, result, err)
-				return result, err
+				return result, auditEvents, err
 			}
 			result.BindingsCreated++
 			continue
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
-			_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-			_ = s.failJob(ctx, entityID, job.ID, result, err)
-			return result, err
+			return result, auditEvents, err
 		}
 
 		managedUser, err := s.queries.CreateManagedUser(ctx, generated.CreateManagedUserParams{
@@ -418,18 +485,14 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 			Locale:          pgtype.Text{String: "en-US", Valid: true},
 		})
 		if err != nil {
-			_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-			_ = s.failJob(ctx, entityID, job.ID, result, err)
-			return result, err
+			return result, auditEvents, err
 		}
 		if err := s.queries.AssignRoleToUserByCode(ctx, generated.AssignRoleToUserByCodeParams{
 			EntityID: entityID,
 			UserID:   managedUser.ID,
 			Code:     "employee",
 		}); err != nil {
-			_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-			_ = s.failJob(ctx, entityID, job.ID, result, err)
-			return result, err
+			return result, auditEvents, err
 		}
 		result.ManagedUsersCreated++
 
@@ -442,14 +505,10 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 			ProviderUnionID: textValue(user.ExternalUnionID),
 			IsPrimary:       true,
 		}); err != nil {
-			_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-			_ = s.failJob(ctx, entityID, job.ID, result, err)
-			return result, err
+			return result, auditEvents, err
 		}
 		result.BindingsCreated++
-
-		// Per-user audit: new user created from directory sync
-		s.writeAudit(ctx, audit.Event{
+		auditEvents = append(auditEvents, audit.Event{
 			EntityID:     input.EntityID,
 			ActorType:    "sync_job",
 			Action:       audit.ActionSyncUserCreated,
@@ -464,18 +523,25 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 		})
 	}
 
-	if input.SyncType == SyncModeFull {
-		archivedUsers, deletedDirectoryUsers, deletedDepartments, err := s.reconcileFullSync(ctx, entityID, sourceID, presentExternalUserIDs, presentExternalDepartmentIDs)
+	if !reconcile && (len(departmentDeletions) > 0 || len(userDeletions) > 0) {
+		updatedResult, deletionAuditEvents, err := s.applyIncrementalDeletions(ctx, input, entityID, sourceID, traceID, departmentDeletions, userDeletions, result)
 		if err != nil {
-			_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-			_ = s.failJob(ctx, entityID, job.ID, result, err)
-			return result, err
+			return result, auditEvents, err
+		}
+		result = updatedResult
+		auditEvents = append(auditEvents, deletionAuditEvents...)
+	}
+
+	if reconcile {
+		archivedUsers, deletedDirectoryUsers, deletedDepartments, err := reconcileFullSyncWithQueries(ctx, s.queries, entityID, sourceID, presentExternalUserIDs, presentExternalDepartmentIDs)
+		if err != nil {
+			return result, auditEvents, err
 		}
 		result.DirectoryUsersDeleted = deletedDirectoryUsers
 		result.DepartmentsDeleted = deletedDepartments
 		result.ManagedUsersDeleted = len(archivedUsers)
 		for _, archivedUser := range archivedUsers {
-			s.writeAudit(ctx, audit.Event{
+			auditEvents = append(auditEvents, audit.Event{
 				EntityID:     input.EntityID,
 				ActorType:    "sync_job",
 				Action:       audit.ActionSyncUserArchived,
@@ -489,31 +555,369 @@ func (s *SyncService) runSync(ctx context.Context, input FullSyncInput) (FullSyn
 
 	if _, err := s.queries.FinishSyncJob(ctx, generated.FinishSyncJobParams{
 		EntityID: entityID,
-		ID:       job.ID,
+		ID:       jobID,
 		Stats:    mustStatsJSON(result),
 	}); err != nil {
-		_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, err)
-		return result, err
+		return result, auditEvents, err
+	}
+	return result, auditEvents, nil
+}
+
+func (s *SyncService) upsertMatchedDirectoryUser(ctx context.Context, entityID, sourceID string, user DirectoryUser, normalizedStatus string) (generated.DirectoryUser, error) {
+	existing, found, err := findDirectoryUserByKnownIdentifiers(ctx, s.queries, entityID, sourceID, user)
+	if err != nil {
+		return generated.DirectoryUser{}, err
+	}
+	if found {
+		// Preserve alternate identifiers when a partial incremental payload omits
+		// them; losing one would make a later delete webhook impossible to match.
+		if strings.TrimSpace(user.ExternalUnionID) == "" && existing.ExternalUnionID.Valid {
+			user.ExternalUnionID = existing.ExternalUnionID.String
+		}
+		if strings.TrimSpace(user.ExternalOpenID) == "" && existing.ExternalOpenID.Valid {
+			user.ExternalOpenID = existing.ExternalOpenID.String
+		}
+		return s.queries.UpdateDirectoryUserByID(ctx, generated.UpdateDirectoryUserByIDParams{
+			EntityID:        entityID,
+			SourceID:        sourceID,
+			ID:              existing.ID,
+			ExternalUserID:  user.ExternalUserID,
+			ExternalUnionID: textValue(user.ExternalUnionID),
+			ExternalOpenID:  textValue(user.ExternalOpenID),
+			Name:            user.Name,
+			EnglishName:     user.EnglishName,
+			EmployeeNo:      user.EmployeeNo,
+			JobTitle:        user.JobTitle,
+			Email:           textValue(user.Email),
+			Phone:           textValue(user.Phone),
+			AvatarUrl:       textValue(user.AvatarURL),
+			Status:          normalizedStatus,
+			RawProfile:      user.RawProfile,
+		})
+	}
+	return s.queries.UpsertDirectoryUser(ctx, generated.UpsertDirectoryUserParams{
+		EntityID:        entityID,
+		SourceID:        sourceID,
+		ExternalUserID:  user.ExternalUserID,
+		ExternalUnionID: textValue(user.ExternalUnionID),
+		ExternalOpenID:  textValue(user.ExternalOpenID),
+		Name:            user.Name,
+		EnglishName:     user.EnglishName,
+		EmployeeNo:      user.EmployeeNo,
+		JobTitle:        user.JobTitle,
+		Email:           textValue(user.Email),
+		Phone:           textValue(user.Phone),
+		AvatarUrl:       textValue(user.AvatarURL),
+		Status:          normalizedStatus,
+		RawProfile:      user.RawProfile,
+	})
+}
+
+func findDirectoryUserByKnownIdentifiers(ctx context.Context, queries *generated.Queries, entityID, sourceID string, user DirectoryUser) (generated.DirectoryUser, bool, error) {
+	identifiers := []DirectoryObjectDeletion{
+		{ObjectID: user.ExternalUserID, ObjectIDType: "user_id"},
+		{ObjectID: user.ExternalOpenID, ObjectIDType: "open_id"},
+		{ObjectID: user.ExternalUnionID, ObjectIDType: "union_id"},
+	}
+	seen := make(map[string]struct{}, len(identifiers))
+	var matched generated.DirectoryUser
+	found := false
+	for _, identifier := range identifiers {
+		identifier.ObjectID = strings.TrimSpace(identifier.ObjectID)
+		if identifier.ObjectID == "" {
+			continue
+		}
+		key := identifier.ObjectIDType + "\x00" + identifier.ObjectID
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		rows, err := queries.ListDirectoryUsersByProviderIdentifier(ctx, generated.ListDirectoryUsersByProviderIdentifierParams{
+			EntityID:       entityID,
+			SourceID:       sourceID,
+			Identifier:     identifier.ObjectID,
+			IdentifierType: identifier.ObjectIDType,
+		})
+		if err != nil {
+			return generated.DirectoryUser{}, false, err
+		}
+		for _, row := range rows {
+			if !found {
+				matched = row
+				found = true
+				continue
+			}
+			if row.ID != matched.ID {
+				return generated.DirectoryUser{}, false, fmt.Errorf("directory user provider identifiers resolve to multiple existing rows")
+			}
+		}
+	}
+	return matched, found, nil
+}
+
+func (s *SyncService) resolveDirectoryDepartmentIdentities(ctx context.Context, entityID, sourceID string, departments []DirectoryDepartment) ([]DirectoryDepartment, error) {
+	resolved := make([]DirectoryDepartment, len(departments))
+	aliasToCanonical := make(map[string]string, len(departments)*3)
+	for index, department := range departments {
+		matched, err := s.preserveDirectoryDepartmentIdentity(ctx, entityID, sourceID, department)
+		if err != nil {
+			return nil, err
+		}
+		resolved[index] = matched
+		for _, alias := range departmentLookupKeys(department) {
+			aliasToCanonical[alias] = matched.ExternalDepartmentID
+		}
+		aliasToCanonical[matched.ExternalDepartmentID] = matched.ExternalDepartmentID
+	}
+	for index := range resolved {
+		parentID := strings.TrimSpace(resolved[index].ParentExternalDepartmentID)
+		if parentID == "" || parentID == "0" {
+			continue
+		}
+		if canonical, ok := aliasToCanonical[parentID]; ok {
+			resolved[index].ParentExternalDepartmentID = canonical
+			continue
+		}
+		// Incremental batches commonly contain only the child. Resolve its parent
+		// against the stored dual-ID raw profile before falling back to the alias.
+		parents, err := s.queries.ListDirectoryDepartmentsByProviderIdentifier(ctx, generated.ListDirectoryDepartmentsByProviderIdentifierParams{
+			EntityID: entityID, SourceID: sourceID, Identifier: parentID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if len(parents) > 1 {
+			return nil, fmt.Errorf("directory parent identifier resolves to multiple existing rows")
+		}
+		if len(parents) == 1 {
+			resolved[index].ParentExternalDepartmentID = parents[0].ExternalDepartmentID
+		}
+	}
+	return resolved, nil
+}
+
+func (s *SyncService) preserveDirectoryDepartmentIdentity(ctx context.Context, entityID, sourceID string, department DirectoryDepartment) (DirectoryDepartment, error) {
+	departmentID, openDepartmentID := directoryDepartmentProviderIDs(department)
+	identifiers := []DirectoryObjectDeletion{
+		{ObjectID: openDepartmentID, ObjectIDType: "open_department_id"},
+		{ObjectID: departmentID, ObjectIDType: "department_id"},
+		{ObjectID: department.ExternalDepartmentID},
+	}
+	seen := make(map[string]struct{}, len(identifiers))
+	var matched generated.DirectoryDepartment
+	found := false
+	for _, identifier := range identifiers {
+		identifier.ObjectID = strings.TrimSpace(identifier.ObjectID)
+		if identifier.ObjectID == "" {
+			continue
+		}
+		key := identifier.ObjectIDType + "\x00" + identifier.ObjectID
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		rows, err := s.queries.ListDirectoryDepartmentsByProviderIdentifier(ctx, generated.ListDirectoryDepartmentsByProviderIdentifierParams{
+			EntityID:       entityID,
+			SourceID:       sourceID,
+			Identifier:     identifier.ObjectID,
+			IdentifierType: identifier.ObjectIDType,
+		})
+		if err != nil {
+			return DirectoryDepartment{}, err
+		}
+		for _, row := range rows {
+			if !found {
+				matched = row
+				found = true
+				continue
+			}
+			if row.ID != matched.ID {
+				return DirectoryDepartment{}, fmt.Errorf("directory department provider identifiers resolve to multiple existing rows")
+			}
+		}
+	}
+	if found {
+		// Keep the production canonical key (and therefore both directory and
+		// organization ULIDs) even when the provider starts preferring another ID.
+		department.ExternalDepartmentID = matched.ExternalDepartmentID
+	}
+	return department, nil
+}
+
+func directoryDepartmentProviderIDs(department DirectoryDepartment) (string, string) {
+	var raw struct {
+		DepartmentID     string `json:"department_id"`
+		OpenDepartmentID string `json:"open_department_id"`
+	}
+	if len(department.RawProfile) > 0 {
+		_ = json.Unmarshal(department.RawProfile, &raw)
+	}
+	return strings.TrimSpace(raw.DepartmentID), strings.TrimSpace(raw.OpenDepartmentID)
+}
+
+func validDirectoryDeletionIdentifier(objectType string, deletion DirectoryObjectDeletion) bool {
+	if strings.TrimSpace(deletion.ObjectID) == "" {
+		return false
+	}
+	identifierType := strings.ToLower(strings.TrimSpace(deletion.ObjectIDType))
+	switch strings.ToLower(strings.TrimSpace(objectType)) {
+	case "user":
+		return identifierType == "user_id" || identifierType == "open_id" || identifierType == "union_id"
+	case "department":
+		return identifierType == "department_id" || identifierType == "open_department_id"
+	default:
+		return false
+	}
+}
+
+func (s *SyncService) applyIncrementalDeletions(ctx context.Context, input FullSyncInput, entityID, sourceID, traceID string, departmentDeletions, userDeletions []DirectoryObjectDeletion, result FullSyncResult) (FullSyncResult, []audit.Event, error) {
+	if s.txStarter == nil {
+		return result, nil, fmt.Errorf("sync service transaction starter is not configured")
+	}
+	baseResult := result
+	tx, err := s.txStarter.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return baseResult, nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(context.Background())
+		}
+	}()
+	queries := s.queries.WithTx(tx)
+	auditEvents := make([]audit.Event, 0, len(userDeletions))
+
+	for _, deletion := range departmentDeletions {
+		if !validDirectoryDeletionIdentifier("department", deletion) {
+			continue
+		}
+		identifier := strings.TrimSpace(deletion.ObjectID)
+		departments, err := queries.ListDirectoryDepartmentsByProviderIdentifier(ctx, generated.ListDirectoryDepartmentsByProviderIdentifierParams{
+			EntityID:       entityID,
+			SourceID:       sourceID,
+			Identifier:     identifier,
+			IdentifierType: strings.ToLower(strings.TrimSpace(deletion.ObjectIDType)),
+		})
+		if err != nil {
+			return baseResult, nil, err
+		}
+		if len(departments) == 0 {
+			continue
+		}
+		if len(departments) > 1 {
+			return baseResult, nil, fmt.Errorf("department deletion identifier resolves to multiple existing rows")
+		}
+		department := departments[0]
+		if _, err := queries.DeleteSourceDepartmentByExternalID(ctx, generated.DeleteSourceDepartmentByExternalIDParams{
+			EntityID:             entityID,
+			SourceID:             textValue(sourceID),
+			ExternalDepartmentID: textValue(department.ExternalDepartmentID),
+		}); err != nil {
+			return baseResult, nil, err
+		}
+		if _, err := queries.DeleteDirectoryDepartmentByID(ctx, generated.DeleteDirectoryDepartmentByIDParams{
+			EntityID: entityID,
+			SourceID: sourceID,
+			ID:       department.ID,
+		}); err != nil {
+			return baseResult, nil, err
+		}
+		result.DepartmentsDeleted++
 	}
 
-	_ = s.finishWebhookJobs(ctx, entityID, webhookJobs, result, nil)
+	for _, deletion := range userDeletions {
+		if !validDirectoryDeletionIdentifier("user", deletion) {
+			continue
+		}
+		identifier := strings.TrimSpace(deletion.ObjectID)
+		directoryUsers, err := queries.ListDirectoryUsersByProviderIdentifier(ctx, generated.ListDirectoryUsersByProviderIdentifierParams{
+			EntityID:       entityID,
+			SourceID:       sourceID,
+			Identifier:     identifier,
+			IdentifierType: strings.ToLower(strings.TrimSpace(deletion.ObjectIDType)),
+		})
+		if err != nil {
+			return baseResult, nil, err
+		}
+		if len(directoryUsers) == 0 {
+			continue
+		}
+		if len(directoryUsers) > 1 {
+			return baseResult, nil, fmt.Errorf("user deletion identifier resolves to multiple existing rows")
+		}
+		directoryUser := directoryUsers[0]
+		wasDeleted := directoryUser.Status == "deleted"
+		if _, err := queries.MarkDirectoryUserDeletedByID(ctx, generated.MarkDirectoryUserDeletedByIDParams{
+			EntityID: entityID,
+			SourceID: sourceID,
+			ID:       directoryUser.ID,
+		}); err != nil {
+			return baseResult, nil, err
+		}
+		if !wasDeleted {
+			result.DirectoryUsersDeleted++
+		}
 
-	// Emit sync finished event
-	s.writeAudit(ctx, audit.Event{
-		EntityID:     input.EntityID,
-		ActorType:    "sync_job",
-		Action:       audit.ActionSyncFinished,
-		ResourceType: "sync_job",
-		ResourceID:   result.JobID,
-		After:        result,
-		TraceID:      traceID,
-	})
+		if _, err := queries.GetAccountBindingByDirectoryUserID(ctx, generated.GetAccountBindingByDirectoryUserIDParams{
+			EntityID: entityID, SourceID: sourceID, DirectoryUserID: directoryUser.ID,
+		}); errors.Is(err, pgx.ErrNoRows) {
+			continue
+		} else if err != nil {
+			return baseResult, nil, err
+		}
+		managedUser, err := queries.GetManagedUserForDeletedDirectoryUser(ctx, generated.GetManagedUserForDeletedDirectoryUserParams{
+			EntityID: entityID, SourceID: sourceID, DirectoryUserID: directoryUser.ID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return baseResult, nil, err
+		}
+		archive, err := queries.ArchiveUser(ctx, generated.ArchiveUserParams{
+			EntityID: entityID, UserID: managedUser.ID, ArchivedByUserID: pgtype.Text{}, ArchiveReason: "directory incremental sync deleted user",
+		})
+		if err != nil {
+			return baseResult, nil, err
+		}
+		if err := queries.DeleteUserActiveDependents(ctx, generated.DeleteUserActiveDependentsParams{EntityID: entityID, UserID: managedUser.ID}); err != nil {
+			return baseResult, nil, err
+		}
+		if err := queries.DeleteUserActiveRow(ctx, generated.DeleteUserActiveRowParams{EntityID: entityID, UserID: managedUser.ID}); err != nil {
+			return baseResult, nil, err
+		}
+		result.ManagedUsersDeleted++
+		auditEvents = append(auditEvents, audit.Event{
+			EntityID: input.EntityID, ActorType: "sync_job", Action: audit.ActionSyncUserArchived,
+			ResourceType: "archived_user", ResourceID: ulidString(archive.ID),
+			After: map[string]string{"username": managedUser.Username, "archive_reason": "directory incremental sync deleted user"}, TraceID: traceID,
+		})
+	}
 
-	return result, nil
+	if err := tx.Commit(ctx); err != nil {
+		return baseResult, nil, err
+	}
+	committed = true
+	return result, auditEvents, nil
 }
 
 func (s *SyncService) resolveAccountBinding(ctx context.Context, entityID, sourceID, directoryUserID string, user DirectoryUser) (generated.AccountBinding, bool, error) {
-	binding, err := s.queries.GetAccountBindingByProviderUID(ctx, generated.GetAccountBindingByProviderUIDParams{
+	// The directory row is the stable bridge when a provider upgrades its
+	// canonical identifier (for example open_id -> user_id).
+	binding, err := s.queries.GetAccountBindingByDirectoryUserID(ctx, generated.GetAccountBindingByDirectoryUserIDParams{
+		EntityID:        entityID,
+		SourceID:        sourceID,
+		DirectoryUserID: directoryUserID,
+	})
+	if err == nil {
+		return s.ensureAccountBindingMatchesDirectory(ctx, entityID, sourceID, directoryUserID, binding, user)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return generated.AccountBinding{}, false, err
+	}
+
+	binding, err = s.queries.GetAccountBindingByProviderUID(ctx, generated.GetAccountBindingByProviderUIDParams{
 		EntityID:    entityID,
 		SourceID:    sourceID,
 		ProviderUid: user.ExternalUserID,
@@ -528,18 +932,21 @@ func (s *SyncService) resolveAccountBinding(ctx context.Context, entityID, sourc
 	if strings.TrimSpace(user.ExternalUnionID) == "" {
 		return generated.AccountBinding{}, false, nil
 	}
-	binding, err = s.queries.GetAccountBindingByProviderUnionID(ctx, generated.GetAccountBindingByProviderUnionIDParams{
+	bindings, err := s.queries.ListAccountBindingsByProviderUnionID(ctx, generated.ListAccountBindingsByProviderUnionIDParams{
 		EntityID:        entityID,
 		SourceID:        sourceID,
 		ProviderUnionID: textValue(user.ExternalUnionID),
 	})
-	if err == nil {
-		return s.ensureAccountBindingMatchesDirectory(ctx, entityID, sourceID, directoryUserID, binding, user)
+	if err != nil {
+		return generated.AccountBinding{}, false, err
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
+	if len(bindings) == 0 {
 		return generated.AccountBinding{}, false, nil
 	}
-	return generated.AccountBinding{}, false, err
+	if len(bindings) > 1 {
+		return generated.AccountBinding{}, false, fmt.Errorf("provider union_id resolves to multiple account bindings")
+	}
+	return s.ensureAccountBindingMatchesDirectory(ctx, entityID, sourceID, directoryUserID, bindings[0], user)
 }
 
 func (s *SyncService) ensureAccountBindingMatchesDirectory(ctx context.Context, entityID, sourceID, directoryUserID string, binding generated.AccountBinding, user DirectoryUser) (generated.AccountBinding, bool, error) {
@@ -628,25 +1035,9 @@ type archivedSyncUser struct {
 	Archive  generated.ArchivedUser
 }
 
-// reconcileFullSync performs the destructive tail only after the upstream
-// snapshot has been loaded and all regular upserts have succeeded. Its single
-// transaction prevents a failed archive from leaving directory records marked
-// deleted while their managed accounts remain active.
-func (s *SyncService) reconcileFullSync(ctx context.Context, entityID, sourceID string, presentExternalUserIDs, presentExternalDepartmentIDs []string) ([]archivedSyncUser, int, int, error) {
-	if s.txStarter == nil {
-		return nil, 0, 0, fmt.Errorf("sync service transaction starter is not configured")
-	}
-	tx, err := s.txStarter.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(context.Background())
-		}
-	}()
-	queries := s.queries.WithTx(tx)
+// reconcileFullSyncWithQueries is transaction-agnostic so full snapshot
+// application can include reconciliation in its outer transaction.
+func reconcileFullSyncWithQueries(ctx context.Context, queries *generated.Queries, entityID, sourceID string, presentExternalUserIDs, presentExternalDepartmentIDs []string) ([]archivedSyncUser, int, int, error) {
 	deletedDepartments, err := queries.DeleteMissingSourceDepartments(ctx, generated.DeleteMissingSourceDepartmentsParams{
 		EntityID: entityID, SourceID: pgtype.Text{String: sourceID, Valid: true}, PresentExternalDepartmentIds: presentExternalDepartmentIDs,
 	})
@@ -686,10 +1077,6 @@ func (s *SyncService) reconcileFullSync(ctx context.Context, entityID, sourceID 
 		}
 		archivedUsers = append(archivedUsers, archivedSyncUser{Username: user.Username, Archive: archive})
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, 0, 0, err
-	}
-	committed = true
 	return archivedUsers, len(deletedDirectoryUsers), int(deletedDepartments), nil
 }
 
@@ -707,7 +1094,7 @@ func (s *SyncService) acquireSourceLock(ctx context.Context, entityID, sourceID 
 		return nil, err
 	}
 	var acquired bool
-	err = tx.QueryRow(ctx, "SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0), hashtextextended($2, 0))", entityID, sourceID).Scan(&acquired)
+	err = tx.QueryRow(ctx, "SELECT pg_try_advisory_xact_lock(hashtextextended($1::text || chr(31) || $2::text, 0))", entityID, sourceID).Scan(&acquired)
 	if err != nil {
 		_ = tx.Rollback(context.Background())
 		return nil, err
@@ -721,23 +1108,107 @@ func (s *SyncService) acquireSourceLock(ctx context.Context, entityID, sourceID 
 	}, nil
 }
 
-func uniqueDirectoryUsers(users []DirectoryUser) []DirectoryUser {
+func uniqueDirectoryUsers(users []DirectoryUser) ([]DirectoryUser, error) {
 	result := make([]DirectoryUser, 0, len(users))
 	seen := make(map[string]int, len(users))
+	identifierOwners := make(map[string]string, len(users)*3)
 	for _, user := range users {
 		key := strings.TrimSpace(user.ExternalUserID)
 		if key == "" {
-			continue
+			return nil, fmt.Errorf("directory user external id is required")
 		}
 		user.ExternalUserID = key
+		user.ExternalOpenID = strings.TrimSpace(user.ExternalOpenID)
+		user.ExternalUnionID = strings.TrimSpace(user.ExternalUnionID)
+		for _, identifier := range []struct {
+			name  string
+			value string
+		}{{"user_id", key}, {"open_id", user.ExternalOpenID}, {"union_id", user.ExternalUnionID}} {
+			if identifier.value == "" {
+				continue
+			}
+			if owner := identifierOwners[identifier.value]; owner != "" && owner != key {
+				return nil, fmt.Errorf("directory user %s %q belongs to multiple users", identifier.name, identifier.value)
+			}
+		}
 		if index, ok := seen[key]; ok {
+			existing := result[index]
+			if existing.ExternalOpenID != "" && user.ExternalOpenID != "" && existing.ExternalOpenID != user.ExternalOpenID {
+				return nil, fmt.Errorf("duplicate directory user %q has conflicting open_id values", key)
+			}
+			if existing.ExternalUnionID != "" && user.ExternalUnionID != "" && existing.ExternalUnionID != user.ExternalUnionID {
+				return nil, fmt.Errorf("duplicate directory user %q has conflicting union_id values", key)
+			}
 			result[index] = mergeDirectoryUser(result[index], user)
+			identifierOwners[key] = key
+			if user.ExternalOpenID != "" {
+				identifierOwners[user.ExternalOpenID] = key
+			}
+			if user.ExternalUnionID != "" {
+				identifierOwners[user.ExternalUnionID] = key
+			}
 			continue
+		}
+		identifierOwners[key] = key
+		if user.ExternalOpenID != "" {
+			identifierOwners[user.ExternalOpenID] = key
+		}
+		if user.ExternalUnionID != "" {
+			identifierOwners[user.ExternalUnionID] = key
 		}
 		seen[key] = len(result)
 		result = append(result, user)
 	}
-	return result
+	return result, nil
+}
+
+func prepareDirectoryDepartments(departments []DirectoryDepartment) ([]DirectoryDepartment, error) {
+	prepared := make([]DirectoryDepartment, len(departments))
+	type providerIDs struct {
+		departmentID     string
+		openDepartmentID string
+	}
+	idsByExternal := make(map[string]providerIDs, len(departments))
+	identifierOwners := make(map[string]string, len(departments)*3)
+	for index, department := range departments {
+		department.ExternalDepartmentID = strings.TrimSpace(department.ExternalDepartmentID)
+		department.ParentExternalDepartmentID = strings.TrimSpace(department.ParentExternalDepartmentID)
+		if department.ExternalDepartmentID == "" {
+			return nil, fmt.Errorf("directory department external id is required")
+		}
+		departmentID, openDepartmentID := directoryDepartmentProviderIDs(department)
+		if existing, ok := idsByExternal[department.ExternalDepartmentID]; ok {
+			if existing.departmentID != "" && departmentID != "" && existing.departmentID != departmentID {
+				return nil, fmt.Errorf("duplicate directory department %q has conflicting department_id values", department.ExternalDepartmentID)
+			}
+			if existing.openDepartmentID != "" && openDepartmentID != "" && existing.openDepartmentID != openDepartmentID {
+				return nil, fmt.Errorf("duplicate directory department %q has conflicting open_department_id values", department.ExternalDepartmentID)
+			}
+			if existing.departmentID == "" {
+				existing.departmentID = departmentID
+			}
+			if existing.openDepartmentID == "" {
+				existing.openDepartmentID = openDepartmentID
+			}
+			idsByExternal[department.ExternalDepartmentID] = existing
+		} else {
+			idsByExternal[department.ExternalDepartmentID] = providerIDs{departmentID: departmentID, openDepartmentID: openDepartmentID}
+		}
+		for _, identifier := range []struct {
+			name  string
+			value string
+		}{{"external_department_id", department.ExternalDepartmentID}, {"department_id", departmentID}, {"open_department_id", openDepartmentID}} {
+			if identifier.value == "" {
+				continue
+			}
+			if owner := identifierOwners[identifier.value]; owner != "" && owner != department.ExternalDepartmentID {
+				return nil, fmt.Errorf("directory department %s %q belongs to multiple departments", identifier.name, identifier.value)
+			}
+			identifierOwners[identifier.value] = department.ExternalDepartmentID
+		}
+		prepared[index] = department
+	}
+	return prepared, nil
 }
 
 func mergeDirectoryUser(existing, next DirectoryUser) DirectoryUser {
@@ -805,26 +1276,22 @@ func (s *SyncService) loadDataByMode(ctx context.Context, provider DirectoryProv
 	return data, webhookJobs, err
 }
 
-func (s *SyncService) pendingWebhookJobs(ctx context.Context, entityID, sourceID string) ([]generated.SyncJob, error) {
-	rows, err := s.queries.ListSyncJobsBySource(ctx, generated.ListSyncJobsBySourceParams{
-		EntityID: entityID,
-		SourceID: sourceID,
-		Limit:    200,
+func (s *SyncService) claimPendingWebhookJobs(ctx context.Context, entityID, sourceID, claimToken string) ([]generated.SyncJob, error) {
+	return s.queries.ClaimDueWebhookJobsBySource(ctx, generated.ClaimDueWebhookJobsBySourceParams{
+		LeaseSeconds: int32(webhookClaimLease / time.Second),
+		EntityID:     entityID,
+		SourceID:     sourceID,
+		ClaimToken:   claimToken,
+		BatchSize:    webhookClaimBatch,
 	})
-	if err != nil {
-		return nil, err
-	}
-	webhookJobs := make([]generated.SyncJob, 0)
-	for _, row := range rows {
-		if row.Type != "webhook" {
-			continue
-		}
-		if strings.TrimSpace(row.Status) != "running" {
-			continue
-		}
-		webhookJobs = append(webhookJobs, row)
-	}
-	return webhookJobs, nil
+}
+
+func (s *SyncService) releaseWebhookSyncLease(entityID, sourceID, claimToken string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, _ = s.queries.ReleaseWebhookSyncLease(ctx, generated.ReleaseWebhookSyncLeaseParams{
+		EntityID: entityID, SourceID: sourceID, ClaimToken: claimToken,
+	})
 }
 
 func (s *SyncService) finishWebhookJobs(ctx context.Context, entityID string, webhookJobs []generated.SyncJob, result FullSyncResult, cause error) error {
@@ -835,6 +1302,8 @@ func (s *SyncService) finishWebhookJobs(ctx context.Context, entityID string, we
 		var finishErr error
 		if cause == nil {
 			finishErr = s.finishWebhookJob(ctx, entityID, job.ID, result)
+		} else if job.AttemptCount < webhookMaxAttempts {
+			finishErr = s.retryWebhookJob(ctx, entityID, job, result, cause)
 		} else {
 			finishErr = s.failWebhookJob(ctx, entityID, job.ID, result, cause)
 		}
@@ -844,6 +1313,31 @@ func (s *SyncService) finishWebhookJobs(ctx context.Context, entityID string, we
 		}
 	}
 	return nil
+}
+
+func (s *SyncService) retryWebhookJob(ctx context.Context, entityID string, job generated.SyncJob, result FullSyncResult, cause error) error {
+	delay := webhookRetryDelay(job.AttemptCount)
+	_, err := s.queries.RescheduleWebhookSyncJob(ctx, generated.RescheduleWebhookSyncJobParams{
+		ErrorMessage: pgtype.Text{String: cause.Error(), Valid: true},
+		Stats:        mustStatsJSON(result),
+		DelaySeconds: int32(delay / time.Second),
+		EntityID:     entityID,
+		ID:           job.ID,
+	})
+	return err
+}
+
+func webhookRetryDelay(attempt int32) time.Duration {
+	switch attempt {
+	case 1:
+		return time.Minute
+	case 2:
+		return 5 * time.Minute
+	case 3:
+		return 30 * time.Minute
+	default:
+		return 2 * time.Hour
+	}
 }
 
 func (s *SyncService) finishWebhookJob(ctx context.Context, entityID string, jobID string, result FullSyncResult) error {
@@ -938,12 +1432,15 @@ func (s *SyncService) mapDepartments(ctx context.Context, input FullSyncInput, e
 	// First pass: upsert all departments and index every known provider ID.
 	deptIDs := make(map[string]string) // provider department/open_department ID → department ULID
 	for _, dept := range departments {
+		parentExternalID := strings.TrimSpace(dept.ParentExternalDepartmentID)
+		preserveParent := input.SyncType == SyncModeIncremental && parentExternalID != "" && parentExternalID != "0"
 		row, err := s.queries.UpsertDepartmentBySource(ctx, generated.UpsertDepartmentBySourceParams{
 			EntityID:             entityID,
 			OrganizationID:       org.ID,
 			Name:                 dept.Name,
 			SourceID:             pgtypeULID(sourceID),
 			ExternalDepartmentID: pgtypeText(dept.ExternalDepartmentID),
+			PreserveParent:       preserveParent,
 		})
 		if err != nil {
 			return err
@@ -963,7 +1460,18 @@ func (s *SyncService) mapDepartments(ctx context.Context, input FullSyncInput, e
 		if !ok {
 			continue
 		}
-		parentID, ok := deptIDs[dept.ParentExternalDepartmentID]
+		parentID, ok := deptIDs[parentExternalID]
+		if !ok && input.SyncType == SyncModeIncremental {
+			parent, err := s.queries.GetDepartmentBySourceExternalID(ctx, generated.GetDepartmentBySourceExternalIDParams{
+				EntityID: entityID, SourceID: pgtypeULID(sourceID), ExternalDepartmentID: pgtypeText(parentExternalID),
+			})
+			if err == nil {
+				parentID = parent.ID
+				ok = true
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+		}
 		if !ok {
 			continue
 		}

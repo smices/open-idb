@@ -40,10 +40,11 @@ func (r *SyncRunner) SetOrganizationTreeCacheInvalidator(invalidator organizatio
 
 // SyncJobRequest identifies a single sync job to execute.
 type SyncJobRequest struct {
-	EntityID string
-	SourceID string
-	Provider string // e.g. "feishu"
-	SyncType string
+	EntityID           string
+	SourceID           string
+	Provider           string // e.g. "feishu"
+	SyncType           string
+	RecoveryClaimToken string
 }
 
 // Run executes the full sync synchronously.  It:
@@ -76,9 +77,10 @@ func (r *SyncRunner) Run(ctx context.Context, req SyncJobRequest) ([]audit.Event
 
 	var (
 		input = idp.FullSyncInput{
-			EntityID: req.EntityID,
-			SourceID: req.SourceID,
-			Provider: req.Provider,
+			EntityID:           req.EntityID,
+			SourceID:           req.SourceID,
+			Provider:           req.Provider,
+			RecoveryClaimToken: req.RecoveryClaimToken,
 		}
 		result idp.FullSyncResult
 		err    error

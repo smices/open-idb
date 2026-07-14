@@ -565,14 +565,7 @@ func (h FeishuLoginHandler) loginCallback(w http.ResponseWriter, r *http.Request
 		After:        map[string]string{"login_method": "feishu", "username": result.Username},
 	})
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "idb_session",
-		Value:    result.SessionValue,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(result.ExpiresIn.Seconds()),
-	})
+	setSessionCookie(w, r, result.SessionValue, time.Now().Add(result.ExpiresIn))
 	returnTo := safeReturnTo(state.ReturnTo)
 	if acceptsHTML(r) {
 		http.Redirect(w, r, h.browserReturnTo(returnTo), http.StatusFound)
@@ -731,14 +724,7 @@ func (h FeishuLoginHandler) loginExchange(w http.ResponseWriter, r *http.Request
 		After:        map[string]string{"login_method": "feishu", "username": result.Username},
 	})
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "idb_session",
-		Value:    result.SessionValue,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(result.ExpiresIn.Seconds()),
-	})
+	setSessionCookie(w, r, result.SessionValue, time.Now().Add(result.ExpiresIn))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"session":      result.SessionValue,

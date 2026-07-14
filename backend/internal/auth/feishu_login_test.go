@@ -654,6 +654,7 @@ func TestFeishuCallbackSetsSessionAndRedirects(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet,
 		"/auth/feishu/callback?code=test-code&state="+stateEncoded, nil)
 	req.Header.Set("Accept", "text/html")
+	req.Header.Set("X-Forwarded-Proto", "https")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -674,6 +675,12 @@ func TestFeishuCallbackSetsSessionAndRedirects(t *testing.T) {
 	}
 	if sessionCookie == nil || sessionCookie.Value == "" {
 		t.Fatal("missing idb_session cookie")
+	}
+	if !sessionCookie.HttpOnly || !sessionCookie.Secure || sessionCookie.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("session cookie security attributes = %#v", sessionCookie)
+	}
+	if sessionCookie.MaxAge <= 0 || sessionCookie.Expires.IsZero() {
+		t.Fatalf("session cookie lifetime attributes = %#v", sessionCookie)
 	}
 
 	// Verify the session cookie can be decoded.
@@ -906,6 +913,7 @@ func TestFeishuExchangeEndpoint(t *testing.T) {
 	body := `{"auth_code":"app-code-123","entity_id":"01HZZZZZZZ0000000000000001"}`
 	req := httptest.NewRequest(http.MethodPost, "/auth/feishu/exchange", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-Proto", "https")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -922,6 +930,19 @@ func TestFeishuExchangeEndpoint(t *testing.T) {
 	}
 	if resp["username"] != "zhangsan@example.test" {
 		t.Fatalf("username = %q", resp["username"])
+	}
+	var sessionCookie *http.Cookie
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "idb_session" {
+			sessionCookie = cookie
+			break
+		}
+	}
+	if sessionCookie == nil || !sessionCookie.HttpOnly || !sessionCookie.Secure || sessionCookie.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("session cookie security attributes = %#v", sessionCookie)
+	}
+	if sessionCookie.MaxAge <= 0 || sessionCookie.Expires.IsZero() {
+		t.Fatalf("session cookie lifetime attributes = %#v", sessionCookie)
 	}
 }
 

@@ -5,6 +5,8 @@ package sso
 import (
 	"context"
 	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +22,7 @@ import (
 
 var ErrUserNotEligibleForApplicationSSO = errors.New("user is not eligible for application sso")
 var ErrUserInactive = errors.New("user is not active")
+var ErrInvalidClient = errors.New("invalid client credentials")
 
 // SSOTokenLookup is the result of looking up an OAuth token by hash.
 // Mirrors the columns returned by the GetSSOTokenByHash query.
@@ -96,11 +99,13 @@ type AuthorizeDecision struct {
 }
 
 type TokenInput struct {
-	EntityID     string
-	ClientID     string
-	Code         string
-	RedirectURI  string
-	CodeVerifier string
+	EntityID             string
+	ClientID             string
+	ClientSecret         string
+	ClientSecretProvided bool
+	Code                 string
+	RedirectURI          string
+	CodeVerifier         string
 }
 
 type TokenResponse struct {
@@ -302,18 +307,16 @@ func (s *Service) ExchangeCode(ctx context.Context, input TokenInput) (TokenResp
 	if s.store == nil {
 		return TokenResponse{}, fmt.Errorf("sso store is required")
 	}
-	if input.EntityID == "" || input.ClientID == "" || input.Code == "" || input.RedirectURI == "" || input.CodeVerifier == "" {
-		return TokenResponse{}, fmt.Errorf("entity id, client id, code, redirect uri, and code verifier are required")
+	if input.ClientID == "" || input.Code == "" || input.RedirectURI == "" || input.CodeVerifier == "" {
+		return TokenResponse{}, fmt.Errorf("client id, code, redirect uri, and code verifier are required")
 	}
 
-	entityID, err := ulidValue(input.EntityID)
+	codeHash := HashToken(input.Code)
+	codeRecord, err := s.authorizationCodeForExchange(ctx, input.EntityID, codeHash)
 	if err != nil {
 		return TokenResponse{}, err
 	}
-	codeRecord, err := s.store.GetAuthorizationCode(ctx, generated.GetAuthorizationCodeParams{
-		EntityID: entityID,
-		CodeHash: HashToken(input.Code),
-	})
+	entityID, err := ulidValue(codeRecord.EntityID)
 	if err != nil {
 		return TokenResponse{}, err
 	}
@@ -336,11 +339,18 @@ func (s *Service) ExchangeCode(ctx context.Context, input TokenInput) (TokenResp
 		return TokenResponse{}, fmt.Errorf("code verifier does not match code challenge")
 	}
 
-	if _, err := s.store.MarkAuthorizationCodeUsed(ctx, generated.MarkAuthorizationCodeUsedParams{
-		EntityID: entityID,
-		CodeHash: HashToken(input.Code),
-	}); err != nil {
-		return TokenResponse{}, fmt.Errorf("authorization code has already been used or expired")
+	client, err := s.getActiveClient(ctx, entityID, input.ClientID)
+	if err != nil {
+		return TokenResponse{}, err
+	}
+	secretMatches := client.ClientSecretHash.Valid && constantTimeSecretEqual(client.ClientSecretHash.String, input.ClientSecret)
+	if client.SecretRequired && (!input.ClientSecretProvided || !secretMatches) {
+		return TokenResponse{}, ErrInvalidClient
+	}
+	// Clients predating the secret_required marker retain anonymous endpoint
+	// compatibility, but a secret they do provide must still authenticate.
+	if !client.SecretRequired && input.ClientSecretProvided && !secretMatches {
+		return TokenResponse{}, ErrInvalidClient
 	}
 
 	sessionID, err := RandomURLSafeToken(24)
@@ -348,10 +358,13 @@ func (s *Service) ExchangeCode(ctx context.Context, input TokenInput) (TokenResp
 		return TokenResponse{}, err
 	}
 	subject := TokenSubject{
-		EntityID:  input.EntityID,
+		EntityID:  entityID,
 		UserID:    ulidString(codeRecord.UserID),
 		ClientID:  input.ClientID,
 		SessionID: sessionID,
+	}
+	if codeRecord.Nonce.Valid {
+		subject.Nonce = codeRecord.Nonce.String
 	}
 
 	// Enrich subject with user claims and roles for token embedding
@@ -403,28 +416,17 @@ func (s *Service) ExchangeCode(ctx context.Context, input TokenInput) (TokenResp
 		return TokenResponse{}, err
 	}
 
-	for _, token := range []struct {
-		tokenType string
-		value     string
-		ttl       time.Duration
-	}{
-		{tokenType: "access", value: accessToken, ttl: s.accessTokenTTL},
-		{tokenType: "id", value: idToken, ttl: s.idTokenTTL},
-	} {
-		if _, err := s.store.CreateOAuthToken(ctx, generated.CreateOAuthTokenParams{
-			EntityID:  entityID,
-			UserID:    codeRecord.UserID,
-			ClientID:  input.ClientID,
-			TokenType: token.tokenType,
-			TokenHash: HashToken(token.value),
-			Scopes:    codeRecord.Scopes,
-			ExpiresAt: pgtype.Timestamptz{
-				Time:  now.Add(token.ttl),
-				Valid: true,
-			},
-		}); err != nil {
-			return TokenResponse{}, err
-		}
+	if _, err := s.store.FinalizeAuthorizationCodeExchange(ctx, generated.FinalizeAuthorizationCodeExchangeParams{
+		EntityID:             entityID,
+		CodeHash:             codeHash,
+		ClientSecretProvided: input.ClientSecretProvided,
+		ClientSecret:         pgtype.Text{String: input.ClientSecret, Valid: input.ClientSecretProvided},
+		AccessTokenHash:      HashToken(accessToken),
+		AccessTokenExpiresAt: pgtype.Timestamptz{Time: now.Add(s.accessTokenTTL), Valid: true},
+		IDTokenHash:          HashToken(idToken),
+		IDTokenExpiresAt:     pgtype.Timestamptz{Time: now.Add(s.idTokenTTL), Valid: true},
+	}); err != nil {
+		return TokenResponse{}, fmt.Errorf("authorization code has already been used, expired, or its client is disabled")
 	}
 
 	return TokenResponse{
@@ -436,17 +438,43 @@ func (s *Service) ExchangeCode(ctx context.Context, input TokenInput) (TokenResp
 	}, nil
 }
 
+func (s *Service) authorizationCodeForExchange(ctx context.Context, entityIDValue string, codeHash string) (generated.OauthAuthorizationCode, error) {
+	if entityIDValue == "" {
+		return s.store.GetAuthorizationCodeByHash(ctx, codeHash)
+	}
+	entityID, err := ulidValue(entityIDValue)
+	if err != nil {
+		return generated.OauthAuthorizationCode{}, err
+	}
+	return s.store.GetAuthorizationCode(ctx, generated.GetAuthorizationCodeParams{
+		EntityID: entityID,
+		CodeHash: codeHash,
+	})
+}
+
 // IntrospectToken looks up an OAuth token by its hash and validates it.
 // Returns the token record if found, not revoked, and not expired.
 func (s *Service) IntrospectToken(ctx context.Context, entityID, tokenHash string) (SSOTokenLookup, error) {
 	if s.tokenLookupStore == nil {
 		return SSOTokenLookup{}, fmt.Errorf("token introspection is not configured")
 	}
-	entityULID, err := ulidValue(entityID)
-	if err != nil {
-		return SSOTokenLookup{}, fmt.Errorf("invalid entity id: %w", err)
+	var (
+		token SSOTokenLookup
+		err   error
+	)
+	if entityID == "" {
+		globalStore, ok := s.tokenLookupStore.(GlobalTokenLookupStore)
+		if !ok {
+			return SSOTokenLookup{}, fmt.Errorf("global token introspection is not configured")
+		}
+		token, err = globalStore.LookupTokenGlobally(ctx, tokenHash)
+	} else {
+		entityULID, parseErr := ulidValue(entityID)
+		if parseErr != nil {
+			return SSOTokenLookup{}, fmt.Errorf("invalid entity id: %w", parseErr)
+		}
+		token, err = s.tokenLookupStore.LookupToken(ctx, entityULID, tokenHash)
 	}
-	token, err := s.tokenLookupStore.LookupToken(ctx, entityULID, tokenHash)
 	if err != nil {
 		return SSOTokenLookup{}, err
 	}
@@ -463,16 +491,32 @@ func (s *Service) IntrospectToken(ctx context.Context, entityID, tokenHash strin
 // return an error if the token is not found — the caller should always
 // respond with 200 OK to the client.
 func (s *Service) RevokeToken(ctx context.Context, entityID, tokenHash string) error {
+	s.revokeTokenAndResolveEntity(ctx, entityID, tokenHash)
+	return nil
+}
+
+func (s *Service) revokeTokenAndResolveEntity(ctx context.Context, entityID, tokenHash string) string {
 	if s.tokenLookupStore == nil {
-		return nil
+		return ""
+	}
+	if entityID == "" {
+		globalStore, ok := s.tokenLookupStore.(GlobalTokenLookupStore)
+		if !ok {
+			return ""
+		}
+		resolvedEntityID, err := globalStore.MarkTokenRevokedGlobally(ctx, tokenHash)
+		if err != nil {
+			return ""
+		}
+		return resolvedEntityID
 	}
 	entityULID, err := ulidValue(entityID)
 	if err != nil {
-		return nil
+		return ""
 	}
 	// Ignore errors — RFC 7009 requires 200 OK even for invalid tokens.
 	_ = s.tokenLookupStore.MarkTokenRevoked(ctx, entityULID, tokenHash)
-	return nil
+	return entityULID
 }
 
 // GetUserInfo retrieves user fields for OIDC userinfo claims.
@@ -524,6 +568,23 @@ func (s *Service) getActiveClient(ctx context.Context, entityIDValue string, cli
 	return client, nil
 }
 
+func (s *Service) canRedirectAuthorizationError(ctx context.Context, entityIDValue, clientID, redirectURI string) bool {
+	if s.store == nil || entityIDValue == "" || clientID == "" || redirectURI == "" {
+		return false
+	}
+	client, err := s.getActiveClient(ctx, entityIDValue, clientID)
+	if err != nil {
+		return false
+	}
+	return containsString(client.RedirectUris, redirectURI)
+}
+
+func constantTimeSecretEqual(expected, provided string) bool {
+	expectedDigest := sha256.Sum256([]byte(expected))
+	providedDigest := sha256.Sum256([]byte(provided))
+	return subtle.ConstantTimeCompare(expectedDigest[:], providedDigest[:]) == 1
+}
+
 func containsString(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {
@@ -540,7 +601,10 @@ func effectiveAuthorizeScopes(requested []string, allowed []string) ([]string, e
 	if len(requested) > 0 && !isSubset(requested, allowed) {
 		return nil, fmt.Errorf("requested scope is not allowed")
 	}
-	return uniqueStrings(allowed), nil
+	if len(requested) == 0 {
+		return uniqueStrings(allowed), nil
+	}
+	return uniqueStrings(requested), nil
 }
 
 func uniqueStrings(values []string) []string {

@@ -75,6 +75,42 @@ func (q *Queries) GetIdentitySourceByID(ctx context.Context, arg GetIdentitySour
 	return i, err
 }
 
+const getIdentitySourceConfigByID = `-- name: GetIdentitySourceConfigByID :one
+SELECT id,
+       entity_id,
+       type,
+       status,
+       COALESCE(config_encrypted, '{}'::bytea) AS config
+FROM identity_sources
+WHERE entity_id = $1 AND id = $2
+`
+
+type GetIdentitySourceConfigByIDParams struct {
+	EntityID string `json:"entity_id"`
+	ID       string `json:"id"`
+}
+
+type GetIdentitySourceConfigByIDRow struct {
+	ID       string `json:"id"`
+	EntityID string `json:"entity_id"`
+	Type     string `json:"type"`
+	Status   string `json:"status"`
+	Config   []byte `json:"config"`
+}
+
+func (q *Queries) GetIdentitySourceConfigByID(ctx context.Context, arg GetIdentitySourceConfigByIDParams) (GetIdentitySourceConfigByIDRow, error) {
+	row := q.db.QueryRow(ctx, getIdentitySourceConfigByID, arg.EntityID, arg.ID)
+	var i GetIdentitySourceConfigByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.Type,
+		&i.Status,
+		&i.Config,
+	)
+	return i, err
+}
+
 const listIdentitySources = `-- name: ListIdentitySources :many
 
 SELECT id, entity_id, type, name, status, sync_enabled, created_at

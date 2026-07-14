@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -33,6 +34,7 @@ type Config struct {
 	FeishuAppSecret     string
 	FeishuBaseURL       string
 	FeishuRedirectURI   string
+	TrustedProxyCIDRs   []netip.Prefix
 }
 
 func Load() (Config, error) {
@@ -60,6 +62,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	trustedProxyCIDRs, err := getCIDRs("IDB_TRUSTED_PROXY_CIDRS")
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg := Config{
 		HTTPAddr:            getEnv("IDB_HTTP_ADDR", ":8080"),
@@ -81,6 +87,7 @@ func Load() (Config, error) {
 		FeishuAppSecret:     os.Getenv("IDB_FEISHU_APP_SECRET"),
 		FeishuBaseURL:       getEnv("IDB_FEISHU_BASE_URL", "https://open.feishu.cn"),
 		FeishuRedirectURI:   getEnv("IDB_FEISHU_REDIRECT_URI", "http://localhost:8080/api/auth/feishu/callback"),
+		TrustedProxyCIDRs:   trustedProxyCIDRs,
 	}
 
 	if cfg.DefaultLocale != "en-US" && cfg.DefaultLocale != "zh-CN" {
@@ -111,6 +118,22 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func getCIDRs(key string) ([]netip.Prefix, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return nil, nil
+	}
+	prefixes := make([]netip.Prefix, 0, strings.Count(value, ",")+1)
+	for _, item := range strings.Split(value, ",") {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(item))
+		if err != nil {
+			return nil, fmt.Errorf("%s contains invalid CIDR %q: %w", key, strings.TrimSpace(item), err)
+		}
+		prefixes = append(prefixes, prefix.Masked())
+	}
+	return prefixes, nil
 }
 
 func getEnv(key string, fallback string) string {

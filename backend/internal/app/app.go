@@ -250,7 +250,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 			ProviderFactory: func(ctx context.Context, entityID, sourceID, provider string) (idp.DirectoryProvider, error) {
 				switch strings.TrimSpace(provider) {
 				case "", "feishu":
-					resolvedCfg, err := providerService.ResolveFeishuConfig(ctx, entityID)
+					resolvedCfg, err := providerService.ResolveFeishuSourceConfig(ctx, entityID, sourceID)
 					if err != nil {
 						return nil, err
 					}
@@ -273,6 +273,18 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		}
 		syncService.SetTxStarter(pool)
 		syncHandler := adminapi.NewHandler(syncService, nil)
+		syncHandler.SetLogger(logger)
+		syncHandler.SetOrganizationTreeCacheInvalidator(organizationTreeCache)
+		syncHandler.SetFeishuWebhookSecurityResolver(func(ctx context.Context, entityID, sourceID string) (adminapi.FeishuWebhookSecurityConfig, error) {
+			resolvedCfg, err := providerService.ResolveFeishuSourceConfig(ctx, entityID, sourceID)
+			if err != nil {
+				return adminapi.FeishuWebhookSecurityConfig{}, err
+			}
+			return adminapi.FeishuWebhookSecurityConfig{
+				VerificationToken: resolvedCfg.VerificationToken,
+				EncryptKey:        resolvedCfg.EncryptKey,
+			}, nil
+		})
 		routerOptions = append(routerOptions, syncHandler.RegisterRoutes)
 
 		// Create background worker for sync job processing
@@ -280,6 +292,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		syncRunner.SetOrganizationTreeCacheInvalidator(organizationTreeCache)
 		cleanupRunner := worker.NewCleanupRunner(queries, time.Hour, logger)
 		bgWorker = worker.New(worker.Config{}, logger, syncRunner, auditService, cleanupRunner)
+		bgWorker.SetWebhookRecoveryStore(queries)
 
 		feishuLoginHandler := auth.NewFeishuLoginHandler(feishuLoginService, providerService, cfg.FeishuAppID, cfg.FeishuRedirectURI, auditService)
 		feishuLoginHandler.SetWebBaseURL(cfg.WebBaseURL)
@@ -293,7 +306,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		logger: logger,
 		server: &http.Server{
 			Addr:              cfg.HTTPAddr,
-			Handler:           httpserver.NewRouter(routerOptions...),
+			Handler:           httpserver.NewRouterWithTrustedProxies(cfg.TrustedProxyCIDRs, routerOptions...),
 			ReadHeaderTimeout: 5 * time.Second,
 		},
 		worker: bgWorker,

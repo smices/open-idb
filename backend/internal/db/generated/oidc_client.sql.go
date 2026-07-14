@@ -39,8 +39,44 @@ func (q *Queries) DeleteOIDCClient(ctx context.Context, arg DeleteOIDCClientPara
 	return err
 }
 
+const getOIDCClientByApplicationID = `-- name: GetOIDCClientByApplicationID :one
+SELECT id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at, secret_required
+FROM oidc_clients
+WHERE entity_id = $1 AND application_id = $2
+`
+
+type GetOIDCClientByApplicationIDParams struct {
+	EntityID      string `json:"entity_id"`
+	ApplicationID string `json:"application_id"`
+}
+
+func (q *Queries) GetOIDCClientByApplicationID(ctx context.Context, arg GetOIDCClientByApplicationIDParams) (OidcClient, error) {
+	row := q.db.QueryRow(ctx, getOIDCClientByApplicationID, arg.EntityID, arg.ApplicationID)
+	var i OidcClient
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.ApplicationID,
+		&i.ClientID,
+		&i.ClientSecretHash,
+		&i.RedirectUris,
+		&i.AllowedScopes,
+		&i.GrantTypes,
+		&i.ResponseTypes,
+		&i.PkceRequired,
+		&i.WorkplaceProvider,
+		&i.WorkplaceAppID,
+		&i.WorkplaceAppSecret,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SecretRequired,
+	)
+	return i, err
+}
+
 const getOIDCClientByID = `-- name: GetOIDCClientByID :one
-SELECT id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at
+SELECT id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at, secret_required
 FROM oidc_clients
 WHERE entity_id = $1 AND id = $2
 `
@@ -70,13 +106,14 @@ func (q *Queries) GetOIDCClientByID(ctx context.Context, arg GetOIDCClientByIDPa
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SecretRequired,
 	)
 	return i, err
 }
 
 const listOIDCClients = `-- name: ListOIDCClients :many
 
-SELECT id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at
+SELECT id, entity_id, application_id, client_id, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, secret_required, status, created_at, updated_at
 FROM oidc_clients
 WHERE entity_id = $1
 ORDER BY created_at DESC
@@ -89,22 +126,39 @@ type ListOIDCClientsParams struct {
 	Offset   int32  `json:"offset"`
 }
 
+type ListOIDCClientsRow struct {
+	ID                string             `json:"id"`
+	EntityID          string             `json:"entity_id"`
+	ApplicationID     string             `json:"application_id"`
+	ClientID          string             `json:"client_id"`
+	RedirectUris      []string           `json:"redirect_uris"`
+	AllowedScopes     []string           `json:"allowed_scopes"`
+	GrantTypes        []string           `json:"grant_types"`
+	ResponseTypes     []string           `json:"response_types"`
+	PkceRequired      bool               `json:"pkce_required"`
+	WorkplaceProvider string             `json:"workplace_provider"`
+	WorkplaceAppID    string             `json:"workplace_app_id"`
+	SecretRequired    bool               `json:"secret_required"`
+	Status            string             `json:"status"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 // SPDX-License-Identifier: MIT
-func (q *Queries) ListOIDCClients(ctx context.Context, arg ListOIDCClientsParams) ([]OidcClient, error) {
+func (q *Queries) ListOIDCClients(ctx context.Context, arg ListOIDCClientsParams) ([]ListOIDCClientsRow, error) {
 	rows, err := q.db.Query(ctx, listOIDCClients, arg.EntityID, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []OidcClient{}
+	items := []ListOIDCClientsRow{}
 	for rows.Next() {
-		var i OidcClient
+		var i ListOIDCClientsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.EntityID,
 			&i.ApplicationID,
 			&i.ClientID,
-			&i.ClientSecretHash,
 			&i.RedirectUris,
 			&i.AllowedScopes,
 			&i.GrantTypes,
@@ -112,7 +166,7 @@ func (q *Queries) ListOIDCClients(ctx context.Context, arg ListOIDCClientsParams
 			&i.PkceRequired,
 			&i.WorkplaceProvider,
 			&i.WorkplaceAppID,
-			&i.WorkplaceAppSecret,
+			&i.SecretRequired,
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -131,7 +185,7 @@ const rotateOIDCClientSecret = `-- name: RotateOIDCClientSecret :one
 UPDATE oidc_clients
 SET client_secret_hash = $3, updated_at = now()
 WHERE entity_id = $1 AND id = $2
-RETURNING id, entity_id, application_id, client_id, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at
+RETURNING id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at, secret_required
 `
 
 type RotateOIDCClientSecretParams struct {
@@ -140,32 +194,15 @@ type RotateOIDCClientSecretParams struct {
 	ClientSecretHash pgtype.Text `json:"client_secret_hash"`
 }
 
-type RotateOIDCClientSecretRow struct {
-	ID                 string             `json:"id"`
-	EntityID           string             `json:"entity_id"`
-	ApplicationID      string             `json:"application_id"`
-	ClientID           string             `json:"client_id"`
-	RedirectUris       []string           `json:"redirect_uris"`
-	AllowedScopes      []string           `json:"allowed_scopes"`
-	GrantTypes         []string           `json:"grant_types"`
-	ResponseTypes      []string           `json:"response_types"`
-	PkceRequired       bool               `json:"pkce_required"`
-	WorkplaceProvider  string             `json:"workplace_provider"`
-	WorkplaceAppID     string             `json:"workplace_app_id"`
-	WorkplaceAppSecret string             `json:"workplace_app_secret"`
-	Status             string             `json:"status"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-}
-
-func (q *Queries) RotateOIDCClientSecret(ctx context.Context, arg RotateOIDCClientSecretParams) (RotateOIDCClientSecretRow, error) {
+func (q *Queries) RotateOIDCClientSecret(ctx context.Context, arg RotateOIDCClientSecretParams) (OidcClient, error) {
 	row := q.db.QueryRow(ctx, rotateOIDCClientSecret, arg.EntityID, arg.ID, arg.ClientSecretHash)
-	var i RotateOIDCClientSecretRow
+	var i OidcClient
 	err := row.Scan(
 		&i.ID,
 		&i.EntityID,
 		&i.ApplicationID,
 		&i.ClientID,
+		&i.ClientSecretHash,
 		&i.RedirectUris,
 		&i.AllowedScopes,
 		&i.GrantTypes,
@@ -177,6 +214,7 @@ func (q *Queries) RotateOIDCClientSecret(ctx context.Context, arg RotateOIDCClie
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SecretRequired,
 	)
 	return i, err
 }
@@ -194,7 +232,7 @@ SET redirect_uris = COALESCE($3, redirect_uris),
     status = COALESCE($11, status),
     updated_at = now()
 WHERE entity_id = $1 AND id = $2
-RETURNING id, entity_id, application_id, client_id, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at
+RETURNING id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at, secret_required
 `
 
 type UpdateOIDCClientParams struct {
@@ -211,25 +249,7 @@ type UpdateOIDCClientParams struct {
 	Status             pgtype.Text `json:"status"`
 }
 
-type UpdateOIDCClientRow struct {
-	ID                 string             `json:"id"`
-	EntityID           string             `json:"entity_id"`
-	ApplicationID      string             `json:"application_id"`
-	ClientID           string             `json:"client_id"`
-	RedirectUris       []string           `json:"redirect_uris"`
-	AllowedScopes      []string           `json:"allowed_scopes"`
-	GrantTypes         []string           `json:"grant_types"`
-	ResponseTypes      []string           `json:"response_types"`
-	PkceRequired       bool               `json:"pkce_required"`
-	WorkplaceProvider  string             `json:"workplace_provider"`
-	WorkplaceAppID     string             `json:"workplace_app_id"`
-	WorkplaceAppSecret string             `json:"workplace_app_secret"`
-	Status             string             `json:"status"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-}
-
-func (q *Queries) UpdateOIDCClient(ctx context.Context, arg UpdateOIDCClientParams) (UpdateOIDCClientRow, error) {
+func (q *Queries) UpdateOIDCClient(ctx context.Context, arg UpdateOIDCClientParams) (OidcClient, error) {
 	row := q.db.QueryRow(ctx, updateOIDCClient,
 		arg.EntityID,
 		arg.ID,
@@ -243,12 +263,13 @@ func (q *Queries) UpdateOIDCClient(ctx context.Context, arg UpdateOIDCClientPara
 		arg.WorkplaceAppSecret,
 		arg.Status,
 	)
-	var i UpdateOIDCClientRow
+	var i OidcClient
 	err := row.Scan(
 		&i.ID,
 		&i.EntityID,
 		&i.ApplicationID,
 		&i.ClientID,
+		&i.ClientSecretHash,
 		&i.RedirectUris,
 		&i.AllowedScopes,
 		&i.GrantTypes,
@@ -260,6 +281,7 @@ func (q *Queries) UpdateOIDCClient(ctx context.Context, arg UpdateOIDCClientPara
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SecretRequired,
 	)
 	return i, err
 }

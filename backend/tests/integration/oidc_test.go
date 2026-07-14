@@ -11,10 +11,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/smices/open-idb/internal/auth"
@@ -27,32 +29,33 @@ import (
 )
 
 func TestOIDCAuthorizationCodeFlow(t *testing.T) {
-	testcontainers.SkipIfProviderIsNotHealthy(t)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	container, err := postgres.Run(ctx,
-		"postgres:16-alpine",
-		postgres.WithDatabase("idbridge"),
-		postgres.WithUsername("postgres"),
-		postgres.WithPassword("postgres"),
-		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
-	)
-	if err != nil {
-		t.Fatalf("start postgres container: %v", err)
-	}
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cleanupCancel()
-		if err := container.Terminate(cleanupCtx); err != nil {
-			t.Errorf("terminate postgres container: %v", err)
+	conn := os.Getenv("OPEN_IDB_TEST_DATABASE_URL")
+	if conn == "" {
+		testcontainers.SkipIfProviderIsNotHealthy(t)
+		container, err := postgres.Run(ctx,
+			"postgres:16-alpine",
+			postgres.WithDatabase("idbridge"),
+			postgres.WithUsername("postgres"),
+			postgres.WithPassword("postgres"),
+			testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
+		)
+		if err != nil {
+			t.Fatalf("start postgres container: %v", err)
 		}
-	})
-
-	conn, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("connection string: %v", err)
+		t.Cleanup(func() {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cleanupCancel()
+			if err := container.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate postgres container: %v", err)
+			}
+		})
+		conn, err = container.ConnectionString(ctx, "sslmode=disable")
+		if err != nil {
+			t.Fatalf("connection string: %v", err)
+		}
 	}
 	applyMigrations(ctx, t, conn)
 
@@ -120,8 +123,8 @@ func TestOIDCAuthorizationCodeFlow(t *testing.T) {
 
 	tokenBody := url.Values{}
 	tokenBody.Set("grant_type", "authorization_code")
-	tokenBody.Set("entity_id", pgULIDString(entity.ID))
 	tokenBody.Set("client_id", clientID)
+	tokenBody.Set("client_secret", "secret-1")
 	tokenBody.Set("code", code)
 	tokenBody.Set("redirect_uri", redirectURI)
 	tokenBody.Set("code_verifier", verifier)
@@ -133,6 +136,16 @@ func TestOIDCAuthorizationCodeFlow(t *testing.T) {
 	if tokenResponse["expires_in"].(float64) <= 0 {
 		t.Fatalf("expires_in = %#v, want positive", tokenResponse["expires_in"])
 	}
+	if tokenResponse["scope"] != "openid email" {
+		t.Fatalf("scope = %#v, want requested scope only", tokenResponse["scope"])
+	}
+	parsedIDToken, _, err := jwt.NewParser().ParseUnverified(tokenResponse["id_token"].(string), jwt.MapClaims{})
+	if err != nil {
+		t.Fatalf("parse id token: %v", err)
+	}
+	if parsedIDToken.Claims.(jwt.MapClaims)["nonce"] != "nonce-1" {
+		t.Fatalf("nonce = %#v, want nonce-1", parsedIDToken.Claims.(jwt.MapClaims)["nonce"])
+	}
 	for _, key := range []string{"access_token", "id_token"} {
 		token, ok := tokenResponse[key].(string)
 		if !ok || strings.Count(token, ".") != 2 {
@@ -143,6 +156,43 @@ func TestOIDCAuthorizationCodeFlow(t *testing.T) {
 	reuseResponse := postForm(t, server.URL+"/oauth2/token", tokenBody, http.StatusBadRequest)
 	if reuseResponse["error"] != "invalid_grant" {
 		t.Fatalf("reuse error = %#v, want invalid_grant", reuseResponse)
+	}
+
+	// Simulate a client row that existed before 000008. Migrated clients keep
+	// the legacy no-secret exchange behavior until explicitly recreated.
+	if _, err := pool.Exec(ctx, `UPDATE oidc_clients SET secret_required = false WHERE entity_id = $1 AND client_id = $2`, entity.ID, clientID); err != nil {
+		t.Fatalf("mark client as migrated legacy client: %v", err)
+	}
+	legacyCode := authorizeCode(ctx, t, server, entity.ID, user.ID, clientID, redirectURI, challenge)
+	legacyTokenBody := url.Values{}
+	legacyTokenBody.Set("grant_type", "authorization_code")
+	legacyTokenBody.Set("client_id", clientID)
+	legacyTokenBody.Set("code", legacyCode)
+	legacyTokenBody.Set("redirect_uri", redirectURI)
+	legacyTokenBody.Set("code_verifier", verifier)
+	postForm(t, server.URL+"/oauth2/token", legacyTokenBody, http.StatusOK)
+
+	disabledCode := authorizeCode(ctx, t, server, entity.ID, user.ID, clientID, redirectURI, challenge)
+	if _, err := pool.Exec(ctx, `UPDATE applications SET status = 'disabled' WHERE entity_id = $1 AND id = $2`, entity.ID, app.ID); err != nil {
+		t.Fatalf("disable application: %v", err)
+	}
+	disabledTokenBody := url.Values{}
+	disabledTokenBody.Set("grant_type", "authorization_code")
+	disabledTokenBody.Set("client_id", clientID)
+	disabledTokenBody.Set("client_secret", "secret-1")
+	disabledTokenBody.Set("code", disabledCode)
+	disabledTokenBody.Set("redirect_uri", redirectURI)
+	disabledTokenBody.Set("code_verifier", verifier)
+	disabledResponse := postForm(t, server.URL+"/oauth2/token", disabledTokenBody, http.StatusBadRequest)
+	if disabledResponse["error"] != "invalid_grant" {
+		t.Fatalf("disabled application error = %#v, want invalid_grant", disabledResponse)
+	}
+	var codeWasNotConsumed bool
+	if err := pool.QueryRow(ctx, `SELECT used_at IS NULL FROM oauth_authorization_codes WHERE entity_id = $1 AND code_hash = $2`, entity.ID, sso.HashToken(disabledCode)).Scan(&codeWasNotConsumed); err != nil {
+		t.Fatalf("read disabled application authorization code: %v", err)
+	}
+	if !codeWasNotConsumed {
+		t.Fatal("disabled application authorization code was consumed")
 	}
 }
 
@@ -245,7 +295,7 @@ func createOIDCTestClient(ctx context.Context, t *testing.T, queries *generated.
 		EntityID:           entityID,
 		ApplicationID:      app.ID,
 		ClientID:           clientID,
-		ClientSecretHash:   pgtype.Text{},
+		ClientSecretHash:   pgtype.Text{String: "secret-1", Valid: true},
 		RedirectUris:       []string{redirectURI},
 		AllowedScopes:      []string{"openid", "profile", "email"},
 		GrantTypes:         []string{"authorization_code"},

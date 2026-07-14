@@ -5,6 +5,7 @@ package adminapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -27,6 +28,41 @@ func isValidApplicationType(appType string) bool {
 type applicationEntityResolver interface {
 	ResolveOrganizationTreeEntityID(ctx context.Context, candidate string) (string, error)
 }
+
+// ApplicationWriteInput is the additive request contract used by the complete
+// application editor. Config is type-specific; OIDC settings continue to use
+// the existing oidc_clients table and API.
+type ApplicationWriteInput struct {
+	Name       string                      `json:"name"`
+	Type       string                      `json:"type"`
+	Status     string                      `json:"status"`
+	Config     json.RawMessage             `json:"config"`
+	OIDCClient *ApplicationOIDCClientInput `json:"oidc_client"`
+}
+
+type ApplicationOIDCClientInput struct {
+	ClientID           string   `json:"client_id"`
+	RedirectURIs       []string `json:"redirect_uris"`
+	AllowedScopes      []string `json:"allowed_scopes"`
+	GrantTypes         []string `json:"grant_types"`
+	ResponseTypes      []string `json:"response_types"`
+	PKCERequired       *bool    `json:"pkce_required"`
+	WorkplaceProvider  *string  `json:"workplace_provider"`
+	WorkplaceAppID     *string  `json:"workplace_app_id"`
+	WorkplaceAppSecret *string  `json:"workplace_app_secret"`
+}
+
+type applicationDetailService interface {
+	GetApplicationDetail(ctx context.Context, entityID, id string) (ApplicationDetailResponse, error)
+	CreateApplicationDetail(ctx context.Context, entityID string, input ApplicationWriteInput) (ApplicationDetailResponse, error)
+	UpdateApplicationDetail(ctx context.Context, entityID, id string, input ApplicationWriteInput) (ApplicationDetailResponse, error)
+}
+
+type applicationRequestError struct {
+	message string
+}
+
+func (e *applicationRequestError) Error() string { return e.message }
 
 func NewApplicationHandler(service userService) ApplicationHandler {
 	return ApplicationHandler{service: service}
@@ -95,11 +131,17 @@ func (h ApplicationHandler) getApplication(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid_application_id", err.Error())
 		return
 	}
-	app, err := h.service.GetApplicationByID(r.Context(), entityID, id)
+	var app interface{}
+	if service, ok := h.service.(applicationDetailService); ok {
+		app, err = service.GetApplicationDetail(r.Context(), entityID, id)
+	} else {
+		app, err = h.service.GetApplicationByID(r.Context(), entityID, id)
+	}
 	if err != nil {
 		writeError(w, http.StatusNotFound, "application_not_found", err.Error())
 		return
 	}
+	setApplicationNoStoreHeaders(w)
 	writeJSON(w, http.StatusOK, app)
 }
 
@@ -113,10 +155,7 @@ func (h ApplicationHandler) createApplication(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "invalid_entity_id", err.Error())
 		return
 	}
-	var body struct {
-		Name string `json:"name"`
-		Type string `json:"type"`
-	}
+	var body ApplicationWriteInput
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json body")
 		return
@@ -129,11 +168,22 @@ func (h ApplicationHandler) createApplication(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "invalid_application_type", "type must be one of oidc_client, api_client, or internal_app")
 		return
 	}
-	app, err := h.service.CreateApplication(r.Context(), entityID, body.Name, body.Type)
+	var app interface{}
+	if service, ok := h.service.(applicationDetailService); ok {
+		app, err = service.CreateApplicationDetail(r.Context(), entityID, body)
+	} else {
+		app, err = h.service.CreateApplication(r.Context(), entityID, body.Name, body.Type)
+	}
 	if err != nil {
+		var requestErr *applicationRequestError
+		if errors.As(err, &requestErr) {
+			writeError(w, http.StatusBadRequest, "invalid_request", requestErr.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "application_create_failed", err.Error())
 		return
 	}
+	setApplicationNoStoreHeaders(w)
 	writeJSON(w, http.StatusCreated, app)
 }
 
@@ -152,23 +202,36 @@ func (h ApplicationHandler) updateApplication(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "invalid_application_id", err.Error())
 		return
 	}
-	var body struct {
-		Name   string `json:"name"`
-		Status string `json:"status"`
-	}
+	var body ApplicationWriteInput
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json body")
 		return
 	}
-	app, err := h.service.UpdateApplication(r.Context(), entityID, id,
-		optionalText(body.Name),
-		optionalText(body.Status),
-	)
+	var app interface{}
+	if service, ok := h.service.(applicationDetailService); ok {
+		app, err = service.UpdateApplicationDetail(r.Context(), entityID, id, body)
+	} else {
+		app, err = h.service.UpdateApplication(r.Context(), entityID, id,
+			optionalText(body.Name),
+			optionalText(body.Status),
+		)
+	}
 	if err != nil {
+		var requestErr *applicationRequestError
+		if errors.As(err, &requestErr) {
+			writeError(w, http.StatusBadRequest, "invalid_request", requestErr.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "application_update_failed", err.Error())
 		return
 	}
+	setApplicationNoStoreHeaders(w)
 	writeJSON(w, http.StatusOK, app)
+}
+
+func setApplicationNoStoreHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 }
 
 func (h ApplicationHandler) deleteApplication(w http.ResponseWriter, r *http.Request) {

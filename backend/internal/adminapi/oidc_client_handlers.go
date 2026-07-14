@@ -26,6 +26,7 @@ type OIDCClientResponse struct {
 	GrantTypes         []string `json:"grant_types"`
 	ResponseTypes      []string `json:"response_types"`
 	PKCERequired       bool     `json:"pkce_required"`
+	SecretRequired     bool     `json:"secret_required"`
 	WorkplaceProvider  string   `json:"workplace_provider"`
 	WorkplaceAppID     string   `json:"workplace_app_id"`
 	WorkplaceAppSecret string   `json:"workplace_app_secret,omitempty"`
@@ -113,6 +114,7 @@ func (h OIDCClientHandler) getOIDCClient(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "oidc_client_not_found", err.Error())
 		return
 	}
+	setApplicationNoStoreHeaders(w)
 	writeJSON(w, http.StatusOK, client)
 }
 
@@ -168,6 +170,11 @@ func (h OIDCClientHandler) createOIDCClient(w http.ResponseWriter, r *http.Reque
 	if len(body.ResponseTypes) == 0 {
 		body.ResponseTypes = []string{"code"}
 	}
+	body.RedirectURIs, err = normalizeOIDCRedirectURIs(body.RedirectURIs, true)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_redirect_uris", err.Error())
+		return
+	}
 	body.PKCERequired = true
 	workplaceProvider, workplaceAppID, workplaceAppSecret, err := normalizeWorkplaceConfig(body.WorkplaceProvider, body.WorkplaceAppID, body.WorkplaceAppSecret)
 	if err != nil {
@@ -193,6 +200,7 @@ func (h OIDCClientHandler) createOIDCClient(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	setApplicationNoStoreHeaders(w)
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"client":        client,
 		"client_secret": secret,
@@ -220,24 +228,43 @@ func (h OIDCClientHandler) updateOIDCClient(w http.ResponseWriter, r *http.Reque
 		GrantTypes         []string `json:"grant_types"`
 		ResponseTypes      []string `json:"response_types"`
 		PKCERequired       *bool    `json:"pkce_required"`
-		WorkplaceProvider  string   `json:"workplace_provider"`
-		WorkplaceAppID     string   `json:"workplace_app_id"`
-		WorkplaceAppSecret string   `json:"workplace_app_secret"`
+		WorkplaceProvider  *string  `json:"workplace_provider"`
+		WorkplaceAppID     *string  `json:"workplace_app_id"`
+		WorkplaceAppSecret *string  `json:"workplace_app_secret"`
 		Status             string   `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json body")
 		return
 	}
+	if body.RedirectURIs != nil {
+		body.RedirectURIs, err = normalizeOIDCRedirectURIs(body.RedirectURIs, false)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_redirect_uris", err.Error())
+			return
+		}
+	}
 
 	var pkceRequired pgtype.Bool
 	if body.PKCERequired != nil {
 		pkceRequired = pgtype.Bool{Valid: true, Bool: *body.PKCERequired}
 	}
-	workplaceProvider, workplaceAppID, workplaceAppSecret, err := normalizeWorkplaceConfig(body.WorkplaceProvider, body.WorkplaceAppID, body.WorkplaceAppSecret)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_workplace_config", err.Error())
-		return
+	var workplaceProvider, workplaceAppID, workplaceAppSecret pgtype.Text
+	if body.WorkplaceProvider != nil || body.WorkplaceAppID != nil || body.WorkplaceAppSecret != nil {
+		before, err := h.service.GetOIDCClientByID(r.Context(), entityID, id)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "oidc_client_not_found", err.Error())
+			return
+		}
+		workplaceProvider, workplaceAppID, workplaceAppSecret, err = normalizeApplicationWorkplaceUpdate(before, ApplicationOIDCClientInput{
+			WorkplaceProvider:  body.WorkplaceProvider,
+			WorkplaceAppID:     body.WorkplaceAppID,
+			WorkplaceAppSecret: body.WorkplaceAppSecret,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_workplace_config", err.Error())
+			return
+		}
 	}
 
 	client, err := h.service.UpdateOIDCClient(r.Context(), generated.UpdateOIDCClientParams{
@@ -248,15 +275,16 @@ func (h OIDCClientHandler) updateOIDCClient(w http.ResponseWriter, r *http.Reque
 		GrantTypes:         body.GrantTypes,
 		ResponseTypes:      body.ResponseTypes,
 		PkceRequired:       pkceRequired,
-		WorkplaceProvider:  pgtype.Text{String: workplaceProvider, Valid: true},
-		WorkplaceAppID:     pgtype.Text{String: workplaceAppID, Valid: true},
-		WorkplaceAppSecret: pgtype.Text{String: workplaceAppSecret, Valid: true},
+		WorkplaceProvider:  workplaceProvider,
+		WorkplaceAppID:     workplaceAppID,
+		WorkplaceAppSecret: workplaceAppSecret,
 		Status:             optionalText(body.Status),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "oidc_client_update_failed", err.Error())
 		return
 	}
+	setApplicationNoStoreHeaders(w)
 	writeJSON(w, http.StatusOK, client)
 }
 
@@ -331,6 +359,7 @@ func (h OIDCClientHandler) rotateSecret(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "oidc_client_rotate_secret_failed", err.Error())
 		return
 	}
+	setApplicationNoStoreHeaders(w)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"client":        client,
 		"client_secret": secret,
@@ -350,11 +379,32 @@ func oidcClientFromRow(row generated.OidcClient) OIDCClientResponse {
 		GrantTypes:         row.GrantTypes,
 		ResponseTypes:      row.ResponseTypes,
 		PKCERequired:       row.PkceRequired,
+		SecretRequired:     row.SecretRequired,
 		WorkplaceProvider:  row.WorkplaceProvider,
 		WorkplaceAppID:     row.WorkplaceAppID,
 		WorkplaceAppSecret: row.WorkplaceAppSecret,
 		Status:             row.Status,
 		CreatedAt:          row.CreatedAt.Time.Format(time.RFC3339),
 		UpdatedAt:          row.UpdatedAt.Time.Format(time.RFC3339),
+	}
+}
+
+func oidcClientFromListRow(row generated.ListOIDCClientsRow) OIDCClientResponse {
+	return OIDCClientResponse{
+		ID:                ulidString(row.ID),
+		EntityID:          ulidString(row.EntityID),
+		ApplicationID:     ulidString(row.ApplicationID),
+		ClientID:          row.ClientID,
+		RedirectURIs:      row.RedirectUris,
+		AllowedScopes:     row.AllowedScopes,
+		GrantTypes:        row.GrantTypes,
+		ResponseTypes:     row.ResponseTypes,
+		PKCERequired:      row.PkceRequired,
+		SecretRequired:    row.SecretRequired,
+		WorkplaceProvider: row.WorkplaceProvider,
+		WorkplaceAppID:    row.WorkplaceAppID,
+		Status:            row.Status,
+		CreatedAt:         row.CreatedAt.Time.Format(time.RFC3339),
+		UpdatedAt:         row.UpdatedAt.Time.Format(time.RFC3339),
 	}
 }

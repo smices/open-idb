@@ -30,6 +30,7 @@ import {
   Gauge,
   GitBranch,
   KeyRound,
+  Mail,
   Network,
   RefreshCw,
   Settings,
@@ -275,12 +276,22 @@ function IdBridgeApp({ themeState }) {
     }
   }, [branding, t]);
 
-  const handleLogout = () => {
-    document.cookie = 'idb_session=; Max-Age=0; Path=/;';
-    document.cookie = 'idb_admin_session=; Max-Age=0; Path=/;';
-    setUser(null);
-    message.success(t('layout.logout'));
-    navigate(kind === 'admin' ? '/admin/login' : '/login');
+  const handleLogout = async () => {
+    const endpoint = kind === 'admin' ? '/sapi/logout' : '/api/auth/logout';
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (!response.ok && response.status !== 401 && response.status !== 404) {
+        throw new Error(`logout failed with status ${response.status}`);
+      }
+      setUser(null);
+      message.success(t('layout.logout'));
+      navigate(kind === 'admin' ? '/admin/login' : '/login');
+    } catch {
+      message.error(t('layout.logoutFailed'));
+    }
   };
 
   if (kind === 'public') {
@@ -522,6 +533,13 @@ function LoginPage({ branding }) {
             <div>
               <KeyRound size={17} />
               <span>{label('login.trust.noDownloads', '本页不会要求安装软件或下载文件')}</span>
+            </div>
+            <div>
+              <Mail size={17} />
+              <span>
+                {label('login.trust.support', '支持邮箱：')}
+                <a href="mailto:smices@gmail.com">smices@gmail.com</a>
+              </span>
             </div>
           </div>
         ) : null}

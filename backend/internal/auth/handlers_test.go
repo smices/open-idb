@@ -44,6 +44,59 @@ func TestLoginAccountSetsSessionAndRedirects(t *testing.T) {
 	}
 }
 
+func TestLogoutRevokesServerSessionAndClearsSecureCookie(t *testing.T) {
+	SetSessionResolver(nil)
+	t.Cleanup(func() { SetSessionResolver(nil) })
+	revoker := &fakeRevokingLoginService{fakeLoginService: fakeLoginService{}}
+	router := chi.NewRouter()
+	NewHandler(revoker).RegisterRoutes(router)
+	sessionValue, err := EncodeSession(Session{
+		ID:       "session-1",
+		UserID:   "user-1",
+		EntityID: "entity-1",
+		Username: "user@example.test",
+	})
+	if err != nil {
+		t.Fatalf("EncodeSession() error = %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.AddCookie(&http.Cookie{Name: "idb_session", Value: sessionValue})
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+	if revoker.revokedEntityID != "entity-1" || revoker.revokedSessionID != "session-1" {
+		t.Fatalf("revoked session = %q/%q", revoker.revokedEntityID, revoker.revokedSessionID)
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %#v, want one clearing cookie", cookies)
+	}
+	cookie := cookies[0]
+	if cookie.Name != "idb_session" || cookie.MaxAge != -1 || !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("clearing cookie = %#v", cookie)
+	}
+}
+
+func TestLogoutWithoutSessionIsIdempotent(t *testing.T) {
+	router := chi.NewRouter()
+	NewHandler(fakeLoginService{}).RegisterRoutes(router)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil))
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if cookies := rec.Result().Cookies(); len(cookies) != 1 || cookies[0].MaxAge != -1 {
+		t.Fatalf("clearing cookies = %#v", cookies)
+	}
+}
+
 func TestLoginAccountRejectsInvalidCredentials(t *testing.T) {
 	router := chi.NewRouter()
 	NewHandler(fakeLoginService{err: errInvalidLogin{}}).RegisterRoutes(router)
@@ -266,6 +319,19 @@ type fakeLoginService struct {
 	appClientID string
 	appContext  LoginContext
 	defaultCtx  LoginContext
+}
+
+type fakeRevokingLoginService struct {
+	fakeLoginService
+	revokedEntityID  string
+	revokedSessionID string
+	revokeErr        error
+}
+
+func (f *fakeRevokingLoginService) RevokeLoginSession(_ context.Context, entityID, sessionID string) error {
+	f.revokedEntityID = entityID
+	f.revokedSessionID = sessionID
+	return f.revokeErr
 }
 
 func (f fakeLoginService) AuthenticateLocal(context.Context, string, string) (LoginResult, error) {

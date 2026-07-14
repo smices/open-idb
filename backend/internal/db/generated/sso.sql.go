@@ -13,20 +13,28 @@ import (
 
 const createApplication = `-- name: CreateApplication :one
 
-INSERT INTO applications (entity_id, name, type, status)
-VALUES ($1, $2, $3, 'active')
-RETURNING id, entity_id, name, type, status, created_at, updated_at
+INSERT INTO applications (entity_id, name, type, status, config)
+VALUES ($1, $2, $3, COALESCE($4::text, 'active'), COALESCE($5::jsonb, '{}'::jsonb))
+RETURNING id, entity_id, name, type, status, created_at, updated_at, config
 `
 
 type CreateApplicationParams struct {
-	EntityID string `json:"entity_id"`
-	Name     string `json:"name"`
-	Type     string `json:"type"`
+	EntityID string      `json:"entity_id"`
+	Name     string      `json:"name"`
+	Type     string      `json:"type"`
+	Status   pgtype.Text `json:"status"`
+	Config   []byte      `json:"config"`
 }
 
 // SPDX-License-Identifier: MIT
 func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error) {
-	row := q.db.QueryRow(ctx, createApplication, arg.EntityID, arg.Name, arg.Type)
+	row := q.db.QueryRow(ctx, createApplication,
+		arg.EntityID,
+		arg.Name,
+		arg.Type,
+		arg.Status,
+		arg.Config,
+	)
 	var i Application
 	err := row.Scan(
 		&i.ID,
@@ -36,6 +44,7 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Config,
 	)
 	return i, err
 }
@@ -157,11 +166,12 @@ INSERT INTO oidc_clients (
     workplace_provider,
     workplace_app_id,
     workplace_app_secret,
+    secret_required,
     status
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'active'
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, COALESCE($13::text, 'active')
 )
-RETURNING id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at
+RETURNING id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at, secret_required
 `
 
 type CreateOIDCClientParams struct {
@@ -177,6 +187,7 @@ type CreateOIDCClientParams struct {
 	WorkplaceProvider  string      `json:"workplace_provider"`
 	WorkplaceAppID     string      `json:"workplace_app_id"`
 	WorkplaceAppSecret string      `json:"workplace_app_secret"`
+	Status             pgtype.Text `json:"status"`
 }
 
 func (q *Queries) CreateOIDCClient(ctx context.Context, arg CreateOIDCClientParams) (OidcClient, error) {
@@ -193,6 +204,7 @@ func (q *Queries) CreateOIDCClient(ctx context.Context, arg CreateOIDCClientPara
 		arg.WorkplaceProvider,
 		arg.WorkplaceAppID,
 		arg.WorkplaceAppSecret,
+		arg.Status,
 	)
 	var i OidcClient
 	err := row.Scan(
@@ -212,6 +224,7 @@ func (q *Queries) CreateOIDCClient(ctx context.Context, arg CreateOIDCClientPara
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SecretRequired,
 	)
 	return i, err
 }
@@ -240,6 +253,110 @@ func (q *Queries) DeleteExpiredOAuthTokens(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const finalizeAuthorizationCodeExchange = `-- name: FinalizeAuthorizationCodeExchange :one
+WITH consumed AS (
+    UPDATE oauth_authorization_codes AS code
+    SET used_at = now()
+    WHERE code.entity_id = $1
+      AND code.code_hash = $2
+      AND code.used_at IS NULL
+      AND code.expires_at > now()
+      AND EXISTS (
+          SELECT 1
+          FROM oidc_clients client
+          JOIN applications application
+            ON application.entity_id = client.entity_id
+           AND application.id = client.application_id
+          WHERE client.entity_id = code.entity_id
+            AND client.client_id = code.client_id
+            AND client.status = 'active'
+            AND application.status = 'active'
+            AND (
+                (
+                    NOT client.secret_required
+                    AND NOT $3::boolean
+                )
+                OR (
+                    $3::boolean
+                    AND client.client_secret_hash = $4
+                )
+            )
+      )
+    RETURNING code.id, code.entity_id, code.client_id, code.user_id, code.code_hash, code.redirect_uri, code.scopes, code.code_challenge, code.code_challenge_method, code.nonce, code.used_at, code.expires_at, code.created_at
+), access_token AS (
+    INSERT INTO oauth_tokens (entity_id, user_id, client_id, token_type, token_hash, scopes, expires_at)
+    SELECT entity_id, user_id, client_id, 'access', $5, scopes, $6
+    FROM consumed
+    RETURNING id
+), id_token AS (
+    INSERT INTO oauth_tokens (entity_id, user_id, client_id, token_type, token_hash, scopes, expires_at)
+    SELECT entity_id, user_id, client_id, 'id', $7, scopes, $8
+    FROM consumed
+    RETURNING id
+)
+SELECT consumed.id, consumed.entity_id, consumed.client_id, consumed.user_id, consumed.code_hash, consumed.redirect_uri, consumed.scopes, consumed.code_challenge, consumed.code_challenge_method, consumed.nonce, consumed.used_at, consumed.expires_at, consumed.created_at
+FROM consumed
+JOIN access_token ON true
+JOIN id_token ON true
+`
+
+type FinalizeAuthorizationCodeExchangeParams struct {
+	EntityID             string             `json:"entity_id"`
+	CodeHash             string             `json:"code_hash"`
+	ClientSecretProvided bool               `json:"client_secret_provided"`
+	ClientSecret         pgtype.Text        `json:"client_secret"`
+	AccessTokenHash      string             `json:"access_token_hash"`
+	AccessTokenExpiresAt pgtype.Timestamptz `json:"access_token_expires_at"`
+	IDTokenHash          string             `json:"id_token_hash"`
+	IDTokenExpiresAt     pgtype.Timestamptz `json:"id_token_expires_at"`
+}
+
+type FinalizeAuthorizationCodeExchangeRow struct {
+	ID                  string             `json:"id"`
+	EntityID            string             `json:"entity_id"`
+	ClientID            string             `json:"client_id"`
+	UserID              string             `json:"user_id"`
+	CodeHash            string             `json:"code_hash"`
+	RedirectUri         string             `json:"redirect_uri"`
+	Scopes              []string           `json:"scopes"`
+	CodeChallenge       string             `json:"code_challenge"`
+	CodeChallengeMethod string             `json:"code_challenge_method"`
+	Nonce               pgtype.Text        `json:"nonce"`
+	UsedAt              pgtype.Timestamptz `json:"used_at"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) FinalizeAuthorizationCodeExchange(ctx context.Context, arg FinalizeAuthorizationCodeExchangeParams) (FinalizeAuthorizationCodeExchangeRow, error) {
+	row := q.db.QueryRow(ctx, finalizeAuthorizationCodeExchange,
+		arg.EntityID,
+		arg.CodeHash,
+		arg.ClientSecretProvided,
+		arg.ClientSecret,
+		arg.AccessTokenHash,
+		arg.AccessTokenExpiresAt,
+		arg.IDTokenHash,
+		arg.IDTokenExpiresAt,
+	)
+	var i FinalizeAuthorizationCodeExchangeRow
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.ClientID,
+		&i.UserID,
+		&i.CodeHash,
+		&i.RedirectUri,
+		&i.Scopes,
+		&i.CodeChallenge,
+		&i.CodeChallengeMethod,
+		&i.Nonce,
+		&i.UsedAt,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const getAuthorizationCode = `-- name: GetAuthorizationCode :one
@@ -274,10 +391,44 @@ func (q *Queries) GetAuthorizationCode(ctx context.Context, arg GetAuthorization
 	return i, err
 }
 
+const getAuthorizationCodeByHash = `-- name: GetAuthorizationCodeByHash :one
+SELECT id, entity_id, client_id, user_id, code_hash, redirect_uri, scopes, code_challenge, code_challenge_method, nonce, used_at, expires_at, created_at
+FROM oauth_authorization_codes code
+WHERE code.code_hash = $1
+  AND NOT EXISTS (
+      SELECT 1
+      FROM oauth_authorization_codes duplicate
+      WHERE duplicate.code_hash = code.code_hash
+        AND duplicate.entity_id <> code.entity_id
+  )
+`
+
+func (q *Queries) GetAuthorizationCodeByHash(ctx context.Context, codeHash string) (OauthAuthorizationCode, error) {
+	row := q.db.QueryRow(ctx, getAuthorizationCodeByHash, codeHash)
+	var i OauthAuthorizationCode
+	err := row.Scan(
+		&i.ID,
+		&i.EntityID,
+		&i.ClientID,
+		&i.UserID,
+		&i.CodeHash,
+		&i.RedirectUri,
+		&i.Scopes,
+		&i.CodeChallenge,
+		&i.CodeChallengeMethod,
+		&i.Nonce,
+		&i.UsedAt,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getOIDCClientByClientID = `-- name: GetOIDCClientByClientID :one
-SELECT id, entity_id, application_id, client_id, client_secret_hash, redirect_uris, allowed_scopes, grant_types, response_types, pkce_required, workplace_provider, workplace_app_id, workplace_app_secret, status, created_at, updated_at
-FROM oidc_clients
-WHERE entity_id = $1 AND client_id = $2
+SELECT c.id, c.entity_id, c.application_id, c.client_id, c.client_secret_hash, c.redirect_uris, c.allowed_scopes, c.grant_types, c.response_types, c.pkce_required, c.workplace_provider, c.workplace_app_id, c.workplace_app_secret, c.status, c.created_at, c.updated_at, c.secret_required
+FROM oidc_clients c
+JOIN applications a ON a.entity_id = c.entity_id AND a.id = c.application_id
+WHERE c.entity_id = $1 AND c.client_id = $2 AND a.status = 'active'
 `
 
 type GetOIDCClientByClientIDParams struct {
@@ -305,6 +456,7 @@ func (q *Queries) GetOIDCClientByClientID(ctx context.Context, arg GetOIDCClient
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SecretRequired,
 	)
 	return i, err
 }

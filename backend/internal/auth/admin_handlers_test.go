@@ -36,6 +36,7 @@ func TestAdminLoginSetsAdminSessionCookie(t *testing.T) {
 	handler.RegisterRoutes(router)
 	req := httptest.NewRequest(http.MethodPost, "/sapi/login/account", strings.NewReader("account=admin&password=admin123"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Forwarded-Proto", "https")
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -49,6 +50,68 @@ func TestAdminLoginSetsAdminSessionCookie(t *testing.T) {
 	cookie := rec.Result().Cookies()[0]
 	if cookie.Name != "idb_admin_session" || cookie.Value != "admin-session-1" {
 		t.Fatalf("cookie = %#v", cookie)
+	}
+	if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("cookie security attributes = %#v", cookie)
+	}
+	if cookie.Expires.IsZero() || cookie.MaxAge <= 0 {
+		t.Fatalf("cookie lifetime attributes = %#v", cookie)
+	}
+}
+
+func TestAdminLogoutRevokesServerSessionAndClearsCookie(t *testing.T) {
+	service := &fakeAdminAuthService{}
+	handler := NewAdminHandler(service)
+	router := chi.NewRouter()
+	handler.RegisterRoutes(router)
+	req := httptest.NewRequest(http.MethodPost, "/sapi/logout", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.AddCookie(&http.Cookie{Name: "idb_admin_session", Value: "admin-session-1"})
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+	if service.revokedSessionID != "admin-session-1" {
+		t.Fatalf("revoked session = %q, want admin-session-1", service.revokedSessionID)
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("Set-Cookie count = %d, want 1", len(cookies))
+	}
+	cookie := cookies[0]
+	if cookie.Name != "idb_admin_session" || cookie.Value != "" || cookie.MaxAge != -1 {
+		t.Fatalf("cleared cookie = %#v", cookie)
+	}
+	if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("cookie security attributes = %#v", cookie)
+	}
+	if !cookie.Expires.Before(time.Now()) {
+		t.Fatalf("cookie expiry = %v, want past", cookie.Expires)
+	}
+}
+
+func TestAdminLogoutWithoutSessionIsIdempotent(t *testing.T) {
+	service := &fakeAdminAuthService{}
+	handler := NewAdminHandler(service)
+	router := chi.NewRouter()
+	handler.RegisterRoutes(router)
+	req := httptest.NewRequest(http.MethodPost, "/sapi/logout", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+	if service.revokedSessionID != "" {
+		t.Fatalf("revoked session = %q, want empty", service.revokedSessionID)
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != "idb_admin_session" || cookies[0].MaxAge != -1 {
+		t.Fatalf("cleared cookies = %#v", cookies)
 	}
 }
 
@@ -155,10 +218,12 @@ func TestAdminCannotChangeOwnRoleOrStatus(t *testing.T) {
 }
 
 type fakeAdminAuthService struct {
-	login   AdminLoginResult
-	session AdminSession
-	current AdminCurrentUser
-	created AdminUserSummary
+	login            AdminLoginResult
+	session          AdminSession
+	current          AdminCurrentUser
+	created          AdminUserSummary
+	revokedSessionID string
+	revokeErr        error
 }
 
 func (f *fakeAdminAuthService) AuthenticateAdmin(context.Context, string, string) (AdminLoginResult, error) {
@@ -167,6 +232,11 @@ func (f *fakeAdminAuthService) AuthenticateAdmin(context.Context, string, string
 
 func (f *fakeAdminAuthService) CreateAdminSession(context.Context, AdminLoginResult, SessionMetadata) (AdminSession, error) {
 	return f.session, nil
+}
+
+func (f *fakeAdminAuthService) RevokeAdminSession(_ context.Context, sessionID string) error {
+	f.revokedSessionID = sessionID
+	return f.revokeErr
 }
 
 func (f *fakeAdminAuthService) CurrentAdmin(context.Context, AdminSession) (AdminCurrentUser, error) {

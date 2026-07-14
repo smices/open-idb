@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -24,10 +25,15 @@ func WithReadinessCheck(check func(context.Context) error) Option {
 }
 
 func NewRouter(options ...Option) http.Handler {
+	return NewRouterWithTrustedProxies(nil, options...)
+}
+
+func NewRouterWithTrustedProxies(trustedProxies []netip.Prefix, options ...Option) http.Handler {
 	r := chi.NewRouter()
 
 	// i18n middleware for locale extraction from Accept-Language header
 	catalog := i18n.NewCatalog()
+	r.Use(NormalizeClientIP(trustedProxies))
 	r.Use(SecurityHeaders)
 	r.Use(i18n.Middleware(catalog))
 	r.Use(RequireAuthenticatedRequest)
@@ -112,6 +118,8 @@ func isPublicRoute(method string, path string) bool {
 	case "/api/auth/context", "/api/auth/providers", "/sapi/auth/context":
 		return method == http.MethodGet
 	case "/api/login/account", "/sapi/login/account", "/auth/feishu/exchange", "/api/auth/feishu/exchange":
+		return method == http.MethodPost
+	case "/api/auth/logout", "/sapi/logout":
 		return method == http.MethodPost
 	case "/auth/feishu/login", "/auth/feishu/callback", "/api/auth/feishu/login", "/api/auth/feishu/callback":
 		return method == http.MethodGet

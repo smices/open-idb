@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/smices/open-idb/internal/auth"
@@ -51,6 +52,26 @@ func TestTriggerFullSyncReturnsResult(t *testing.T) {
 	}
 	if result.JobID != "job-1" || result.UsersUpserted != 2 {
 		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestTriggerFullSyncInvalidatesOrganizationTreeCache(t *testing.T) {
+	handler := NewHandler(&fakeSyncService{result: idp.FullSyncResult{JobID: "job-cache"}}, nil)
+	invalidator := &fakeOrganizationTreeInvalidator{}
+	handler.SetOrganizationTreeCacheInvalidator(invalidator)
+	router := chi.NewRouter()
+	handler.RegisterRoutes(router)
+	req := httptest.NewRequest(http.MethodPost, "/sapi/identity-sources/source-1/sync/full", nil)
+	req.Header.Set("X-IDB-Entity-ID", "entity-1")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if invalidator.calls != 1 || invalidator.entityID != "entity-1" {
+		t.Fatalf("cache invalidation = (%d, %q), want (1, entity-1)", invalidator.calls, invalidator.entityID)
 	}
 }
 
@@ -191,8 +212,8 @@ func TestHandleFeishuWebhookAcceptsEventAndSchedulesIncrementalSync(t *testing.T
 
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusAccepted)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	var response map[string]string
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
@@ -206,6 +227,34 @@ func TestHandleFeishuWebhookAcceptsEventAndSchedulesIncrementalSync(t *testing.T
 	}
 	if service.lastSubmittedEvent.EventType != "added_user" {
 		t.Fatalf("event = %#v", service.lastSubmittedEvent)
+	}
+}
+
+func TestHandleFeishuWebhookInvalidatesOrganizationTreeAfterSuccessfulSync(t *testing.T) {
+	service := &fakeSyncService{submitWebhookJobID: "webhook-job-cache"}
+	handler := NewHandler(service, nil)
+	invalidated := make(chan string, 1)
+	handler.SetOrganizationTreeCacheInvalidator(&fakeOrganizationTreeInvalidator{invalidated: invalidated})
+	router := chi.NewRouter()
+	handler.RegisterRoutes(router)
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/feishu/entity-1/source-1", strings.NewReader(`{
+		"type":"event_callback",
+		"event":{"event_type":"updated_user","object_type":"user","object_id":"ou_123","object_id_type":"open_id","event_id":"evt-cache"}
+	}`))
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	select {
+	case entityID := <-invalidated:
+		if entityID != "entity-1" {
+			t.Fatalf("cache invalidated for %q, want entity-1", entityID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("organization tree cache was not invalidated after webhook sync")
 	}
 }
 
@@ -230,8 +279,8 @@ func TestHandleDefaultFeishuWebhookResolvesTarget(t *testing.T) {
 
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	if service.submittedEntityID != "entity-default" || service.submittedSourceID != "source-default" {
 		t.Fatalf("submitted target = %s/%s", service.submittedEntityID, service.submittedSourceID)
@@ -386,6 +435,21 @@ type fakeSyncService struct {
 	submittedEntityID   string
 	submittedSourceID   string
 	lastSubmittedEvent  idp.DirectorySyncEvent
+}
+
+type fakeOrganizationTreeInvalidator struct {
+	calls       int
+	entityID    string
+	invalidated chan string
+}
+
+func (f *fakeOrganizationTreeInvalidator) InvalidateOrganizationTree(_ context.Context, entityID string) error {
+	f.calls++
+	f.entityID = entityID
+	if f.invalidated != nil {
+		f.invalidated <- entityID
+	}
+	return nil
 }
 
 func (f *fakeSyncService) RunFullSync(context.Context, idp.FullSyncInput) (idp.FullSyncResult, error) {

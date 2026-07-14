@@ -29,9 +29,20 @@ type DirectoryUser struct {
 	RawProfile      []byte
 }
 
+// DirectoryObjectDeletion carries the provider identifier from a delete
+// webhook without pretending that it is the provider's canonical ID. The
+// sync layer resolves it against existing rows and never creates a tombstone
+// for an object that is not already known locally.
+type DirectoryObjectDeletion struct {
+	ObjectID     string
+	ObjectIDType string
+}
+
 type FullSyncData struct {
-	Departments []DirectoryDepartment
-	Users       []DirectoryUser
+	Departments         []DirectoryDepartment
+	Users               []DirectoryUser
+	DepartmentDeletions []DirectoryObjectDeletion
+	UserDeletions       []DirectoryObjectDeletion
 }
 
 type DirectorySyncEvent struct {
