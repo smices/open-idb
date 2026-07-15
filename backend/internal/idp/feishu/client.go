@@ -695,7 +695,7 @@ func normalizeLatinName(value string) string {
 		}
 		fields[i] = string(runes)
 	}
-	return strings.Join(fields, "")
+	return strings.Join(fields, " ")
 }
 
 func hasCJK(value string) bool {

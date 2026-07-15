@@ -11,15 +11,18 @@ import (
 
 // UserInfoResult represents a Feishu user obtained via OAuth.
 type UserInfoResult struct {
-	UserID     string
-	UnionID    string
-	OpenID     string
-	Name       string
-	Email      string
-	Phone      string
-	AvatarURL  string
-	Status     string // "active" or "disabled"
-	RawProfile []byte
+	UserID      string
+	UnionID     string
+	OpenID      string
+	Name        string
+	EnglishName string
+	EmployeeNo  string
+	JobTitle    string
+	Email       string
+	Phone       string
+	AvatarURL   string
+	Status      string // "active" or "disabled"
+	RawProfile  []byte
 }
 
 // appAccessToken fetches an app-level access token using app credentials.
@@ -127,17 +130,23 @@ func (c *Client) fetchUserInfo(ctx context.Context, userAccessToken string) (Use
 	}
 
 	var profile struct {
-		OpenID      string `json:"open_id"`
-		UnionID     string `json:"union_id"`
-		UserID      string `json:"user_id"`
-		Name        string `json:"name"`
-		Email       string `json:"email"`
-		Mobile      string `json:"mobile"`
-		AvatarURL   string `json:"avatar_url"`
-		EntityKey   string `json:"entity_key"`
-		IsActivated *bool  `json:"is_activated,omitempty"`
-		IsFrozen    bool   `json:"is_frozen,omitempty"`
-		IsResigned  bool   `json:"is_resigned,omitempty"`
+		OpenID      string          `json:"open_id"`
+		UnionID     string          `json:"union_id"`
+		UserID      string          `json:"user_id"`
+		Name        string          `json:"name"`
+		EnName      string          `json:"en_name"`
+		English     string          `json:"english_name"`
+		NameEN      string          `json:"name_en"`
+		I18nName    json.RawMessage `json:"i18n_name"`
+		EmployeeNo  string          `json:"employee_no"`
+		JobTitle    string          `json:"job_title"`
+		Email       string          `json:"email"`
+		Mobile      string          `json:"mobile"`
+		AvatarURL   string          `json:"avatar_url"`
+		EntityKey   string          `json:"entity_key"`
+		IsActivated *bool           `json:"is_activated,omitempty"`
+		IsFrozen    bool            `json:"is_frozen,omitempty"`
+		IsResigned  bool            `json:"is_resigned,omitempty"`
 	}
 	if err := json.Unmarshal(response.Data, &profile); err != nil {
 		return UserInfoResult{}, fmt.Errorf("feishu user info parse failed: %w", err)
@@ -162,14 +171,17 @@ func (c *Client) fetchUserInfo(ctx context.Context, userAccessToken string) (Use
 	}
 
 	return UserInfoResult{
-		UserID:     userID,
-		UnionID:    profile.UnionID,
-		OpenID:     profile.OpenID,
-		Name:       profile.Name,
-		Email:      profile.Email,
-		Phone:      profile.Mobile,
-		AvatarURL:  profile.AvatarURL,
-		Status:     status,
-		RawProfile: cloneBytes([]byte(response.Data)),
+		UserID:      userID,
+		UnionID:     profile.UnionID,
+		OpenID:      profile.OpenID,
+		Name:        profile.Name,
+		EnglishName: englishNameForUser(profile.Name, profile.EnName, profile.English, profile.NameEN, profile.I18nName),
+		EmployeeNo:  profile.EmployeeNo,
+		JobTitle:    profile.JobTitle,
+		Email:       profile.Email,
+		Phone:       profile.Mobile,
+		AvatarURL:   profile.AvatarURL,
+		Status:      status,
+		RawProfile:  cloneBytes([]byte(response.Data)),
 	}, nil
 }

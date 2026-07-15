@@ -142,15 +142,18 @@ func mustTestULID(s string) string {
 
 func testFeishuUserInfo() FeishuUserInfo {
 	return FeishuUserInfo{
-		UserID:     "emp_001",
-		UnionID:    "on_union1",
-		OpenID:     "ou_open1",
-		Name:       "张三",
-		Email:      "zhangsan@example.test",
-		Phone:      "13800000000",
-		AvatarURL:  "https://example.test/avatar.png",
-		Status:     "active",
-		RawProfile: []byte(`{"name":"张三"}`),
+		UserID:      "emp_001",
+		UnionID:     "on_union1",
+		OpenID:      "ou_open1",
+		Name:        "张三",
+		EnglishName: "Zhang San",
+		EmployeeNo:  "E-001",
+		JobTitle:    "Principal Engineer",
+		Email:       "zhangsan@example.test",
+		Phone:       "13800000000",
+		AvatarURL:   "https://example.test/avatar.png",
+		Status:      "active",
+		RawProfile:  []byte(`{"name":"张三"}`),
 	}
 }
 
@@ -203,10 +206,12 @@ func testBinding() generated.AccountBinding {
 // --- Tests ---
 
 func TestFeishuLoginExistingUserUpdatesAndCreatesSession(t *testing.T) {
+	var gotDirectoryUserParams generated.UpsertDirectoryUserParams
 	var gotUpdateParams generated.UpdateManagedUserFromDirectoryParams
 
 	queries := &mockLoginQueries{
 		upsertDirUserFn: func(_ context.Context, arg generated.UpsertDirectoryUserParams) (generated.DirectoryUser, error) {
+			gotDirectoryUserParams = arg
 			if arg.ExternalUserID != "emp_001" {
 				t.Fatalf("ExternalUserID = %q", arg.ExternalUserID)
 			}
@@ -243,6 +248,15 @@ func TestFeishuLoginExistingUserUpdatesAndCreatesSession(t *testing.T) {
 
 	if gotUpdateParams.DisplayName != "张三" {
 		t.Fatalf("update DisplayName = %q", gotUpdateParams.DisplayName)
+	}
+	if gotDirectoryUserParams.EnglishName != "Zhang San" {
+		t.Fatalf("directory EnglishName = %q", gotDirectoryUserParams.EnglishName)
+	}
+	if gotDirectoryUserParams.EmployeeNo != "E-001" || gotDirectoryUserParams.JobTitle != "Principal Engineer" {
+		t.Fatalf("directory fields = %#v", gotDirectoryUserParams)
+	}
+	if gotUpdateParams.EnglishName != "Zhang San" || gotUpdateParams.EmployeeNo != "E-001" || gotUpdateParams.JobTitle != "Principal Engineer" {
+		t.Fatalf("managed user update fields = %#v", gotUpdateParams)
 	}
 	if gotUpdateParams.Username.Valid {
 		t.Fatalf("update Username should be null for existing bindings, got %q", gotUpdateParams.Username.String)
@@ -323,6 +337,9 @@ func TestFeishuLoginNewUserCreatesUserAndBinding(t *testing.T) {
 	}
 	if gotCreateUserParams.DisplayName != "张三" {
 		t.Fatalf("DisplayName = %q", gotCreateUserParams.DisplayName)
+	}
+	if gotCreateUserParams.EnglishName != "Zhang San" || gotCreateUserParams.EmployeeNo != "E-001" || gotCreateUserParams.JobTitle != "Principal Engineer" {
+		t.Fatalf("managed user creation fields = %#v", gotCreateUserParams)
 	}
 	if gotCreateUserParams.LifecycleStatus != "active" {
 		t.Fatalf("LifecycleStatus = %q", gotCreateUserParams.LifecycleStatus)

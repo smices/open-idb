@@ -361,7 +361,8 @@ func (a feishuClientAdapter) GetUserInfoByCode(ctx context.Context, code string)
 	}
 	return auth.FeishuUserInfo{
 		UserID: r.UserID, UnionID: r.UnionID, OpenID: r.OpenID,
-		Name: r.Name, Email: r.Email, Phone: r.Phone,
+		Name: r.Name, EnglishName: r.EnglishName, EmployeeNo: r.EmployeeNo, JobTitle: r.JobTitle,
+		Email: r.Email, Phone: r.Phone,
 		AvatarURL: r.AvatarURL, Status: r.Status, RawProfile: r.RawProfile,
 	}, nil
 }
@@ -373,7 +374,8 @@ func (a feishuClientAdapter) GetUserInfoByAppCode(ctx context.Context, authCode 
 	}
 	return auth.FeishuUserInfo{
 		UserID: r.UserID, UnionID: r.UnionID, OpenID: r.OpenID,
-		Name: r.Name, Email: r.Email, Phone: r.Phone,
+		Name: r.Name, EnglishName: r.EnglishName, EmployeeNo: r.EmployeeNo, JobTitle: r.JobTitle,
+		Email: r.Email, Phone: r.Phone,
 		AvatarURL: r.AvatarURL, Status: r.Status, RawProfile: r.RawProfile,
 	}, nil
 }

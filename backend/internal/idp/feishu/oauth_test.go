@@ -39,14 +39,17 @@ func TestGetUserInfoByCodeExchangesCodeAndFetchesProfile(t *testing.T) {
 			writeJSON(t, w, map[string]interface{}{
 				"code": 0,
 				"data": map[string]interface{}{
-					"open_id":    "ou_abc",
-					"union_id":   "on_def",
-					"user_id":    "emp_001",
-					"name":       "张三",
-					"email":      "zhangsan@example.test",
-					"mobile":     "13800000000",
-					"avatar_url": "https://example.test/avatar.png",
-					"entity_key": "tk_1",
+					"open_id":     "ou_abc",
+					"union_id":    "on_def",
+					"user_id":     "emp_001",
+					"name":        "张三",
+					"en_name":     "Zhang San",
+					"employee_no": "E-001",
+					"job_title":   "Principal Engineer",
+					"email":       "zhangsan@example.test",
+					"mobile":      "13800000000",
+					"avatar_url":  "https://example.test/avatar.png",
+					"entity_key":  "tk_1",
 				},
 			})
 		default:
@@ -82,6 +85,15 @@ func TestGetUserInfoByCodeExchangesCodeAndFetchesProfile(t *testing.T) {
 	}
 	if result.Name != "张三" {
 		t.Fatalf("Name = %q, want 张三", result.Name)
+	}
+	if result.EnglishName != "Zhang San" {
+		t.Fatalf("EnglishName = %q, want Zhang San", result.EnglishName)
+	}
+	if result.EmployeeNo != "E-001" {
+		t.Fatalf("EmployeeNo = %q, want E-001", result.EmployeeNo)
+	}
+	if result.JobTitle != "Principal Engineer" {
+		t.Fatalf("JobTitle = %q, want Principal Engineer", result.JobTitle)
 	}
 	if result.Email != "zhangsan@example.test" {
 		t.Fatalf("Email = %q", result.Email)
@@ -120,9 +132,12 @@ func TestGetUserInfoByAppCodeExchangesAuthCode(t *testing.T) {
 			writeJSON(t, w, map[string]interface{}{
 				"code": 0,
 				"data": map[string]interface{}{
-					"open_id": "ou_app1",
-					"name":    "李四",
-					"email":   "lisi@example.test",
+					"open_id":     "ou_app1",
+					"name":        "李四",
+					"i18n_name":   map[string]string{"en_us": "Li Si"},
+					"employee_no": "E-002",
+					"job_title":   "Product Manager",
+					"email":       "lisi@example.test",
 				},
 			})
 		default:
@@ -155,6 +170,9 @@ func TestGetUserInfoByAppCodeExchangesAuthCode(t *testing.T) {
 	}
 	if result.Name != "李四" {
 		t.Fatalf("Name = %q, want 李四", result.Name)
+	}
+	if result.EnglishName != "Li Si" || result.EmployeeNo != "E-002" || result.JobTitle != "Product Manager" {
+		t.Fatalf("workplace profile fields = %#v", result)
 	}
 	// When user_id is empty, should fall back to open_id.
 	if result.UserID != "ou_app1" {

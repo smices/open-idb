@@ -32,15 +32,18 @@ type FeishuUserProvider interface {
 
 // FeishuUserInfo holds user info from Feishu OAuth.
 type FeishuUserInfo struct {
-	UserID     string
-	UnionID    string
-	OpenID     string
-	Name       string
-	Email      string
-	Phone      string
-	AvatarURL  string
-	Status     string
-	RawProfile []byte
+	UserID      string
+	UnionID     string
+	OpenID      string
+	Name        string
+	EnglishName string
+	EmployeeNo  string
+	JobTitle    string
+	Email       string
+	Phone       string
+	AvatarURL   string
+	Status      string
+	RawProfile  []byte
 }
 
 // FeishuLoginResult contains session info after successful Feishu login.
@@ -203,6 +206,9 @@ func (s *FeishuLoginService) completeLogin(ctx context.Context, entityID string,
 		ExternalUnionID: pgText(info.UnionID),
 		ExternalOpenID:  pgText(info.OpenID),
 		Name:            info.Name,
+		EnglishName:     info.EnglishName,
+		EmployeeNo:      info.EmployeeNo,
+		JobTitle:        info.JobTitle,
 		Email:           pgText(info.Email),
 		Phone:           pgText(info.Phone),
 		AvatarUrl:       pgText(info.AvatarURL),
@@ -231,6 +237,9 @@ func (s *FeishuLoginService) completeLogin(ctx context.Context, entityID string,
 			ID:              binding.UserID,
 			PrimarySourceID: pgText(sourceULID),
 			DisplayName:     info.Name,
+			EnglishName:     info.EnglishName,
+			EmployeeNo:      info.EmployeeNo,
+			JobTitle:        info.JobTitle,
 			Email:           pgText(info.Email),
 			Phone:           pgText(info.Phone),
 			AvatarUrl:       pgText(info.AvatarURL),
@@ -258,6 +267,9 @@ func (s *FeishuLoginService) completeLogin(ctx context.Context, entityID string,
 		EntityID:        entityULID,
 		Username:        username,
 		DisplayName:     info.Name,
+		EnglishName:     info.EnglishName,
+		EmployeeNo:      info.EmployeeNo,
+		JobTitle:        info.JobTitle,
 		Email:           pgText(info.Email),
 		Phone:           pgText(info.Phone),
 		AvatarUrl:       pgText(info.AvatarURL),
