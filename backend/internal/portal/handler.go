@@ -65,10 +65,19 @@ func (s service) ListApplications(ctx context.Context, entityID string) ([]Appli
 func portalEntryURL(value string) string {
 	value = strings.TrimSpace(value)
 	parsed, err := url.ParseRequestURI(value)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+	if err != nil {
 		return ""
 	}
-	return value
+	if parsed.Scheme == "http" || parsed.Scheme == "https" {
+		if parsed.Host != "" {
+			return value
+		}
+		return ""
+	}
+	if parsed.Scheme == "" && parsed.Host == "" && strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "//") && !strings.HasPrefix(value, "/\\") {
+		return value
+	}
+	return ""
 }
 
 func catalogueText(value any) string {

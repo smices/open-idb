@@ -26,7 +26,8 @@ function ApplicationCard({ application, t }) {
   );
 
   if (!application.entry_url) return card;
-  return <a className="portal-application-link" href={application.entry_url} target="_blank" rel="noreferrer" aria-label={t('portal.openApplication', { application: title })}>{card}</a>;
+  const isSameOriginEntry = application.entry_url.startsWith('/');
+  return <a className="portal-application-link" href={application.entry_url} target={isSameOriginEntry ? undefined : '_blank'} rel={isSameOriginEntry ? undefined : 'noreferrer'} aria-label={t('portal.openApplication', { application: title })}>{card}</a>;
 }
 
 export function PortalHomePage() {

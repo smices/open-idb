@@ -31,9 +31,10 @@ func TestServiceUsesConfiguredInternalApplicationURLForPortalEntry(t *testing.T)
 	}
 }
 
-func TestServiceOmitsNonHTTPApplicationEntryURLs(t *testing.T) {
+func TestServiceAcceptsSafeApplicationEntryURLs(t *testing.T) {
 	service := service{store: fakeApplicationStore{rows: []generated.ListPortalApplicationsRow{
 		{ID: "app-javascript", Name: "Unsafe", Type: "internal_app", EntryUrl: "javascript:alert(1)"},
+		{ID: "app-protocol-relative", Name: "Unsafe origin", Type: "internal_app", EntryUrl: "//other.example/internal"},
 		{ID: "app-relative", Name: "Relative", Type: "internal_app", EntryUrl: "/internal"},
 		{ID: "app-http", Name: "Safe", Type: "internal_app", EntryUrl: "https://safe.example/path"},
 	}}}
@@ -47,7 +48,10 @@ func TestServiceOmitsNonHTTPApplicationEntryURLs(t *testing.T) {
 			t.Errorf("unsafe application %q entry URL = %q, want empty", application.ID, application.EntryURL)
 		}
 	}
-	if got := applications[2].EntryURL; got != "https://safe.example/path" {
+	if got := applications[2].EntryURL; got != "/internal" {
+		t.Errorf("same-origin application entry URL = %q, want /internal", got)
+	}
+	if got := applications[3].EntryURL; got != "https://safe.example/path" {
 		t.Errorf("safe application entry URL = %q", got)
 	}
 }

@@ -51,5 +51,7 @@ test('portal application cards are direct links when an entry URL is configured'
   const home = source('./PortalHomePage.jsx');
 
   assert.match(home, /<a[^>]+href={application.entry_url}/);
+  assert.match(home, /application\.entry_url\.startsWith\('\/'\)/);
+  assert.match(home, /target=\{isSameOriginEntry \? undefined : '_blank'\}/);
   assert.doesNotMatch(home, /<Button[^>]+href={application.entry_url}/);
 });
