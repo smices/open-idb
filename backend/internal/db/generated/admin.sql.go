@@ -279,31 +279,25 @@ func (q *Queries) ListApplications(ctx context.Context, arg ListApplicationsPara
 const listPortalApplications = `-- name: ListPortalApplications :many
 
 SELECT
-    application.id,
-    application.name,
-    application.type,
-    application.config ->> 'description' AS description,
-    application.config ->> 'logo_url' AS logo_url,
-    COALESCE(NULLIF(application.config ->> 'entry_url', ''), application.config ->> 'app_url') AS entry_url,
-    oidc.redirect_uris[1] AS oidc_redirect_uri
-FROM applications AS application
-LEFT JOIN oidc_clients AS oidc
-  ON oidc.entity_id = application.entity_id
- AND oidc.application_id = application.id
- AND oidc.status = 'active'
-WHERE application.entity_id = $1
-  AND application.status = 'active'
-ORDER BY application.name ASC, application.id ASC
+    id,
+    name,
+    type,
+    config ->> 'description' AS description,
+    config ->> 'logo_url' AS logo_url,
+    COALESCE(NULLIF(config ->> 'entry_url', ''), config ->> 'app_url') AS entry_url
+FROM applications
+WHERE entity_id = $1
+  AND status = 'active'
+ORDER BY name ASC, id ASC
 `
 
 type ListPortalApplicationsRow struct {
-	ID              string      `json:"id"`
-	Name            string      `json:"name"`
-	Type            string      `json:"type"`
-	Description     interface{} `json:"description"`
-	LogoUrl         interface{} `json:"logo_url"`
-	EntryUrl        interface{} `json:"entry_url"`
-	OidcRedirectUri interface{} `json:"oidc_redirect_uri"`
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	Type        string      `json:"type"`
+	Description interface{} `json:"description"`
+	LogoUrl     interface{} `json:"logo_url"`
+	EntryUrl    interface{} `json:"entry_url"`
 }
 
 // === Applications ===
@@ -323,7 +317,6 @@ func (q *Queries) ListPortalApplications(ctx context.Context, entityID string) (
 			&i.Description,
 			&i.LogoUrl,
 			&i.EntryUrl,
-			&i.OidcRedirectUri,
 		); err != nil {
 			return nil, err
 		}

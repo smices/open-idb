@@ -47,17 +47,13 @@ func (s service) ListApplications(ctx context.Context, entityID string) ([]Appli
 	}
 	applications := make([]Application, 0, len(rows))
 	for _, row := range rows {
-		entryURL := portalEntryURL(catalogueText(row.EntryUrl))
-		if entryURL == "" && row.Type == "oidc_client" {
-			entryURL = oidcApplicationEntryURL(catalogueText(row.OidcRedirectUri))
-		}
 		applications = append(applications, Application{
 			ID:          row.ID,
 			Name:        row.Name,
 			Type:        row.Type,
 			Description: catalogueText(row.Description),
 			LogoURL:     catalogueText(row.LogoUrl),
-			EntryURL:    entryURL,
+			EntryURL:    portalEntryURL(catalogueText(row.EntryUrl)),
 		})
 	}
 	return applications, nil
@@ -82,15 +78,6 @@ func portalEntryURL(value string) string {
 		return value
 	}
 	return ""
-}
-
-func oidcApplicationEntryURL(redirectURI string) string {
-	redirectURI = portalEntryURL(redirectURI)
-	parsed, err := url.Parse(redirectURI)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return ""
-	}
-	return (&url.URL{Scheme: parsed.Scheme, Host: parsed.Host}).String()
 }
 
 func catalogueText(value any) string {
