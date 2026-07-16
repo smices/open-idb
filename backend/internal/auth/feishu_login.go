@@ -59,6 +59,7 @@ type FeishuLoginResult struct {
 // loginQueries is the database interface for the Feishu login flow.
 // *generated.Queries satisfies this interface.
 type loginQueries interface {
+	GetDirectoryUserByProviderIdentifier(ctx context.Context, arg generated.GetDirectoryUserByProviderIdentifierParams) (generated.DirectoryUser, error)
 	UpsertDirectoryUser(ctx context.Context, arg generated.UpsertDirectoryUserParams) (generated.DirectoryUser, error)
 	GetAccountBindingByProviderUID(ctx context.Context, arg generated.GetAccountBindingByProviderUIDParams) (generated.AccountBinding, error)
 	CreateManagedUser(ctx context.Context, arg generated.CreateManagedUserParams) (generated.User, error)
@@ -83,8 +84,8 @@ type FeishuClientResolver interface {
 	GetFeishuWorkplaceUserProvider(ctx context.Context, entityID string, sourceID string, clientID string) (FeishuUserProvider, error)
 }
 
-// FeishuLoginService handles the complete Feishu login flow:
-// find/create directory user, find/create managed user, create binding, check lifecycle, create session.
+// FeishuLoginService handles Feishu login for people already present in the
+// configured identity source, then resolves or provisions their managed account.
 type FeishuLoginService struct {
 	queries              loginQueries
 	feishuClient         FeishuUserProvider
@@ -198,25 +199,14 @@ func (s *FeishuLoginService) completeLogin(ctx context.Context, entityID string,
 		return FeishuLoginResult{}, fmt.Errorf("invalid source_id: %w", err)
 	}
 
-	// Step 1: Find or create directory_user by (entity_id, source_id, external_user_id).
-	directoryUser, err := s.queries.UpsertDirectoryUser(ctx, generated.UpsertDirectoryUserParams{
-		EntityID:        entityULID,
-		SourceID:        sourceULID,
-		ExternalUserID:  info.UserID,
-		ExternalUnionID: pgText(info.UnionID),
-		ExternalOpenID:  pgText(info.OpenID),
-		Name:            info.Name,
-		EnglishName:     info.EnglishName,
-		EmployeeNo:      info.EmployeeNo,
-		JobTitle:        info.JobTitle,
-		Email:           pgText(info.Email),
-		Phone:           pgText(info.Phone),
-		AvatarUrl:       pgText(info.AvatarURL),
-		Status:          normalizeStatus(info.Status),
-		RawProfile:      info.RawProfile,
-	})
+	// Only people already synchronized from this exact identity source can log in.
+	// Login never creates or updates directory records.
+	directoryUser, err := s.directoryUserForFeishuIdentity(ctx, entityULID, sourceULID, info)
 	if err != nil {
-		return FeishuLoginResult{}, fmt.Errorf("upsert directory user: %w", err)
+		return FeishuLoginResult{}, err
+	}
+	if directoryUser.Status != "active" {
+		return FeishuLoginResult{}, fmt.Errorf("identity_inactive")
 	}
 
 	// Step 2: Check for existing account_binding by (entity_id, source_id, provider_uid).
@@ -302,6 +292,35 @@ func (s *FeishuLoginService) completeLogin(ctx context.Context, entityID string,
 	}
 
 	return s.buildResult(ctx, managedUser)
+}
+
+func (s *FeishuLoginService) directoryUserForFeishuIdentity(ctx context.Context, entityID string, sourceID string, info FeishuUserInfo) (generated.DirectoryUser, error) {
+	identifiers := []struct {
+		value string
+		kind  string
+	}{
+		{value: info.UserID, kind: "user_id"},
+		{value: info.OpenID, kind: "open_id"},
+		{value: info.UnionID, kind: "union_id"},
+	}
+	for _, identifier := range identifiers {
+		if identifier.value == "" {
+			continue
+		}
+		directoryUser, err := s.queries.GetDirectoryUserByProviderIdentifier(ctx, generated.GetDirectoryUserByProviderIdentifierParams{
+			EntityID:       entityID,
+			SourceID:       sourceID,
+			Identifier:     identifier.value,
+			IdentifierType: identifier.kind,
+		})
+		if err == nil {
+			return directoryUser, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return generated.DirectoryUser{}, fmt.Errorf("lookup identity: %w", err)
+		}
+	}
+	return generated.DirectoryUser{}, fmt.Errorf("identity_not_found")
 }
 
 // buildResult checks lifecycle status and creates a session.

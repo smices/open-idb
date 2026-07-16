@@ -82,16 +82,23 @@ func (m *mockFeishuProvider) GetUserInfoByAppCode(context.Context, string) (Feis
 }
 
 type mockLoginQueries struct {
-	upsertDirUserFn   func(context.Context, generated.UpsertDirectoryUserParams) (generated.DirectoryUser, error)
-	getBindingFn      func(context.Context, generated.GetAccountBindingByProviderUIDParams) (generated.AccountBinding, error)
-	createUserFn      func(context.Context, generated.CreateManagedUserParams) (generated.User, error)
-	createBindingFn   func(context.Context, generated.CreateAccountBindingParams) (generated.AccountBinding, error)
-	updateUserFn      func(context.Context, generated.UpdateManagedUserFromDirectoryParams) (generated.User, error)
-	assignRoleFn      func(context.Context, generated.AssignRoleToUserByCodeParams) error
-	getSourceFn       func(context.Context, string) (generated.GetFeishuSourceByEntityRow, error)
-	getEntityBySlugFn func(context.Context, string) (generated.BusinessEntity, error)
+	getDirectoryUserFn func(context.Context, generated.GetDirectoryUserByProviderIdentifierParams) (generated.DirectoryUser, error)
+	upsertDirUserFn    func(context.Context, generated.UpsertDirectoryUserParams) (generated.DirectoryUser, error)
+	getBindingFn       func(context.Context, generated.GetAccountBindingByProviderUIDParams) (generated.AccountBinding, error)
+	createUserFn       func(context.Context, generated.CreateManagedUserParams) (generated.User, error)
+	createBindingFn    func(context.Context, generated.CreateAccountBindingParams) (generated.AccountBinding, error)
+	updateUserFn       func(context.Context, generated.UpdateManagedUserFromDirectoryParams) (generated.User, error)
+	assignRoleFn       func(context.Context, generated.AssignRoleToUserByCodeParams) error
+	getSourceFn        func(context.Context, string) (generated.GetFeishuSourceByEntityRow, error)
+	getEntityBySlugFn  func(context.Context, string) (generated.BusinessEntity, error)
 }
 
+func (m *mockLoginQueries) GetDirectoryUserByProviderIdentifier(ctx context.Context, arg generated.GetDirectoryUserByProviderIdentifierParams) (generated.DirectoryUser, error) {
+	if m.getDirectoryUserFn != nil {
+		return m.getDirectoryUserFn(ctx, arg)
+	}
+	return testDirectoryUser(), nil
+}
 func (m *mockLoginQueries) UpsertDirectoryUser(ctx context.Context, arg generated.UpsertDirectoryUserParams) (generated.DirectoryUser, error) {
 	return m.upsertDirUserFn(ctx, arg)
 }
@@ -206,17 +213,9 @@ func testBinding() generated.AccountBinding {
 // --- Tests ---
 
 func TestFeishuLoginExistingUserUpdatesAndCreatesSession(t *testing.T) {
-	var gotDirectoryUserParams generated.UpsertDirectoryUserParams
 	var gotUpdateParams generated.UpdateManagedUserFromDirectoryParams
 
 	queries := &mockLoginQueries{
-		upsertDirUserFn: func(_ context.Context, arg generated.UpsertDirectoryUserParams) (generated.DirectoryUser, error) {
-			gotDirectoryUserParams = arg
-			if arg.ExternalUserID != "emp_001" {
-				t.Fatalf("ExternalUserID = %q", arg.ExternalUserID)
-			}
-			return testDirectoryUser(), nil
-		},
 		getBindingFn: func(_ context.Context, arg generated.GetAccountBindingByProviderUIDParams) (generated.AccountBinding, error) {
 			if arg.ProviderUid != "emp_001" {
 				t.Fatalf("ProviderUid = %q", arg.ProviderUid)
@@ -248,12 +247,6 @@ func TestFeishuLoginExistingUserUpdatesAndCreatesSession(t *testing.T) {
 
 	if gotUpdateParams.DisplayName != "张三" {
 		t.Fatalf("update DisplayName = %q", gotUpdateParams.DisplayName)
-	}
-	if gotDirectoryUserParams.EnglishName != "Zhang San" {
-		t.Fatalf("directory EnglishName = %q", gotDirectoryUserParams.EnglishName)
-	}
-	if gotDirectoryUserParams.EmployeeNo != "E-001" || gotDirectoryUserParams.JobTitle != "Principal Engineer" {
-		t.Fatalf("directory fields = %#v", gotDirectoryUserParams)
 	}
 	if gotUpdateParams.EnglishName != "Zhang San" || gotUpdateParams.EmployeeNo != "E-001" || gotUpdateParams.JobTitle != "Principal Engineer" {
 		t.Fatalf("managed user update fields = %#v", gotUpdateParams)
@@ -361,6 +354,57 @@ func TestFeishuLoginNewUserCreatesUserAndBinding(t *testing.T) {
 
 	if result.SessionValue == "" {
 		t.Fatal("SessionValue is empty")
+	}
+}
+
+func TestFeishuLoginRejectsUserMissingFromIdentitySource(t *testing.T) {
+	queries := &mockLoginQueries{
+		getDirectoryUserFn: func(_ context.Context, _ generated.GetDirectoryUserByProviderIdentifierParams) (generated.DirectoryUser, error) {
+			return generated.DirectoryUser{}, pgx.ErrNoRows
+		},
+		upsertDirUserFn: func(context.Context, generated.UpsertDirectoryUserParams) (generated.DirectoryUser, error) {
+			t.Fatal("login must not create a directory user")
+			return generated.DirectoryUser{}, nil
+		},
+		getBindingFn: func(context.Context, generated.GetAccountBindingByProviderUIDParams) (generated.AccountBinding, error) {
+			t.Fatal("login must not look up or create a binding for an unknown directory user")
+			return generated.AccountBinding{}, nil
+		},
+	}
+	svc := &FeishuLoginService{
+		queries:      queries,
+		feishuClient: &mockFeishuProvider{userInfo: testFeishuUserInfo()},
+		sessionTTL:   24 * time.Hour,
+		policy:       LoginProvisionPolicy{AutoCreateManagedUsers: true},
+	}
+
+	_, err := svc.LoginViaOAuth(context.Background(), testEntityULID, testSourceULID, "auth-code")
+	if err == nil || err.Error() != "identity_not_found" {
+		t.Fatalf("LoginViaOAuth error = %v, want identity_not_found", err)
+	}
+}
+
+func TestFeishuLoginRejectsInactiveIdentitySourceUser(t *testing.T) {
+	directoryUser := testDirectoryUser()
+	directoryUser.Status = "deleted"
+	queries := &mockLoginQueries{
+		getDirectoryUserFn: func(context.Context, generated.GetDirectoryUserByProviderIdentifierParams) (generated.DirectoryUser, error) {
+			return directoryUser, nil
+		},
+		getBindingFn: func(context.Context, generated.GetAccountBindingByProviderUIDParams) (generated.AccountBinding, error) {
+			t.Fatal("login must not create or look up a binding for an inactive directory user")
+			return generated.AccountBinding{}, nil
+		},
+	}
+	svc := &FeishuLoginService{
+		queries:      queries,
+		feishuClient: &mockFeishuProvider{userInfo: testFeishuUserInfo()},
+		sessionTTL:   24 * time.Hour,
+	}
+
+	_, err := svc.LoginViaOAuth(context.Background(), testEntityULID, testSourceULID, "auth-code")
+	if err == nil || err.Error() != "identity_inactive" {
+		t.Fatalf("LoginViaOAuth error = %v, want identity_inactive", err)
 	}
 }
 
