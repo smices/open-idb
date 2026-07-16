@@ -46,6 +46,19 @@ WHERE entity_id = $1 AND id = $2;
 
 -- === Applications ===
 
+-- name: ListPortalApplications :many
+SELECT
+    id,
+    name,
+    type,
+    config ->> 'description' AS description,
+    config ->> 'logo_url' AS logo_url,
+    COALESCE(NULLIF(config ->> 'entry_url', ''), config ->> 'app_url') AS entry_url
+FROM applications
+WHERE entity_id = $1
+  AND status = 'active'
+ORDER BY name ASC, id ASC;
+
 -- name: ListApplications :many
 SELECT id, entity_id, name, type, status, created_at, updated_at
 FROM applications

@@ -48,6 +48,7 @@ import { api } from './lib/api.ts';
 import { feishuAuthCodeFromBridge, isFeishuClient, normalizeWorkplaceProvider, queryAuthCode, returnToParam } from './lib/feishu-workplace.js';
 import { safeReturnTo } from './lib/navigation.js';
 import { UserMenu } from './components/UserMenu.jsx';
+import { PortalShell } from './portal/PortalShell.jsx';
 import './i18n/index.js';
 import 'antd/dist/reset.css';
 import './styles.css';
@@ -105,8 +106,7 @@ function isAdminPath(pathname) {
 
 function routeTitle(pathname, t) {
   const items = adminItems(t).flatMap((group) => group.children);
-  const portal = portalItems(t);
-  const active = [...items, ...portal].sort((a, b) => b.path.length - a.path.length).find((item) => pathname === item.path || pathname.startsWith(`${item.path}/`));
+  const active = items.sort((a, b) => b.path.length - a.path.length).find((item) => pathname === item.path || pathname.startsWith(`${item.path}/`));
   return active || { label: t('app.title'), description: '' };
 }
 
@@ -175,13 +175,6 @@ function adminItems(t) {
         { key: '/admin/profile', path: '/admin/profile', label: t('layout.menu.profile'), icon: <UserRound size={17} />, description: t('nav.admin.profileDescription') },
       ],
     },
-  ];
-}
-
-function portalItems(t) {
-  return [
-    { key: '/portal', path: '/portal', label: t('nav.portal.apps'), icon: <AppWindow size={16} /> },
-    { key: '/portal/profile', path: '/portal/profile', label: t('nav.portal.profile'), icon: <UserRound size={16} /> },
   ];
 }
 
@@ -610,32 +603,6 @@ function getFeishuLoginUrl(entityRef, returnTo) {
   return `/api/auth/feishu/login?${params.toString()}`;
 }
 
-function PortalShell({ user, branding, themeState, onLogout }) {
-  const { t } = useTranslation();
-  const pathname = window.location.pathname;
-  const brandName = branding.platform_name || t('app.title');
-  const items = portalItems(t);
-  const activePortalPath = [...items].sort((a, b) => b.path.length - a.path.length).find((item) => pathname === item.path || pathname.startsWith(`${item.path}/`))?.path || '/portal';
-  return (
-    <div className="portal-shell">
-      <header className="portal-topbar">
-        <div className="portal-topbar-inner">
-          <a className="brand-mark" href="/portal" aria-label={brandName}><img src={branding.logo_url || '/logo.svg'} alt="" /> <strong>{brandName}</strong></a>
-          <Segmented
-            value={activePortalPath}
-            options={items.map((item) => ({ value: item.path, label: <Space>{item.icon}{item.label}</Space> }))}
-            onChange={(path) => navigate(path)}
-          />
-          <UserMenu user={user} {...themeState} onThemeChange={themeState.setThemeMode} onLanguageChange={themeState.setLanguage} onLogout={onLogout} profileHref="/portal/profile" />
-        </div>
-      </header>
-      <main className="portal-content">
-        {pathname === '/portal/profile' ? <ProfilePage user={user} admin={false} /> : <PortalPage />}
-      </main>
-    </div>
-  );
-}
-
 function AdminShell({ user, branding, themeState, onLogout }) {
   const { t } = useTranslation();
   const pathname = window.location.pathname;
@@ -736,13 +703,6 @@ function ProfilePage({ user, admin }) {
       </Card>
     </div>
   );
-}
-
-function PortalPage() {
-  const { t } = useTranslation();
-  const { loading, data } = useLoader(() => api.myAccess(), []);
-  const apps = data?.applications || [];
-  return <Card title={t('portal.title')} loading={loading}>{apps.length ? <Table rowKey="application_id" dataSource={apps} columns={[{ title: t('portal.application'), dataIndex: 'application_name' }, { title: t('portal.type'), dataIndex: 'application_type' }, { title: t('portal.access'), dataIndex: 'has_access', render: (v) => <Tag color={v ? 'green' : 'red'}>{t(v ? 'portal.accessible' : 'portal.inaccessible')}</Tag> }, { title: t('users.roles'), dataIndex: 'roles', render: (roles) => roles?.map((r) => <Tag key={r.role_id}>{r.role_code}</Tag>) }]} /> : <Empty description={t('common.empty')} />}</Card>;
 }
 
 createRoot(document.getElementById('root')).render(<Root />);

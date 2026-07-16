@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "check:ui": "node scripts/check-ui-baseline.mjs",
-    "test:unit": "node --test src/lib/*.test.mjs",
+    "test:unit": "node --test src/lib/*.test.mjs src/portal/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "check": "npm run test:unit && npm run typecheck && npm run check:ui && npm run build"
   },

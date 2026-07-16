@@ -225,7 +225,6 @@ func (q *Queries) ListAllSyncJobs(ctx context.Context, arg ListAllSyncJobsParams
 }
 
 const listApplications = `-- name: ListApplications :many
-
 SELECT id, entity_id, name, type, status, created_at, updated_at
 FROM applications
 WHERE entity_id = $1
@@ -249,7 +248,6 @@ type ListApplicationsRow struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
-// === Applications ===
 func (q *Queries) ListApplications(ctx context.Context, arg ListApplicationsParams) ([]ListApplicationsRow, error) {
 	rows, err := q.db.Query(ctx, listApplications, arg.EntityID, arg.Limit, arg.Offset)
 	if err != nil {
@@ -267,6 +265,58 @@ func (q *Queries) ListApplications(ctx context.Context, arg ListApplicationsPara
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPortalApplications = `-- name: ListPortalApplications :many
+
+SELECT
+    id,
+    name,
+    type,
+    config ->> 'description' AS description,
+    config ->> 'logo_url' AS logo_url,
+    COALESCE(NULLIF(config ->> 'entry_url', ''), config ->> 'app_url') AS entry_url
+FROM applications
+WHERE entity_id = $1
+  AND status = 'active'
+ORDER BY name ASC, id ASC
+`
+
+type ListPortalApplicationsRow struct {
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	Type        string      `json:"type"`
+	Description interface{} `json:"description"`
+	LogoUrl     interface{} `json:"logo_url"`
+	EntryUrl    interface{} `json:"entry_url"`
+}
+
+// === Applications ===
+func (q *Queries) ListPortalApplications(ctx context.Context, entityID string) ([]ListPortalApplicationsRow, error) {
+	rows, err := q.db.Query(ctx, listPortalApplications, entityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPortalApplicationsRow{}
+	for rows.Next() {
+		var i ListPortalApplicationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Type,
+			&i.Description,
+			&i.LogoUrl,
+			&i.EntryUrl,
 		); err != nil {
 			return nil, err
 		}

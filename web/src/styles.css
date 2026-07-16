@@ -499,6 +499,37 @@ a {
   padding: 24px 22px;
 }
 
+.portal-applications-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.portal-application-card {
+  height: 100%;
+}
+
+.portal-application-card .ant-card-body {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.portal-application-card-heading {
+  min-width: 0;
+}
+
+.portal-application-card-heading .ant-typography {
+  margin: 0 0 6px;
+}
+
+.portal-application-description {
+  flex: 1;
+  margin: 16px 0;
+  color: var(--ant-color-text-secondary);
+}
+
 .avatar-trigger {
   width: 42px;
   height: 42px;

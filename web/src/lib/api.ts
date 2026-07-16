@@ -142,6 +142,19 @@ export interface PlatformBranding {
   updated_at?: string;
 }
 
+export interface PortalApplication {
+  id: string;
+  name: string;
+  type: string;
+  description?: string;
+  logo_url?: string;
+  entry_url?: string;
+}
+
+export interface PortalApplicationsResponse {
+  applications: PortalApplication[];
+}
+
 export interface Entity {
   id: string;
   name: string;
@@ -689,6 +702,8 @@ export const api = {
   },
   updatePassword: (payload: { current_password: string; new_password: string }) =>
     apiRequest<void>('/api/me/password', { method: 'POST', body: payload }),
+  portalApplications: (options?: { signal?: AbortSignal }) =>
+    apiRequest<PortalApplicationsResponse>('/api/portal/applications', { signal: options?.signal }),
   updateAdminPassword: (payload: { current_password: string; new_password: string }) =>
     apiRequest<void>('/sapi/me/password', { method: 'POST', body: payload }),
   listAdminUsers: () => apiRequest<AdminUserListResponse>('/sapi/admin-users'),

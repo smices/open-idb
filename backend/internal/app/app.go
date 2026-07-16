@@ -21,6 +21,7 @@ import (
 	"github.com/smices/open-idb/internal/idp"
 	"github.com/smices/open-idb/internal/idp/feishu"
 	"github.com/smices/open-idb/internal/platform/postgres"
+	"github.com/smices/open-idb/internal/portal"
 	"github.com/smices/open-idb/internal/rbac"
 	"github.com/smices/open-idb/internal/sso"
 	"github.com/smices/open-idb/internal/worker"
@@ -125,6 +126,8 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		}
 		adminHandler := adminapi.NewHandler(nil, consoleService)
 		routerOptions = append(routerOptions, adminHandler.RegisterRoutes)
+		portalHandler := portal.NewHandler(queries)
+		routerOptions = append(routerOptions, portalHandler.RegisterRoutes)
 
 		// Config service (IM providers)
 		configService, err := adminapi.NewConfigService(queries, cfg.FeishuRedirectURI, cfg.ConfigEncryptionKey)
