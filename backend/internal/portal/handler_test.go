@@ -31,6 +31,23 @@ func TestServiceUsesConfiguredInternalApplicationURLForPortalEntry(t *testing.T)
 	}
 }
 
+func TestServiceUsesOIDCRedirectOriginForPortalEntryWhenNoExplicitURLExists(t *testing.T) {
+	service := service{store: fakeApplicationStore{rows: []generated.ListPortalApplicationsRow{{
+		ID:              "app-aom",
+		Name:            "SN-AOM",
+		Type:            "oidc_client",
+		OidcRedirectUri: "https://aom.example/auth/idb/callback?tenant=sweetnight",
+	}}}}
+
+	applications, err := service.ListApplications(context.Background(), "entity-a")
+	if err != nil {
+		t.Fatalf("list applications: %v", err)
+	}
+	if got := applications[0].EntryURL; got != "https://aom.example" {
+		t.Fatalf("OIDC entry URL = %q, want application origin", got)
+	}
+}
+
 func TestServiceAcceptsSafeApplicationEntryURLs(t *testing.T) {
 	service := service{store: fakeApplicationStore{rows: []generated.ListPortalApplicationsRow{
 		{ID: "app-javascript", Name: "Unsafe", Type: "internal_app", EntryUrl: "javascript:alert(1)"},
