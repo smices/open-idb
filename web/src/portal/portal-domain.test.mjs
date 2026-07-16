@@ -35,3 +35,21 @@ test('portal shell owns portal navigation and profile routing', () => {
   assert.match(shell, /ProfilePage/);
   assert.doesNotMatch(shell, /useLoader|admin-pages/);
 });
+
+test('portal profile is a complete read-only user detail view', () => {
+  const profile = source('./ProfilePage.jsx');
+
+  assert.match(profile, /Descriptions/);
+  assert.match(profile, /english_name|EnglishName/);
+  assert.match(profile, /employee_no|EmployeeNo/);
+  assert.match(profile, /job_title|JobTitle/);
+  assert.match(profile, /lifecycle_status|LifecycleStatus/);
+  assert.doesNotMatch(profile, /updateMe|updatePassword|Form.useForm|<Form|<Input|<Button/);
+});
+
+test('portal application cards are direct links when an entry URL is configured', () => {
+  const home = source('./PortalHomePage.jsx');
+
+  assert.match(home, /<a[^>]+href={application.entry_url}/);
+  assert.doesNotMatch(home, /<Button[^>]+href={application.entry_url}/);
+});

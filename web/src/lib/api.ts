@@ -90,9 +90,16 @@ export interface CurrentUser {
   entity_id: string;
   username: string;
   display_name: string;
+  english_name?: string;
+  employee_no?: string;
+  job_title?: string;
   email?: string;
   phone?: string;
   avatar_url?: string;
+  lifecycle_status: string;
+  user_type: string;
+  primary_source_id?: string;
+  primary_source_name?: string;
   locale: string;
   weak_password?: boolean;
   console_scope?: 'user' | 'enterprise_admin';

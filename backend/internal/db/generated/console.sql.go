@@ -17,14 +17,22 @@ SELECT
     u.entity_id,
     u.username,
     u.display_name,
+    u.english_name,
+    u.employee_no,
+    u.job_title,
     u.email,
     u.phone,
     u.avatar_url,
+    u.lifecycle_status,
+    u.user_type,
+    u.primary_source_id,
+    source.name AS primary_source_name,
     u.locale,
     lc.must_change_password,
     lc.weak_password
 FROM users u
 LEFT JOIN local_credentials lc ON lc.entity_id = u.entity_id AND lc.user_id = u.id
+LEFT JOIN identity_sources source ON source.entity_id = u.entity_id AND source.id = u.primary_source_id
 WHERE u.entity_id = $1
   AND u.id = $2
   AND u.lifecycle_status = 'active'
@@ -40,9 +48,16 @@ type GetCurrentUserByIDRow struct {
 	EntityID           string      `json:"entity_id"`
 	Username           string      `json:"username"`
 	DisplayName        string      `json:"display_name"`
+	EnglishName        string      `json:"english_name"`
+	EmployeeNo         string      `json:"employee_no"`
+	JobTitle           string      `json:"job_title"`
 	Email              pgtype.Text `json:"email"`
 	Phone              pgtype.Text `json:"phone"`
 	AvatarUrl          pgtype.Text `json:"avatar_url"`
+	LifecycleStatus    string      `json:"lifecycle_status"`
+	UserType           string      `json:"user_type"`
+	PrimarySourceID    pgtype.Text `json:"primary_source_id"`
+	PrimarySourceName  pgtype.Text `json:"primary_source_name"`
 	Locale             pgtype.Text `json:"locale"`
 	MustChangePassword pgtype.Bool `json:"must_change_password"`
 	WeakPassword       pgtype.Bool `json:"weak_password"`
@@ -56,9 +71,16 @@ func (q *Queries) GetCurrentUserByID(ctx context.Context, arg GetCurrentUserByID
 		&i.EntityID,
 		&i.Username,
 		&i.DisplayName,
+		&i.EnglishName,
+		&i.EmployeeNo,
+		&i.JobTitle,
 		&i.Email,
 		&i.Phone,
 		&i.AvatarUrl,
+		&i.LifecycleStatus,
+		&i.UserType,
+		&i.PrimarySourceID,
+		&i.PrimarySourceName,
 		&i.Locale,
 		&i.MustChangePassword,
 		&i.WeakPassword,

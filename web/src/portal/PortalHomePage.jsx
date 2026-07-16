@@ -1,5 +1,5 @@
 import { Alert, Avatar, Button, Card, Empty, Skeleton, Space, Tag, Typography } from 'antd';
-import { AppWindow, ExternalLink, RefreshCw } from 'lucide-react';
+import { AppWindow, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { usePortalApplications } from './usePortalApplications.js';
 
@@ -12,8 +12,8 @@ function applicationTypeLabel(application, t) {
 function ApplicationCard({ application, t }) {
   const title = application.name || application.id;
 
-  return (
-    <Card className="portal-application-card">
+  const card = (
+    <Card className="portal-application-card" hoverable={Boolean(application.entry_url)}>
       <Space align="start" size={12}>
         <Avatar shape="square" size={44} src={application.logo_url} icon={<AppWindow size={20} />} />
         <div className="portal-application-card-heading">
@@ -22,13 +22,11 @@ function ApplicationCard({ application, t }) {
         </div>
       </Space>
       {application.description ? <Typography.Paragraph className="portal-application-description">{application.description}</Typography.Paragraph> : null}
-      {application.entry_url ? (
-        <Button type="primary" icon={<ExternalLink size={16} />} href={application.entry_url} target="_blank" rel="noreferrer">
-          {t('portal.openApplication')}
-        </Button>
-      ) : null}
     </Card>
   );
+
+  if (!application.entry_url) return card;
+  return <a className="portal-application-link" href={application.entry_url} target="_blank" rel="noreferrer" aria-label={t('portal.openApplication', { application: title })}>{card}</a>;
 }
 
 export function PortalHomePage() {

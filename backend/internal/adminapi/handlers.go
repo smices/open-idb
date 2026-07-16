@@ -52,9 +52,16 @@ type CurrentUser struct {
 	EntityID           string   `json:"entity_id"`
 	Username           string   `json:"username"`
 	DisplayName        string   `json:"display_name"`
+	EnglishName        string   `json:"english_name,omitempty"`
+	EmployeeNo         string   `json:"employee_no,omitempty"`
+	JobTitle           string   `json:"job_title,omitempty"`
 	Email              string   `json:"email,omitempty"`
 	Phone              string   `json:"phone,omitempty"`
 	AvatarURL          string   `json:"avatar_url,omitempty"`
+	LifecycleStatus    string   `json:"lifecycle_status"`
+	UserType           string   `json:"user_type"`
+	PrimarySourceID    string   `json:"primary_source_id,omitempty"`
+	PrimarySourceName  string   `json:"primary_source_name,omitempty"`
 	Locale             string   `json:"locale"`
 	MustChangePassword bool     `json:"must_change_password"`
 	WeakPassword       bool     `json:"weak_password"`

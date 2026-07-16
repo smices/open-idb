@@ -43,14 +43,22 @@ SELECT
     u.entity_id,
     u.username,
     u.display_name,
+    u.english_name,
+    u.employee_no,
+    u.job_title,
     u.email,
     u.phone,
     u.avatar_url,
+    u.lifecycle_status,
+    u.user_type,
+    u.primary_source_id,
+    source.name AS primary_source_name,
     u.locale,
     lc.must_change_password,
     lc.weak_password
 FROM users u
 LEFT JOIN local_credentials lc ON lc.entity_id = u.entity_id AND lc.user_id = u.id
+LEFT JOIN identity_sources source ON source.entity_id = u.entity_id AND source.id = u.primary_source_id
 WHERE u.entity_id = $1
   AND u.id = $2
   AND u.lifecycle_status = 'active';

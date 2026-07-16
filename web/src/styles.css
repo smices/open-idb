@@ -509,6 +509,12 @@ a {
   height: 100%;
 }
 
+.portal-application-link {
+  color: inherit;
+  display: block;
+  text-decoration: none;
+}
+
 .portal-application-card .ant-card-body {
   display: flex;
   height: 100%;
