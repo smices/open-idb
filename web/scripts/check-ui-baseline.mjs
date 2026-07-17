@@ -174,6 +174,12 @@ if (!/const onLoadData = async[\s\S]*message\.error\(errorMessage\(error\)\);[\s
 if (adminPagesJs.includes('setConfigOpen(true);\n    try')) {
   failures.push('Identity source configuration must not open before its existing values load successfully');
 }
+if (!adminPagesJs.includes("api.triggerSourceSync(row.id, 'full')") || !adminPagesJs.includes("t('identitySources.triggerFull')")) {
+  failures.push('Identity sources page must keep the guarded full-sync recovery action');
+}
+if (!apiTs.includes('/sync/${mode}') || !apiTs.includes('triggerSourceSync:')) {
+  failures.push('Frontend API must keep the identity-source sync trigger endpoint');
+}
 if (!/configForm\.resetFields\(\);\s*configForm\.setFieldsValue/.test(adminPagesJs)) {
   failures.push('Identity source configuration reload must clear cancelled form values before applying server state');
 }

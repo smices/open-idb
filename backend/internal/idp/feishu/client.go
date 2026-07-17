@@ -320,7 +320,7 @@ func (c *Client) users(ctx context.Context, token string, departments []idp.Dire
 	}
 
 	out := make([]idp.DirectoryUser, 0)
-	seenUsers := make(map[string]struct{})
+	userIndexes := make(map[string]int)
 	for _, departmentID := range departmentIDs {
 		users, err := c.usersByDepartment(ctx, token, departmentID)
 		if err != nil {
@@ -331,11 +331,12 @@ func (c *Client) users(ctx context.Context, token string, departments []idp.Dire
 			if userKey == "" {
 				return nil, fmt.Errorf("feishu user is missing user_id, open_id, and union_id")
 			}
-			if _, ok := seenUsers[userKey]; ok {
+			if index, ok := userIndexes[userKey]; ok {
+				out[index] = mergeDirectoryUser(out[index], user)
 				continue
 			}
 			out = append(out, user)
-			seenUsers[userKey] = struct{}{}
+			userIndexes[userKey] = len(out) - 1
 		}
 	}
 
@@ -649,6 +650,47 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func mergeDirectoryUser(existing, next idp.DirectoryUser) idp.DirectoryUser {
+	if existing.ExternalUnionID == "" {
+		existing.ExternalUnionID = next.ExternalUnionID
+	}
+	if existing.ExternalOpenID == "" {
+		existing.ExternalOpenID = next.ExternalOpenID
+	}
+	if existing.Name == "" {
+		existing.Name = next.Name
+	}
+	// A prior department listing may only yield the pinyin fallback. Only
+	// replace it when the later record carries an explicit provider English name.
+	if english := explicitEnglishName(next.RawProfile); english != "" {
+		existing.EnglishName = english
+	} else if existing.EnglishName == "" {
+		existing.EnglishName = next.EnglishName
+	}
+	if existing.EmployeeNo == "" {
+		existing.EmployeeNo = next.EmployeeNo
+	}
+	if existing.JobTitle == "" {
+		existing.JobTitle = next.JobTitle
+	}
+	if existing.Email == "" {
+		existing.Email = next.Email
+	}
+	if existing.Phone == "" {
+		existing.Phone = next.Phone
+	}
+	if existing.AvatarURL == "" {
+		existing.AvatarURL = next.AvatarURL
+	}
+	if existing.Status == "" || existing.Status == "unknown" {
+		existing.Status = next.Status
+	}
+	if len(existing.RawProfile) == 0 {
+		existing.RawProfile = cloneBytes(next.RawProfile)
+	}
+	return existing
+}
+
 func englishNameForUser(name string, values ...interface{}) string {
 	parts := make([]string, 0, len(values))
 	for _, value := range values {
@@ -666,6 +708,19 @@ func englishNameForUser(name string, values ...interface{}) string {
 		return normalizeLatinName(name)
 	}
 	return pinyinDisplayName(name)
+}
+
+func explicitEnglishName(raw []byte) string {
+	var profile struct {
+		EnName   string          `json:"en_name"`
+		English  string          `json:"english_name"`
+		NameEN   string          `json:"name_en"`
+		I18nName json.RawMessage `json:"i18n_name"`
+	}
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		return ""
+	}
+	return normalizeLatinName(firstNonEmpty(profile.EnName, profile.English, profile.NameEN, englishNameFromI18n(profile.I18nName)))
 }
 
 func englishNameFromI18n(raw json.RawMessage) string {

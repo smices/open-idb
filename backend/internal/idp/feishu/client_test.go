@@ -58,28 +58,30 @@ func TestFullSyncFetchesTokenDepartmentsAndUsers(t *testing.T) {
 			if got := r.URL.Query().Get("department_id"); got != "0" && got != "od-1" {
 				t.Fatalf("user department_id = %q, want root or synced department", got)
 			}
+			user := map[string]interface{}{
+				"user_id":    "ou_1",
+				"union_id":   "on_1",
+				"open_id":    "open_1",
+				"name":       "张三",
+				"email":      "zhangsan@example.test",
+				"mobile":     "13800000000",
+				"avatar_url": "https://example.test/a.png",
+				"department_ids": []string{
+					"0",
+				},
+				"status": map[string]interface{}{
+					"is_activated": true,
+					"is_frozen":    false,
+					"is_resigned":  false,
+				},
+			}
+			if r.URL.Query().Get("department_id") == "od-1" {
+				user["en_name"] = "Zhang San"
+			}
 			writeJSON(t, w, map[string]interface{}{
 				"code": 0,
 				"data": map[string]interface{}{
-					"items": []map[string]interface{}{
-						{
-							"user_id":    "ou_1",
-							"union_id":   "on_1",
-							"open_id":    "open_1",
-							"name":       "张三",
-							"email":      "zhangsan@example.test",
-							"mobile":     "13800000000",
-							"avatar_url": "https://example.test/a.png",
-							"department_ids": []string{
-								"0",
-							},
-							"status": map[string]interface{}{
-								"is_activated": true,
-								"is_frozen":    false,
-								"is_resigned":  false,
-							},
-						},
-					},
+					"items": []map[string]interface{}{user},
 				},
 			})
 		default:
@@ -109,6 +111,9 @@ func TestFullSyncFetchesTokenDepartmentsAndUsers(t *testing.T) {
 	if len(data.Users) != 1 || data.Users[0].Name != "张三" || data.Users[0].Status != "active" {
 		t.Fatalf("users = %#v", data.Users)
 	}
+	if data.Users[0].EnglishName != "Zhang San" {
+		t.Fatalf("EnglishName = %q, want Zhang San", data.Users[0].EnglishName)
+	}
 	if !strings.Contains(string(data.Users[0].RawProfile), "张三") {
 		t.Fatalf("user raw profile = %s", string(data.Users[0].RawProfile))
 	}
@@ -122,6 +127,23 @@ func TestFullSyncFetchesTokenDepartmentsAndUsers(t *testing.T) {
 	}
 	if _, ok := rawUser["department_id"]; ok {
 		t.Fatalf("user raw profile should not include synthetic department_id: %#v", rawUser["department_id"])
+	}
+}
+
+func TestMergeDirectoryUserPreservesExplicitEnglishNameAgainstPinyinFallback(t *testing.T) {
+	existing := idp.DirectoryUser{
+		Name:        "张三",
+		EnglishName: "Zhang San",
+		RawProfile:  []byte(`{"user_id":"ou_1","name":"张三","en_name":"Zhang San"}`),
+	}
+	next := idp.DirectoryUser{
+		Name:        "张三",
+		EnglishName: "ZhangSan",
+		RawProfile:  []byte(`{"user_id":"ou_1","name":"张三"}`),
+	}
+
+	if got := mergeDirectoryUser(existing, next).EnglishName; got != "Zhang San" {
+		t.Fatalf("EnglishName = %q, want Zhang San", got)
 	}
 }
 
