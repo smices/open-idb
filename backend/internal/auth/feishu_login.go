@@ -801,6 +801,10 @@ func classifyFeishuLoginError(err error) string {
 		return "user_disabled"
 	case message == "no_account":
 		return "no_account"
+	case message == "identity_not_found":
+		return "identity_not_found"
+	case message == "identity_inactive":
+		return "identity_inactive"
 	case strings.Contains(message, "feishu client is not configured"),
 		strings.Contains(message, "invalid_feishu_config"):
 		return "feishu_config_error"

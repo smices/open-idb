@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import { feishuAuthCodeFromBridge, isFeishuClient, normalizeWorkplaceProvider, queryAuthCode, returnToParam } from './lib/feishu-workplace.js';
+import { copyDiagnostic, diagnosticCode, formatDiagnostic } from './lib/diagnostics.js';
 import { safeReturnTo } from './lib/navigation.js';
 
 const API_TARGET = import.meta.env.VITE_API_TARGET || import.meta.env.PUBLIC_API_TARGET || '';
@@ -11,7 +12,12 @@ const MESSAGES = {
     eyebrow: '飞书工作台 SSO',
     title: '正在进入应用',
     titleDocument: '正在进入应用 - IdBridge',
-    error: '进入应用失败，正在返回登录页。',
+    error: '进入应用失败。你可以重试、返回登录页，或复制诊断信息给支持人员。',
+    retry: '重试',
+    returnToLogin: '返回登录页',
+    copyDiagnostics: '复制诊断信息',
+    copied: '诊断信息已复制',
+    copyFailed: '复制失败，请手动复制页面文字。',
     steps: [
       { key: 'context', label: '解析访问上下文', detail: '正在确认应用与企业身份' },
       { key: 'feishu', label: '获取飞书授权', detail: '正在连接飞书工作台' },
@@ -22,7 +28,12 @@ const MESSAGES = {
     eyebrow: 'Feishu Workplace SSO',
     title: 'Opening your app',
     titleDocument: 'Opening your app - IdBridge',
-    error: 'Unable to open the app. Returning to sign-in.',
+    error: 'Unable to open the app. Retry, return to sign-in, or copy diagnostics for support.',
+    retry: 'Retry',
+    returnToLogin: 'Return to sign-in',
+    copyDiagnostics: 'Copy diagnostics',
+    copied: 'Diagnostics copied',
+    copyFailed: 'Copy failed. Copy the page text manually.',
     steps: [
       { key: 'context', label: 'Resolving access context', detail: 'Checking the application and organization identity' },
       { key: 'feishu', label: 'Requesting Feishu authorization', detail: 'Connecting to Feishu Workplace' },
@@ -80,13 +91,22 @@ async function apiRequest(path, options = {}) {
   if (contentType.includes('application/json')) {
     const payload = await response.json();
     if (!response.ok) {
-      throw new Error(payload?.error_description || payload?.message || 'Request failed');
+      const error = new Error(payload?.error_description || payload?.message || 'Request failed');
+      error.status = response.status;
+      error.code = payload?.error || '';
+      error.traceId = response.headers.get('x-trace-id') || response.headers.get('x-request-id') || '';
+      throw error;
     }
     return payload;
   }
 
   const text = await response.text();
-  if (!response.ok) throw new Error(text || 'Request failed');
+  if (!response.ok) {
+    const error = new Error(text || 'Request failed');
+    error.status = response.status;
+    error.traceId = response.headers.get('x-trace-id') || response.headers.get('x-request-id') || '';
+    throw error;
+  }
   return text;
 }
 
@@ -443,6 +463,10 @@ function injectStyles() {
       display: block;
     }
 
+    .workplace-error-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .workplace-error-actions button { border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; font: inherit; padding: 6px 9px; }
+    .workplace-error-actions button:focus-visible { outline: 2px solid var(--workplace-accent); outline-offset: 2px; }
+
     @keyframes idb-workplace-progress {
       0% { transform: translateX(-100%); }
       52% { transform: translateX(92%); }
@@ -556,11 +580,37 @@ function setStep(index, detail = steps[index]?.detail || '') {
   if (detailNode) detailNode.textContent = detail;
 }
 
-function showError(message) {
+function showError(message, diagnostic, returnTo) {
   const errorNode = document.querySelector('[data-workplace-error]');
   if (!errorNode) return;
-  errorNode.textContent = message;
+  errorNode.replaceChildren();
+  const messageNode = document.createElement('div');
+  messageNode.textContent = message;
+  const actions = document.createElement('div');
+  actions.className = 'workplace-error-actions';
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.textContent = copy.retry;
+  retry.addEventListener('click', () => window.location.reload());
+  const returnButton = document.createElement('button');
+  returnButton.type = 'button';
+  returnButton.textContent = copy.returnToLogin;
+  returnButton.addEventListener('click', () => redirectToLogin(returnTo));
+  const copyButton = document.createElement('button');
+  copyButton.type = 'button';
+  copyButton.textContent = copy.copyDiagnostics;
+  copyButton.addEventListener('click', async () => {
+    try {
+      await copyDiagnostic(diagnostic);
+      copyButton.textContent = copy.copied;
+    } catch {
+      copyButton.textContent = copy.copyFailed;
+    }
+  });
+  actions.append(retry, returnButton, copyButton);
+  errorNode.append(messageNode, actions);
   errorNode.classList.add('is-visible');
+  document.querySelector('main')?.setAttribute('aria-busy', 'false');
 }
 
 function redirectToLogin(returnTo, loginError = 'workplace_not_available') {
@@ -630,12 +680,13 @@ async function runWorkplaceContinue() {
     });
     window.location.replace(returnTo);
   } catch (error) {
-    showError(copy.error);
-    window.setTimeout(() => {
-      const message = error instanceof Error ? error.message : '';
-      const loginError = message.includes('configured') ? 'workplace_not_configured' : 'workplace_not_available';
-      redirectToLogin(returnTo, loginError);
-    }, 900);
+    const stage = document.querySelector('[data-step].is-active')?.getAttribute('data-step') || 'unknown';
+    showError(copy.error, formatDiagnostic({
+      code: diagnosticCode(error, 'workplace_failed'),
+      stage,
+      route: window.location.href,
+      error,
+    }), returnTo);
   }
 }
 

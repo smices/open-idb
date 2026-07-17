@@ -24,13 +24,13 @@
 
 **Produces:** `GET /api/portal/applications` with `{ applications: [{ id, name, type, description?, logo_url?, entry_url? }] }`.
 
-- [ ] Write failing handler tests for session entity scope, enabled-only filtering, deterministic ordering, unauthenticated rejection, and safe response projection.
-- [ ] Run `go test ./internal/portal -run TestListApplications -count=1`; it must fail because the handler and route are absent.
-- [ ] Add a dedicated query scoped by `entity_id` with `status = 'active'` and `ORDER BY name, id`; select only safe catalogue fields.
-- [ ] Implement the session-authenticated handler with a response-specific struct; do not call admin list endpoints or return admin application models.
-- [ ] Register the route alongside user-session routes, not under `/sapi` or admin authorization middleware.
-- [ ] Re-run `go test ./internal/portal -run TestListApplications -count=1`; it must pass.
-- [ ] Commit with `feat(portal): add enterprise application catalogue`.
+- [x] Write failing handler tests for session entity scope, enabled-only filtering, deterministic ordering, unauthenticated rejection, and safe response projection.
+- [x] Run `go test ./internal/portal -run TestListApplications -count=1`; it must fail because the handler and route are absent.
+- [x] Add a dedicated query scoped by `entity_id` with `status = 'active'` and `ORDER BY name, id`; select only safe catalogue fields.
+- [x] Implement the session-authenticated handler with a response-specific struct; do not call admin list endpoints or return admin application models.
+- [x] Register the route alongside user-session routes, not under `/sapi` or admin authorization middleware.
+- [x] Re-run `go test ./internal/portal -run TestListApplications -count=1`; it must pass.
+- [x] Commit with `feat(portal): add enterprise application catalogue`.
 
 ### Task 2: Create the independent Portal frontend domain
 
@@ -40,21 +40,21 @@
 
 **Produces:** `usePortalApplications(): { loading, applications, error, reload }` and an independent Portal shell.
 
-- [ ] Write failing tests for applications, empty state, request error with retry, and absence of imports from `admin-pages.jsx` or `useLoader`.
-- [ ] Run the repository's focused frontend test command; it must fail because the Portal API method, hook, and components do not exist.
-- [ ] Add the typed API client method for `/api/portal/applications`.
-- [ ] Implement `usePortalApplications` with local loading, error, retry, and stale-request cancellation; it must not reuse the admin hook.
-- [ ] Implement the Portal home page as a card or responsive list directory using only catalogue fields. Render an entry action only when `entry_url` is present. Do not display roles, permissions, `has_access`, or authorization wording.
-- [ ] Move Portal navigation, profile routing, and home-page rendering out of `main.jsx`; retain admin lazy-loading exclusively for admin routes.
-- [ ] Run focused frontend tests and `npm run build` in `web/`; both must pass without an unresolved `useLoader` reference.
-- [ ] Commit with `feat(portal): isolate enterprise application directory`.
+- [x] Write failing tests for applications, empty state, request error with retry, and absence of imports from `admin-pages.jsx` or `useLoader`.
+- [x] Run the repository's focused frontend test command; it must fail because the Portal API method, hook, and components do not exist.
+- [x] Add the typed API client method for `/api/portal/applications`.
+- [x] Implement `usePortalApplications` with local loading, error, retry, and stale-request cancellation; it must not reuse the admin hook.
+- [x] Implement the Portal home page as a card or responsive list directory using only catalogue fields. Render an entry action only when `entry_url` is present. Do not display roles, permissions, `has_access`, or authorization wording.
+- [x] Move Portal navigation, profile routing, and home-page rendering out of `main.jsx`; retain admin lazy-loading exclusively for admin routes.
+- [x] Run focused frontend tests and `npm run build` in `web/`; both must pass without an unresolved `useLoader` reference.
+- [x] Commit with `feat(portal): isolate enterprise application directory`.
 
 ### Task 3: Integration verification
 
 **Files:** Modify the closest authenticated Portal integration test under `backend/tests/integration/`.
 
-- [ ] Write an integration test that creates enabled and disabled applications for two enterprises, authenticates one user, and asserts that the Portal endpoint returns only that enterprise's enabled catalogue.
-- [ ] Assert in the same test that `/api/me/access` retains its access-summary behavior.
-- [ ] Run `go test ./tests/integration -run Portal -count=1`; it must pass.
-- [ ] Run final verification: `(cd backend && go test ./...)`, `(cd web && npm run build)`, and `git diff --check`.
-- [ ] Commit with `test(portal): cover enterprise application catalogue`.
+- [x] Write an integration test that creates enabled and disabled applications for two enterprises, authenticates one user, and asserts that the Portal endpoint returns only that enterprise's enabled catalogue.
+- [x] Assert in the same test that `/api/me/access` retains its access-summary behavior.
+- [x] Run `go test ./tests/integration -run Portal -count=1`; it must pass.
+- [x] Run final verification: `(cd backend && go test ./...)`, `(cd web && npm run build)`, and `git diff --check`.
+- [x] Commit with `test(portal): cover enterprise application catalogue`.

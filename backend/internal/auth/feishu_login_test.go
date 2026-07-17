@@ -637,6 +637,8 @@ func TestClassifyFeishuLoginError(t *testing.T) {
 	}{
 		{name: "disabled user", err: errors.New("user_disabled"), want: "user_disabled"},
 		{name: "no account", err: errors.New("no_account"), want: "no_account"},
+		{name: "identity not found", err: errors.New("identity_not_found"), want: "identity_not_found"},
+		{name: "identity inactive", err: errors.New("identity_inactive"), want: "identity_inactive"},
 		{name: "config", err: errors.New("feishu client is not configured"), want: "feishu_config_error"},
 		{name: "app token", err: errors.New("feishu oauth: feishu app token failed: code=999 msg=bad secret"), want: "feishu_app_token_failed"},
 		{name: "oidc token", err: errors.New("feishu oauth: feishu oidc token exchange failed: code=20027 msg=invalid code"), want: "feishu_oidc_token_failed"},

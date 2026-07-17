@@ -2,6 +2,7 @@ import { Alert, Avatar, Button, Card, Empty, Skeleton, Space, Tag, Typography } 
 import { AppWindow, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { usePortalApplications } from './usePortalApplications.js';
+import { DiagnosticDetails } from './DiagnosticDetails.jsx';
 
 function applicationTypeLabel(application, t) {
   const key = `applications.type.${application.type}`;
@@ -44,6 +45,7 @@ export function PortalHomePage() {
         type="error"
         showIcon
         message={t('portal.fetchFailed')}
+        description={<DiagnosticDetails error={error} route={window.location.href} t={t} />}
         action={<Button size="small" icon={<RefreshCw size={14} />} onClick={reload}>{t('common.retry')}</Button>}
       />
     );

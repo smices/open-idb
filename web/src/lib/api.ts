@@ -5,12 +5,19 @@ type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 const API_TARGET = import.meta.env.VITE_API_TARGET || import.meta.env.PUBLIC_API_TARGET || '';
 
 type JsonLike = Record<string, unknown>;
+type ApiRequestError = Error & { status?: number; code?: string; traceId?: string; requestPath?: string };
+
+function requestError(message: string, response: Response, payload?: JsonLike): ApiRequestError {
+  const err = new Error(message) as ApiRequestError;
+  err.status = response.status;
+  if (typeof payload?.error === 'string') err.code = payload.error;
+  err.traceId = response.headers.get('x-trace-id') || response.headers.get('x-request-id') || undefined;
+  return err;
+}
 
 async function handleResponse<T>(response: Response): Promise<T> {
   if (response.status === 401 || response.status === 403) {
-    const err = new Error('unauthorized') as Error & { status?: number };
-    err.status = response.status;
-    throw err;
+    throw requestError('unauthorized', response);
   }
 
   if (response.status === 204) {
@@ -26,18 +33,14 @@ async function handleResponse<T>(response: Response): Promise<T> {
         : typeof payload?.message === 'string'
           ? payload.message
           : 'Request failed') as string;
-      const err = new Error(msg) as Error & { status?: number };
-      err.status = response.status;
-      throw err;
+      throw requestError(msg, response, payload);
     }
     return payload as T;
   }
 
   const text = await response.text();
   if (!response.ok) {
-    const err = new Error(text || 'Request failed') as Error & { status?: number };
-    err.status = response.status;
-    throw err;
+    throw requestError(text || 'Request failed', response);
   }
   return text as T;
 }
@@ -72,7 +75,12 @@ export async function apiRequest<T>(
     redirect: 'follow',
   });
 
-  return handleResponse<T>(response);
+  try {
+    return await handleResponse<T>(response);
+  } catch (error) {
+    if (error && typeof error === 'object') (error as ApiRequestError).requestPath = path;
+    throw error;
+  }
 }
 
 function queryString(params?: Record<string, string | number | undefined>): string {

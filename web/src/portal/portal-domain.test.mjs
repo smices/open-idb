@@ -27,6 +27,14 @@ test('portal home renders application, empty, and retryable error states without
   assert.doesNotMatch(home, /has_access|roles|permissions|useLoader|admin-pages/);
 });
 
+test('portal application errors expose a copyable diagnostic detail', () => {
+  const home = source('./PortalHomePage.jsx');
+  const detail = source('./DiagnosticDetails.jsx');
+
+  assert.match(home, /DiagnosticDetails/);
+  assert.match(detail, /copyDiagnostic/);
+});
+
 test('portal shell owns portal navigation and profile routing', () => {
   const shell = source('./PortalShell.jsx');
 
