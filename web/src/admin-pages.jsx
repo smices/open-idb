@@ -225,6 +225,7 @@ function IdentitySourcesPage() {
         { title: t('identitySources.syncEnabled'), dataIndex: 'sync_enabled', render: (v) => <Tag color={v ? 'green' : undefined}>{t(Boolean(v) ? 'common.yes' : 'common.no')}</Tag> },
         { title: t('users.updatedAt'), dataIndex: 'updated_at', render: formatDate },
         { title: t('common.actions'), render: (_, row) => <Space>
+          <Popconfirm title={t('identitySources.fullSyncConfirm')} onConfirm={() => runAction(message, async () => { await api.triggerSourceSync(row.id, 'full'); message.success(t('identitySources.fullSyncStarted')); })}><Button size="small">{t('identitySources.triggerFull')}</Button></Popconfirm>
           <Button size="small" onClick={() => runAction(message, async () => { await api.triggerSourceSync(row.id, 'incremental'); message.success(t('identitySources.incrementalSyncStarted')); })}>{t('identitySources.triggerIncremental')}</Button>
           <Popconfirm title={t('common.delete')} onConfirm={() => runAction(message, async () => { await api.deleteIdentitySource(row.id); message.success(t('common.deleteSuccess')); await reload(); })}><Button size="small" danger>{t('common.delete')}</Button></Popconfirm>
         </Space> },
