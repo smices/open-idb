@@ -24,6 +24,8 @@ type mockUserService struct {
 	listArchivedUsersFn   func(ctx context.Context, entityID, username string, limit, offset int32) ([]ArchivedUserResponse, error)
 	countArchivedUsersFn  func(ctx context.Context, entityID, username string) (int64, error)
 	getArchivedUserFn     func(ctx context.Context, entityID, id string) (ArchivedUserResponse, error)
+	deleteArchivedUserFn  func(ctx context.Context, entityID, id string) (int64, error)
+	clearArchivedUsersFn  func(ctx context.Context, entityID string) (int64, error)
 	archiveUserFn         func(ctx context.Context, entityID, userID, actorUserID, reason string) (ArchivedUserResponse, error)
 	updateUserLifecycleFn func(ctx context.Context, entityID, id string, status string) (UserResponse, error)
 	updateUserFn          func(ctx context.Context, entityID, id string, displayName, email, phone, locale pgtype.Text) (UserResponse, error)
@@ -64,6 +66,18 @@ func (m *mockUserService) GetArchivedUser(ctx context.Context, entityID, id stri
 		return m.getArchivedUserFn(ctx, entityID, id)
 	}
 	return ArchivedUserResponse{}, nil
+}
+func (m *mockUserService) DeleteArchivedUser(ctx context.Context, entityID, id string) (int64, error) {
+	if m.deleteArchivedUserFn != nil {
+		return m.deleteArchivedUserFn(ctx, entityID, id)
+	}
+	return 0, nil
+}
+func (m *mockUserService) ClearArchivedUsers(ctx context.Context, entityID string) (int64, error) {
+	if m.clearArchivedUsersFn != nil {
+		return m.clearArchivedUsersFn(ctx, entityID)
+	}
+	return 0, nil
 }
 func (m *mockUserService) ArchiveUser(ctx context.Context, entityID, userID, actorUserID, reason string) (ArchivedUserResponse, error) {
 	if m.archiveUserFn != nil {
@@ -479,5 +493,73 @@ func TestGetArchivedUser_Success(t *testing.T) {
 	}
 	if archived.ID != "01HZZZZZZZ0000000000000010" {
 		t.Fatalf("expected archived id 01HZZZZZZZ0000000000000010, got %s", archived.ID)
+	}
+}
+
+func TestDeleteArchivedUser_Success(t *testing.T) {
+	mock := &mockUserService{
+		deleteArchivedUserFn: func(_ context.Context, entityID, id string) (int64, error) {
+			if entityID != "01HZZZZZZZ0000000000000099" {
+				t.Fatalf("unexpected entity id %s", entityID)
+			}
+			if id != "01HZZZZZZZ0000000000000010" {
+				t.Fatalf("unexpected archived user id %s", id)
+			}
+			return 1, nil
+		},
+	}
+	router := newUserTestRouter(NewUserHandler(mock))
+	req := httptest.NewRequest(http.MethodDelete, "/sapi/archived-users/01HZZZZZZZ0000000000000010", nil)
+	req.AddCookie(adminTestSessionCookie())
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+}
+
+func TestDeleteArchivedUser_NotFound(t *testing.T) {
+	mock := &mockUserService{deleteArchivedUserFn: func(_ context.Context, _, _ string) (int64, error) {
+		return 0, nil
+	}}
+	router := newUserTestRouter(NewUserHandler(mock))
+	req := httptest.NewRequest(http.MethodDelete, "/sapi/archived-users/01HZZZZZZZ0000000000000010", nil)
+	req.AddCookie(adminTestSessionCookie())
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func TestClearArchivedUsers_ReturnsDeletedCount(t *testing.T) {
+	mock := &mockUserService{clearArchivedUsersFn: func(_ context.Context, entityID string) (int64, error) {
+		if entityID != "01HZZZZZZZ0000000000000099" {
+			t.Fatalf("unexpected entity id %s", entityID)
+		}
+		return 3, nil
+	}}
+	router := newUserTestRouter(NewUserHandler(mock))
+	req := httptest.NewRequest(http.MethodDelete, "/sapi/archived-users", nil)
+	req.AddCookie(adminTestSessionCookie())
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var body struct {
+		Deleted int64 `json:"deleted"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Deleted != 3 {
+		t.Fatalf("deleted = %d, want 3", body.Deleted)
 	}
 }

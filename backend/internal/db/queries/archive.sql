@@ -97,3 +97,12 @@ SELECT id, entity_id, original_user_id, username, display_name, english_name, em
 FROM archived_users
 WHERE entity_id = sqlc.arg('entity_id')
   AND original_user_id = sqlc.arg('original_user_id');
+
+-- name: DeleteArchivedUser :execrows
+DELETE FROM archived_users
+WHERE entity_id = sqlc.arg('entity_id')
+  AND id = sqlc.arg('id');
+
+-- name: ClearArchivedUsers :execrows
+DELETE FROM archived_users
+WHERE entity_id = sqlc.arg('entity_id');

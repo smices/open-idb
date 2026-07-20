@@ -11,6 +11,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearAuditLogs = `-- name: ClearAuditLogs :execrows
+DELETE FROM audit_logs
+WHERE entity_id = $1
+`
+
+func (q *Queries) ClearAuditLogs(ctx context.Context, entityID string) (int64, error) {
+	result, err := q.db.Exec(ctx, clearAuditLogs, entityID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countAuditLogs = `-- name: CountAuditLogs :one
 SELECT count(*)::bigint
 FROM audit_logs
@@ -105,6 +118,25 @@ func (q *Queries) CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) 
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const deleteAuditLog = `-- name: DeleteAuditLog :execrows
+DELETE FROM audit_logs
+WHERE entity_id = $1
+  AND id = $2
+`
+
+type DeleteAuditLogParams struct {
+	EntityID string `json:"entity_id"`
+	ID       string `json:"id"`
+}
+
+func (q *Queries) DeleteAuditLog(ctx context.Context, arg DeleteAuditLogParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAuditLog, arg.EntityID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const listAuditLogs = `-- name: ListAuditLogs :many

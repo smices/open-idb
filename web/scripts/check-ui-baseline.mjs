@@ -204,6 +204,27 @@ if (!appJs.includes('const saveProfile = () => runAction') || !appJs.includes('c
 if (!apiTs.includes(applicationTypeUnion) || !apiTs.includes('payload: ApplicationWriteRequest')) {
   failures.push('Frontend API must expose the canonical ApplicationType contract');
 }
+for (const method of ['deleteArchivedUser:', 'clearArchivedUsers:', 'deleteAuditLog:', 'clearAuditLogs:']) {
+  if (!apiTs.includes(method)) {
+    failures.push(`Frontend API must expose destructive admin method: ${method}`);
+  }
+}
+for (const translationKey of [
+  'archivedUsers.deleteConfirm',
+  'archivedUsers.clearConfirm',
+  'audit.deleteConfirm',
+  'audit.clearConfirm',
+]) {
+  if (i18nJs.split(`'${translationKey}':`).length - 1 !== 2) {
+    failures.push(`Missing bilingual destructive-action label: ${translationKey}`);
+  }
+}
+if (!adminPagesJs.includes('api.deleteArchivedUser(id)') || !adminPagesJs.includes('deleteArchivedUser(row.id)') || !adminPagesJs.includes('api.clearArchivedUsers()')) {
+  failures.push('Archived users page must expose single-delete and clear-all controls');
+}
+if (!adminPagesJs.includes('api.deleteAuditLog(id)') || !adminPagesJs.includes('deleteAuditLog(row.id)') || !adminPagesJs.includes('api.clearAuditLogs()')) {
+  failures.push('Audit page must expose single-delete and clear-all controls');
+}
 for (const appType of applicationTypes) {
   const key = `'applications.type.${appType}':`;
   if (i18nJs.split(key).length - 1 !== 2) {

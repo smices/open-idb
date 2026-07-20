@@ -683,6 +683,10 @@ export const api = {
     });
     return apiRequest<AuditLogListResponse>(`/sapi/audit-logs${suffix}`);
   },
+  deleteAuditLog: (id: string) =>
+    apiRequest<void>(`/sapi/audit-logs/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  clearAuditLogs: () =>
+    apiRequest<{ deleted: number }>('/sapi/audit-logs', { method: 'DELETE' }),
   listSyncJobs: (params?: { limit?: number; offset?: number }) => {
     const suffix = queryString({ limit: params?.limit, offset: params?.offset });
     return apiRequest<SyncJobListResponse>(`/sapi/sync-jobs${suffix}`);
@@ -767,6 +771,10 @@ export const api = {
   },
   getArchivedUser: (id: string) =>
     apiRequest<ArchivedUser>(`/sapi/archived-users/${encodeURIComponent(id)}`),
+  deleteArchivedUser: (id: string) =>
+    apiRequest<void>(`/sapi/archived-users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  clearArchivedUsers: () =>
+    apiRequest<{ deleted: number }>('/sapi/archived-users', { method: 'DELETE' }),
   getUser: (id: string) => apiRequest<User>(`/sapi/users/${encodeURIComponent(id)}`),
   updateUser: (id: string, payload: UpdateUserRequest) =>
     apiRequest<User>(`/sapi/users/${encodeURIComponent(id)}`, { method: 'PUT', body: payload }),

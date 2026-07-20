@@ -16,9 +16,14 @@ import (
 
 // fakeAuditService implements AuditService for handler tests.
 type fakeAuditService struct {
-	result ListResult
-	opts   ListOptions
-	err    error
+	result       ListResult
+	opts         ListOptions
+	err          error
+	deleteEntity string
+	deleteID     string
+	deleteResult int64
+	clearEntity  string
+	clearResult  int64
 }
 
 func (f *fakeAuditService) List(_ context.Context, _ string, opts ListOptions) (ListResult, error) {
@@ -27,6 +32,17 @@ func (f *fakeAuditService) List(_ context.Context, _ string, opts ListOptions) (
 		return ListResult{}, f.err
 	}
 	return f.result, nil
+}
+
+func (f *fakeAuditService) Delete(_ context.Context, entityID, id string) (int64, error) {
+	f.deleteEntity = entityID
+	f.deleteID = id
+	return f.deleteResult, f.err
+}
+
+func (f *fakeAuditService) Clear(_ context.Context, entityID string) (int64, error) {
+	f.clearEntity = entityID
+	return f.clearResult, f.err
 }
 
 func newTestRouter(svc AuditService) http.Handler {
@@ -221,6 +237,65 @@ func TestListAuditLogsDefaultPagination(t *testing.T) {
 	}
 	if svc.opts.Offset != 0 {
 		t.Errorf("default Offset = %d, want 0", svc.opts.Offset)
+	}
+}
+
+func TestDeleteAuditLog_Success(t *testing.T) {
+	svc := &fakeAuditService{deleteResult: 1}
+	router := newTestRouter(svc)
+	req := httptest.NewRequest(http.MethodDelete, "/sapi/audit-logs/01HZZZZZZZ0000000000000200", nil)
+	req.AddCookie(testSessionCookie())
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+	if svc.deleteID != "01HZZZZZZZ0000000000000200" {
+		t.Fatalf("deleted id = %q", svc.deleteID)
+	}
+	if svc.deleteEntity != "01HZZZZZZZ0000000000000100" {
+		t.Fatalf("deleted entity = %q", svc.deleteEntity)
+	}
+}
+
+func TestDeleteAuditLog_NotFound(t *testing.T) {
+	router := newTestRouter(&fakeAuditService{})
+	req := httptest.NewRequest(http.MethodDelete, "/sapi/audit-logs/01HZZZZZZZ0000000000000200", nil)
+	req.AddCookie(testSessionCookie())
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func TestClearAuditLogs_ReturnsDeletedCount(t *testing.T) {
+	svc := &fakeAuditService{clearResult: 7}
+	router := newTestRouter(svc)
+	req := httptest.NewRequest(http.MethodDelete, "/sapi/audit-logs", nil)
+	req.AddCookie(testSessionCookie())
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var body struct {
+		Deleted int64 `json:"deleted"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Deleted != 7 {
+		t.Fatalf("deleted = %d, want 7", body.Deleted)
+	}
+	if svc.clearEntity != "01HZZZZZZZ0000000000000100" {
+		t.Fatalf("cleared entity = %q", svc.clearEntity)
 	}
 }
 

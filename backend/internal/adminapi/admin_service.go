@@ -211,6 +211,17 @@ func (s *AdminService) GetArchivedUser(ctx context.Context, entityID, id string)
 	return archivedUserFromRow(row), nil
 }
 
+func (s *AdminService) DeleteArchivedUser(ctx context.Context, entityID, id string) (int64, error) {
+	return s.queries.DeleteArchivedUser(ctx, generated.DeleteArchivedUserParams{
+		EntityID: entityID,
+		ID:       id,
+	})
+}
+
+func (s *AdminService) ClearArchivedUsers(ctx context.Context, entityID string) (int64, error) {
+	return s.queries.ClearArchivedUsers(ctx, entityID)
+}
+
 func (s *AdminService) ArchiveUser(ctx context.Context, entityID, userID, actorUserID, reason string) (ArchivedUserResponse, error) {
 	before, err := s.GetUserByID(ctx, entityID, userID)
 	if err != nil {

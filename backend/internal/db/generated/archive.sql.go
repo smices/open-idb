@@ -113,6 +113,19 @@ func (q *Queries) ArchiveUser(ctx context.Context, arg ArchiveUserParams) (Archi
 	return i, err
 }
 
+const clearArchivedUsers = `-- name: ClearArchivedUsers :execrows
+DELETE FROM archived_users
+WHERE entity_id = $1
+`
+
+func (q *Queries) ClearArchivedUsers(ctx context.Context, entityID string) (int64, error) {
+	result, err := q.db.Exec(ctx, clearArchivedUsers, entityID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countArchivedUsers = `-- name: CountArchivedUsers :one
 SELECT count(*)::bigint
 FROM archived_users
@@ -130,6 +143,25 @@ func (q *Queries) CountArchivedUsers(ctx context.Context, arg CountArchivedUsers
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const deleteArchivedUser = `-- name: DeleteArchivedUser :execrows
+DELETE FROM archived_users
+WHERE entity_id = $1
+  AND id = $2
+`
+
+type DeleteArchivedUserParams struct {
+	EntityID string `json:"entity_id"`
+	ID       string `json:"id"`
+}
+
+func (q *Queries) DeleteArchivedUser(ctx context.Context, arg DeleteArchivedUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteArchivedUser, arg.EntityID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteUserActiveDependents = `-- name: DeleteUserActiveDependents :exec

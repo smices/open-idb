@@ -18,6 +18,8 @@ type auditQuerier interface {
 	CreateAuditLog(ctx context.Context, arg generated.CreateAuditLogParams) (generated.AuditLog, error)
 	ListAuditLogs(ctx context.Context, arg generated.ListAuditLogsParams) ([]generated.ListAuditLogsRow, error)
 	CountAuditLogs(ctx context.Context, arg generated.CountAuditLogsParams) (int64, error)
+	DeleteAuditLog(ctx context.Context, arg generated.DeleteAuditLogParams) (int64, error)
+	ClearAuditLogs(ctx context.Context, entityID string) (int64, error)
 }
 
 // Service provides audit log write and query operations.
@@ -144,6 +146,39 @@ func (s *Service) List(ctx context.Context, entityID string, opts ListOptions) (
 	}
 
 	return ListResult{Items: items, Total: total}, nil
+}
+
+// Delete permanently removes one audit log belonging to an entity.
+func (s *Service) Delete(ctx context.Context, entityID, auditLogID string) (int64, error) {
+	entityULID, err := ulidValue(entityID)
+	if err != nil {
+		return 0, fmt.Errorf("invalid entity_id: %w", err)
+	}
+	idULID, err := ulidValue(auditLogID)
+	if err != nil {
+		return 0, fmt.Errorf("invalid audit_log_id: %w", err)
+	}
+	deleted, err := s.queries.DeleteAuditLog(ctx, generated.DeleteAuditLogParams{
+		EntityID: entityULID,
+		ID:       idULID,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("delete audit log: %w", err)
+	}
+	return deleted, nil
+}
+
+// Clear permanently removes all audit logs belonging to an entity.
+func (s *Service) Clear(ctx context.Context, entityID string) (int64, error) {
+	entityULID, err := ulidValue(entityID)
+	if err != nil {
+		return 0, fmt.Errorf("invalid entity_id: %w", err)
+	}
+	deleted, err := s.queries.ClearAuditLogs(ctx, entityULID)
+	if err != nil {
+		return 0, fmt.Errorf("clear audit logs: %w", err)
+	}
+	return deleted, nil
 }
 
 // ---------------------------------------------------------------------------

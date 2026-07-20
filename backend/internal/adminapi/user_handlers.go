@@ -159,6 +159,8 @@ type userService interface {
 	ListArchivedUsers(ctx context.Context, entityID, username string, limit, offset int32) ([]ArchivedUserResponse, error)
 	CountArchivedUsers(ctx context.Context, entityID, username string) (int64, error)
 	GetArchivedUser(ctx context.Context, entityID, id string) (ArchivedUserResponse, error)
+	DeleteArchivedUser(ctx context.Context, entityID, id string) (int64, error)
+	ClearArchivedUsers(ctx context.Context, entityID string) (int64, error)
 	ArchiveUser(ctx context.Context, entityID, userID, actorUserID, reason string) (ArchivedUserResponse, error)
 	UpdateUserLifecycle(ctx context.Context, entityID, id string, status string) (UserResponse, error)
 	UpdateUser(ctx context.Context, entityID, id string, displayName, email, phone, locale pgtype.Text) (UserResponse, error)
@@ -195,6 +197,8 @@ func (h UserHandler) RegisterRoutes(r chi.Router) {
 	r.Get("/sapi/users/{id}", h.getUser)
 	r.Get("/sapi/archived-users", h.listArchivedUsers)
 	r.Get("/sapi/archived-users/{id}", h.getArchivedUser)
+	r.Delete("/sapi/archived-users", h.clearArchivedUsers)
+	r.Delete("/sapi/archived-users/{id}", h.deleteArchivedUser)
 	r.Put("/sapi/users/{id}", h.updateUser)
 	r.Post("/sapi/users/{id}/disable", h.disableUser)
 	r.Post("/sapi/users/{id}/enable", h.enableUser)
@@ -335,6 +339,51 @@ func (h UserHandler) getArchivedUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, item)
+}
+
+func (h UserHandler) deleteArchivedUser(w http.ResponseWriter, r *http.Request) {
+	session, ok := readSession(w, r)
+	if !ok {
+		return
+	}
+	entityID, err := ulidValue(session.EntityID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_entity_id", err.Error())
+		return
+	}
+	id, err := ulidValue(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_archived_user_id", err.Error())
+		return
+	}
+	deleted, err := h.service.DeleteArchivedUser(r.Context(), entityID, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "archived_user_delete_failed", err.Error())
+		return
+	}
+	if deleted == 0 {
+		writeError(w, http.StatusNotFound, "archived_user_not_found", "archived user not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h UserHandler) clearArchivedUsers(w http.ResponseWriter, r *http.Request) {
+	session, ok := readSession(w, r)
+	if !ok {
+		return
+	}
+	entityID, err := ulidValue(session.EntityID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_entity_id", err.Error())
+		return
+	}
+	deleted, err := h.service.ClearArchivedUsers(r.Context(), entityID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "archived_users_clear_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"deleted": deleted})
 }
 
 func (h UserHandler) updateUser(w http.ResponseWriter, r *http.Request) {
