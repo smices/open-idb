@@ -641,6 +641,16 @@ func findDirectoryUserByKnownIdentifiers(ctx context.Context, queries *generated
 		if err != nil {
 			return generated.DirectoryUser{}, false, err
 		}
+		if identifier.ObjectIDType == "user_id" {
+			for _, row := range rows {
+				if row.ExternalUserID == identifier.ObjectID {
+					// A full Feishu snapshot uses user_id as its canonical identifier.
+					// Prefer its exact row so reconciliation can retire stale rows that
+					// only match an old open_id or union_id.
+					return row, true, nil
+				}
+			}
+		}
 		for _, row := range rows {
 			if !found {
 				matched = row

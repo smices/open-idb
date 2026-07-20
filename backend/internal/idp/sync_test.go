@@ -288,7 +288,7 @@ func TestFullSyncRollsBackPreparedSnapshotWhenDatabaseWriteFails(t *testing.T) {
 	}
 }
 
-func TestFullSyncRollsBackWhenUserIdentifiersMatchDifferentRows(t *testing.T) {
+func TestFullSyncUsesExactUserIDAndReconcilesStaleIdentifierDuplicate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	pool := newAtomicSyncTestPool(ctx, t)
@@ -320,23 +320,19 @@ func TestFullSyncRollsBackWhenUserIdentifiersMatchDifferentRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new sync service: %v", err)
 	}
-	_, err = service.RunFullSync(ctx, FullSyncInput{EntityID: entity.ID, SourceID: source.ID, Provider: "feishu"})
-	if err == nil || !strings.Contains(err.Error(), "multiple existing rows") {
-		t.Fatalf("RunFullSync() error = %v, want provider identifier collision", err)
+	result, err := service.RunFullSync(ctx, FullSyncInput{EntityID: entity.ID, SourceID: source.ID, Provider: "feishu"})
+	if err != nil {
+		t.Fatalf("RunFullSync() error = %v", err)
 	}
-	var departmentCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM directory_departments WHERE entity_id=$1 AND source_id=$2`, entity.ID, source.ID).Scan(&departmentCount); err != nil {
-		t.Fatalf("count departments: %v", err)
+	if result.DirectoryUsersDeleted != 1 {
+		t.Fatalf("DirectoryUsersDeleted = %d, want 1", result.DirectoryUsersDeleted)
 	}
-	if departmentCount != 0 {
-		t.Fatalf("committed departments = %d, want rollback", departmentCount)
+	var activeCurrent, deletedStale int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE external_user_id='reused_user_id' AND name='Conflicting User' AND status='active'), count(*) FILTER (WHERE external_user_id='legacy_user_b' AND status='deleted') FROM directory_users WHERE entity_id=$1 AND source_id=$2`, entity.ID, source.ID).Scan(&activeCurrent, &deletedStale); err != nil {
+		t.Fatalf("count reconciled users: %v", err)
 	}
-	var unchanged int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM directory_users WHERE entity_id=$1 AND source_id=$2 AND ((external_user_id='reused_user_id' AND name='Existing A') OR (external_user_id='legacy_user_b' AND name='Existing B'))`, entity.ID, source.ID).Scan(&unchanged); err != nil {
-		t.Fatalf("count unchanged users: %v", err)
-	}
-	if unchanged != 2 {
-		t.Fatalf("unchanged users = %d, want 2", unchanged)
+	if activeCurrent != 1 || deletedStale != 1 {
+		t.Fatalf("active current = %d, deleted stale = %d, want 1 each", activeCurrent, deletedStale)
 	}
 }
 
