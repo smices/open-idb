@@ -60,7 +60,11 @@ func NewRouterWithTrustedProxies(trustedProxies []netip.Prefix, options ...Optio
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; form-action 'self'")
+		scriptSources := "'self'"
+		if r.URL.Path == "/login" || r.URL.Path == "/auth/continue" {
+			scriptSources += " https://lf-scm-cn.feishucdn.com https://lf1-cdn-tos.bytegoofy.com"
+		}
+		h.Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src "+scriptSources+"; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; form-action 'self'")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")

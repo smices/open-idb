@@ -148,6 +148,50 @@ func TestLoginContextDirectLoginUsesDefaultEnterpriseContext(t *testing.T) {
 	}
 }
 
+func TestLoginContextWorkplaceContinueUsesDefaultEnterpriseContext(t *testing.T) {
+	router := chi.NewRouter()
+	NewHandler(fakeLoginService{
+		defaultCtx: LoginContext{
+			Mode: LoginModeUser,
+			Entity: &LoginContextEntity{
+				ID:        "01HZZZZZZZ0000000000000002",
+				Slug:      "configured_entity",
+				Name:      "Configured Entity",
+				BrandName: "Configured Brand",
+			},
+			Methods:              []string{"password", "feishu"},
+			AllowEntitySelection: false,
+			Reason:               "default_entity",
+		},
+	}).RegisterRoutes(router)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/context?path=/auth/continue&return_to=/portal&workplace=feishu", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var ctx LoginContext
+	if err := json.NewDecoder(rec.Body).Decode(&ctx); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if ctx.Mode != LoginModeApp {
+		t.Fatalf("mode = %q, want %q", ctx.Mode, LoginModeApp)
+	}
+	if ctx.Entity == nil || ctx.Entity.ID != "01HZZZZZZZ0000000000000002" {
+		t.Fatalf("entity = %#v, want configured default entity", ctx.Entity)
+	}
+	if !stringSliceContains(ctx.Methods, "feishu") {
+		t.Fatalf("methods = %#v, want feishu", ctx.Methods)
+	}
+	if ctx.Reason != "workplace_default_entity" {
+		t.Fatalf("reason = %q, want workplace_default_entity", ctx.Reason)
+	}
+}
+
 func TestPreferredProviderAcceptsLarkAlias(t *testing.T) {
 	returnTo := "/oauth2/authorize?response_type=code&client_id=my-app&idp=lark"
 

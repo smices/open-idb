@@ -132,10 +132,17 @@ func (h Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 				ctx.ReturnTo = safeReturnTo(returnTo)
 			}
 		}
-	} else if ctx.Mode == LoginModeUser {
+	} else if ctx.Mode == LoginModeUser || (ctx.Mode == LoginModeApp && preferredProvider == "feishu") {
 		if resolver, ok := h.service.(LoginContextDefaultEntityResolver); ok {
 			if defaultCtx, err := resolver.GetDefaultLoginContext(r.Context()); err == nil {
-				ctx = defaultCtx
+				if ctx.Mode == LoginModeApp {
+					ctx.Entity = defaultCtx.Entity
+					ctx.Methods = defaultCtx.Methods
+					ctx.AllowEntitySelection = false
+					ctx.Reason = "workplace_default_entity"
+				} else {
+					ctx = defaultCtx
+				}
 				ctx.ReturnTo = safeReturnTo(returnTo)
 			}
 		}
@@ -170,6 +177,9 @@ func preferredProviderFromRequest(r *http.Request, returnTo string) string {
 		return provider
 	}
 	if provider := normalizePreferredProvider(r.URL.Query().Get("login_provider")); provider != "" {
+		return provider
+	}
+	if provider := normalizePreferredProvider(r.URL.Query().Get("workplace")); provider != "" {
 		return provider
 	}
 	return preferredProviderFromReturnTo(returnTo)

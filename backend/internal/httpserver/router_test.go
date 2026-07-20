@@ -74,6 +74,40 @@ func TestRouterSetsSecurityHeaders(t *testing.T) {
 	}
 }
 
+func TestRouterCSPAllowsPinnedFeishuWorkplaceSDKHosts(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/auth/continue", nil)
+	rec := httptest.NewRecorder()
+
+	NewRouter().ServeHTTP(rec, req)
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	for _, host := range []string{
+		"https://lf-scm-cn.feishucdn.com",
+		"https://lf1-cdn-tos.bytegoofy.com",
+	} {
+		if !strings.Contains(csp, host) {
+			t.Fatalf("Content-Security-Policy = %q, want to allow %q", csp, host)
+		}
+	}
+}
+
+func TestRouterCSPKeepsFeishuSDKHostsOutOfAdminPages(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/admin/login", nil)
+	rec := httptest.NewRecorder()
+
+	NewRouter().ServeHTTP(rec, req)
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	for _, host := range []string{
+		"https://lf-scm-cn.feishucdn.com",
+		"https://lf1-cdn-tos.bytegoofy.com",
+	} {
+		if strings.Contains(csp, host) {
+			t.Fatalf("Content-Security-Policy = %q, must not allow %q on admin pages", csp, host)
+		}
+	}
+}
+
 func TestFrontendRoutesDoNotServeBackendUI(t *testing.T) {
 	for _, path := range []string{"/", "/login", "/auth/continue", "/portal", "/portal/profile"} {
 		t.Run(path, func(t *testing.T) {
