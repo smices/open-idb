@@ -23,6 +23,7 @@ import {
 import { Archive, Plus, RefreshCw, Save, Search, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from './lib/api.ts';
+import { replaceTreeNodeChildren } from './lib/organization-tree.mjs';
 
 const APPLICATION_TYPES = ['oidc_client', 'api_client', 'internal_app'];
 const APPLICATION_PAGE_SIZE = 20;
@@ -271,7 +272,7 @@ function OrganizationPage() {
     setLoading(true);
     try {
       const root = await api.getOrganizationTreeRoot({ limit: 100 });
-      setTreeData([toNode(root.root), ...root.children.map(toNode)]);
+      setTreeData([{ ...toNode(root.root), children: root.children.map(toNode) }]);
     } catch (err) {
       message.error(errorMessage(err));
     } finally {
@@ -284,8 +285,8 @@ function OrganizationPage() {
       const raw = node.raw;
       if (!raw || node.children?.length) return;
       const res = await api.listOrganizationTreeChildren({ kind: raw.kind, id: raw.id, limit: 100 });
-      node.children = (res.items || []).map(toNode);
-      setTreeData([...treeData]);
+      const children = (res.items || []).map(toNode);
+      setTreeData((current) => replaceTreeNodeChildren(current, node.key, children));
     } catch (error) {
       message.error(errorMessage(error));
       throw error;
@@ -299,7 +300,7 @@ function OrganizationPage() {
   return (
     <div className="two-column">
       <Card title={t('organization.organizationTree')} extra={<Space.Compact><Input value={query} onChange={(e) => setQuery(e.target.value)} onPressEnter={search} placeholder={t('organization.search')} /><Button icon={<Search size={16} />} onClick={search} aria-label={t('organization.search')} /></Space.Compact>}>
-        {loading ? <Skeleton active /> : <Tree showLine loadData={onLoadData} treeData={treeData} onSelect={(_, info) => setSelected(info.node.raw)} />}
+        {loading ? <Skeleton active /> : <Tree showLine defaultExpandedKeys={treeData[0] ? [treeData[0].key] : []} loadData={onLoadData} treeData={treeData} onSelect={(_, info) => setSelected(info.node.raw)} />}
       </Card>
       <Card title={t('directory.details')}>
         {selected ? <Descriptions bordered size="small" column={1} items={Object.entries(selected).map(([key, value]) => ({ key, label: key, children: typeof value === 'boolean' ? String(value) : value || '-' }))} /> : <Empty />}

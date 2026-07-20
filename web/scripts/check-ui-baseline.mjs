@@ -171,6 +171,12 @@ if (!adminPagesJs.includes('const requestIdRef = useRef(0)') || !adminPagesJs.in
 if (!/const onLoadData = async[\s\S]*message\.error\(errorMessage\(error\)\);[\s\S]*throw error;/.test(adminPagesJs)) {
   failures.push('Organization lazy loading must report errors without converting rejection to success');
 }
+if (!adminPagesJs.includes('children: root.children.map(toNode)')) {
+  failures.push('Organization tree root must retain its direct children as nested tree data.');
+}
+if (!adminPagesJs.includes('replaceTreeNodeChildren(current, node.key, children)')) {
+  failures.push('Organization tree loader must immutably attach loaded children to the selected node.');
+}
 if (adminPagesJs.includes('setConfigOpen(true);\n    try')) {
   failures.push('Identity source configuration must not open before its existing values load successfully');
 }
