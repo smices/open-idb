@@ -177,6 +177,9 @@ if (!adminPagesJs.includes('children: root.children.map(toNode)')) {
 if (!adminPagesJs.includes('replaceTreeNodeChildren(current, node.key, children)')) {
   failures.push('Organization tree loader must immutably attach loaded children to the selected node.');
 }
+if (adminPagesJs.includes('<Checkbox') && !/import\s*\{[\s\S]*?\bCheckbox\b[\s\S]*?\}\s*from\s*['"]antd['"]/.test(adminPagesJs)) {
+  failures.push('Admin pages must import Checkbox from antd before rendering user binding forms.');
+}
 if (adminPagesJs.includes('setConfigOpen(true);\n    try')) {
   failures.push('Identity source configuration must not open before its existing values load successfully');
 }
