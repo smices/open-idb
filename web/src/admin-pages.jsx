@@ -807,38 +807,15 @@ function RolePermissionEditor({ role, permissions }) {
 
 function AuditPage() {
   const { t } = useTranslation();
-  const { message } = AntApp.useApp();
   const [filters, setFilters] = useState({});
   const [selected, setSelected] = useState(null);
   const { loading, data, reload } = useLoader(() => api.listAuditLogs({ ...filters, limit: 100 }), [JSON.stringify(filters)]);
-  const deleteAuditLog = (id) => runAction(message, async () => {
-    await api.deleteAuditLog(id);
-    if (selected?.id === id) setSelected(null);
-    message.success(t('common.deleteSuccess'));
-    await reload();
-  });
-  const clearAuditLogs = () => runAction(message, async () => {
-    await api.clearAuditLogs();
-    setSelected(null);
-    message.success(t('common.deleteSuccess'));
-    await reload();
-  });
   return (
     <div className="page-stack">
       <div className="toolbar-left">
         <Input placeholder={t('audit.action')} style={{ width: 180 }} onChange={(e) => setFilters((f) => ({ ...f, action: e.target.value || undefined }))} />
         <Input placeholder={t('audit.resourceType')} style={{ width: 180 }} onChange={(e) => setFilters((f) => ({ ...f, resource_type: e.target.value || undefined }))} />
         <Button icon={<RefreshCw size={16} />} onClick={reload}>{t('common.refresh')}</Button>
-        <Popconfirm
-          title={t('audit.clearConfirm')}
-          onConfirm={clearAuditLogs}
-          okText={t('common.confirm')}
-          cancelText={t('common.cancel')}
-          okButtonProps={{ danger: true }}
-          disabled={loading}
-        >
-          <Button danger disabled={loading}>{t('audit.clearAll')}</Button>
-        </Popconfirm>
       </div>
       <Table rowKey="id" loading={loading} dataSource={data?.items || []} columns={[
         { title: t('audit.action'), dataIndex: 'action', render: (v) => t(`audit.action.${v}`, v) },
@@ -847,18 +824,7 @@ function AuditPage() {
         { title: t('audit.ip'), dataIndex: 'ip' },
         { title: t('audit.time'), dataIndex: 'created_at', render: formatDate },
         { title: t('audit.traceId'), dataIndex: 'trace_id', ellipsis: true },
-        { title: t('common.actions'), render: (_, row) => <Space>
-          <Button size="small" onClick={() => setSelected(row)}>JSON</Button>
-          <Popconfirm
-            title={t('audit.deleteConfirm')}
-            onConfirm={() => deleteAuditLog(row.id)}
-            okText={t('common.confirm')}
-            cancelText={t('common.cancel')}
-            okButtonProps={{ danger: true }}
-          >
-            <Button danger size="small">{t('common.delete')}</Button>
-          </Popconfirm>
-        </Space> },
+        { title: t('audit.details'), render: (_, row) => <Button size="small" onClick={() => setSelected(row)}>JSON</Button> },
       ]} />
       <Drawer width={640} open={Boolean(selected)} onClose={() => setSelected(null)} title={t('audit.detailTitle')}><pre className="json-box">{JSON.stringify(selected, null, 2)}</pre></Drawer>
     </div>

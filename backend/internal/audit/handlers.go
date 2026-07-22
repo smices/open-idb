@@ -15,8 +15,6 @@ import (
 // AuditService is the subset of audit.Service methods used by the handler.
 type AuditService interface {
 	List(ctx context.Context, entityID string, opts ListOptions) (ListResult, error)
-	Delete(ctx context.Context, entityID, id string) (int64, error)
-	Clear(ctx context.Context, entityID string) (int64, error)
 }
 
 // Handler serves audit log HTTP endpoints.
@@ -32,43 +30,6 @@ func NewHandler(service AuditService) Handler {
 // RegisterRoutes mounts audit log routes on the given router.
 func (h Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/sapi/audit-logs", h.listAuditLogs)
-	r.Delete("/sapi/audit-logs", h.clearAuditLogs)
-	r.Delete("/sapi/audit-logs/{id}", h.deleteAuditLog)
-}
-
-func (h Handler) deleteAuditLog(w http.ResponseWriter, r *http.Request) {
-	session, ok := readSession(w, r)
-	if !ok {
-		return
-	}
-	id, err := ulidValue(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_audit_log_id", err.Error())
-		return
-	}
-	deleted, err := h.service.Delete(r.Context(), session.EntityID, id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "audit_delete_failed", err.Error())
-		return
-	}
-	if deleted == 0 {
-		writeError(w, http.StatusNotFound, "audit_log_not_found", "audit log not found")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h Handler) clearAuditLogs(w http.ResponseWriter, r *http.Request) {
-	session, ok := readSession(w, r)
-	if !ok {
-		return
-	}
-	deleted, err := h.service.Clear(r.Context(), session.EntityID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "audit_clear_failed", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]int64{"deleted": deleted})
 }
 
 func (h Handler) listAuditLogs(w http.ResponseWriter, r *http.Request) {

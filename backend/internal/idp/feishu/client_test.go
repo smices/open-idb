@@ -619,6 +619,51 @@ func TestUsersRejectRepeatedPaginationToken(t *testing.T) {
 	}
 }
 
+func TestMergeDirectoryUserPreservesAllRawProfileFieldsAcrossDepartmentListings(t *testing.T) {
+	existing := idp.DirectoryUser{
+		ExternalUserID: "ou_1",
+		RawProfile: []byte(`{
+			"user_id":"ou_1",
+			"department_ids":["dept-root"],
+			"custom_from_root":{"badge":"A"},
+			"status":{"is_activated":true}
+		}`),
+	}
+	next := idp.DirectoryUser{
+		ExternalUserID: "ou_1",
+		RawProfile: []byte(`{
+			"user_id":"ou_1",
+			"department_ids":["dept-research"],
+			"en_name":"Zhang San",
+			"custom_from_research":{"job_level":"P7"},
+			"status":{"is_frozen":false}
+		}`),
+	}
+
+	merged := mergeDirectoryUser(existing, next)
+	var raw map[string]any
+	if err := json.Unmarshal(merged.RawProfile, &raw); err != nil {
+		t.Fatalf("decode merged raw profile: %v", err)
+	}
+	if raw["en_name"] != "Zhang San" {
+		t.Fatalf("en_name = %#v, want Zhang San", raw["en_name"])
+	}
+	if _, ok := raw["custom_from_root"]; !ok {
+		t.Fatalf("merged raw profile lost root-only field: %s", merged.RawProfile)
+	}
+	if _, ok := raw["custom_from_research"]; !ok {
+		t.Fatalf("merged raw profile lost research-only field: %s", merged.RawProfile)
+	}
+	status, ok := raw["status"].(map[string]any)
+	if !ok || status["is_activated"] != true || status["is_frozen"] != false {
+		t.Fatalf("status = %#v, want both source fields", raw["status"])
+	}
+	departments, ok := raw["department_ids"].([]any)
+	if !ok || len(departments) != 2 || departments[0] != "dept-root" || departments[1] != "dept-research" {
+		t.Fatalf("department_ids = %#v, want stable union", raw["department_ids"])
+	}
+}
+
 func writeJSON(t *testing.T, w http.ResponseWriter, payload interface{}) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")

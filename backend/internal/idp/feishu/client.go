@@ -685,10 +685,92 @@ func mergeDirectoryUser(existing, next idp.DirectoryUser) idp.DirectoryUser {
 	if existing.Status == "" || existing.Status == "unknown" {
 		existing.Status = next.Status
 	}
-	if len(existing.RawProfile) == 0 {
-		existing.RawProfile = cloneBytes(next.RawProfile)
-	}
+	existing.RawProfile = mergeRawProfiles(existing.RawProfile, next.RawProfile)
 	return existing
+}
+
+// mergeRawProfiles retains the complete provider payload when the same person
+// appears in multiple department listings. The typed fields above are used by
+// IdBridge, while RawProfile remains the lossless provider extension envelope.
+func mergeRawProfiles(existing, next []byte) []byte {
+	if len(bytes.TrimSpace(existing)) == 0 {
+		return cloneBytes(next)
+	}
+	if len(bytes.TrimSpace(next)) == 0 {
+		return cloneBytes(existing)
+	}
+
+	var existingValue any
+	var nextValue any
+	if json.Unmarshal(existing, &existingValue) != nil || json.Unmarshal(next, &nextValue) != nil {
+		// Provider raw payloads should be JSON. If a malformed payload reaches
+		// this boundary, preserve the established record rather than replacing it
+		// with data that cannot be queried or rendered safely.
+		return cloneBytes(existing)
+	}
+	merged, err := json.Marshal(mergeRawJSONValue(existingValue, nextValue))
+	if err != nil {
+		return cloneBytes(existing)
+	}
+	return merged
+}
+
+func mergeRawJSONValue(existing, next any) any {
+	existingObject, existingIsObject := existing.(map[string]any)
+	nextObject, nextIsObject := next.(map[string]any)
+	if existingIsObject && nextIsObject {
+		merged := make(map[string]any, len(existingObject)+len(nextObject))
+		for key, value := range existingObject {
+			merged[key] = value
+		}
+		for key, value := range nextObject {
+			if previous, ok := merged[key]; ok {
+				merged[key] = mergeRawJSONValue(previous, value)
+			} else {
+				merged[key] = value
+			}
+		}
+		return merged
+	}
+
+	existingArray, existingIsArray := existing.([]any)
+	nextArray, nextIsArray := next.([]any)
+	if existingIsArray && nextIsArray {
+		merged := append([]any{}, existingArray...)
+		seen := make(map[string]struct{}, len(existingArray)+len(nextArray))
+		for _, value := range existingArray {
+			if encoded, err := json.Marshal(value); err == nil {
+				seen[string(encoded)] = struct{}{}
+			}
+		}
+		for _, value := range nextArray {
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				continue
+			}
+			if _, ok := seen[string(encoded)]; ok {
+				continue
+			}
+			seen[string(encoded)] = struct{}{}
+			merged = append(merged, value)
+		}
+		return merged
+	}
+
+	if isEmptyRawJSONValue(next) {
+		return existing
+	}
+	return next
+}
+
+func isEmptyRawJSONValue(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(typed) == ""
+	}
+	return false
 }
 
 func englishNameForUser(name string, values ...interface{}) string {

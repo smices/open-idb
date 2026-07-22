@@ -24,14 +24,6 @@ type fakeQueries struct {
 	countParams generated.CountAuditLogsParams
 	countResult int64
 	countErr    error
-
-	deleteParams generated.DeleteAuditLogParams
-	deleteResult int64
-	deleteErr    error
-
-	clearEntityID string
-	clearResult   int64
-	clearErr      error
 }
 
 func (f *fakeQueries) CreateAuditLog(_ context.Context, arg generated.CreateAuditLogParams) (generated.AuditLog, error) {
@@ -70,16 +62,6 @@ func (f *fakeQueries) CountAuditLogs(_ context.Context, arg generated.CountAudit
 		return 0, f.countErr
 	}
 	return f.countResult, nil
-}
-
-func (f *fakeQueries) DeleteAuditLog(_ context.Context, arg generated.DeleteAuditLogParams) (int64, error) {
-	f.deleteParams = arg
-	return f.deleteResult, f.deleteErr
-}
-
-func (f *fakeQueries) ClearAuditLogs(_ context.Context, entityID string) (int64, error) {
-	f.clearEntityID = entityID
-	return f.clearResult, f.clearErr
 }
 
 func TestWriteMapsEventToQueryParams(t *testing.T) {
@@ -295,44 +277,5 @@ func TestListWithEmptyFiltersSendsNullParams(t *testing.T) {
 	}
 	if cp.ActorType.Valid {
 		t.Error("count ActorType.Valid = true, want false (no filter)")
-	}
-}
-
-func TestDeleteScopesQueryToEntity(t *testing.T) {
-	fq := &fakeQueries{deleteResult: 1}
-	svc := &Service{queries: fq}
-
-	deleted, err := svc.Delete(
-		context.Background(),
-		"01HZZZZZZZ0000000000000100",
-		"01HZZZZZZZ0000000000000200",
-	)
-	if err != nil {
-		t.Fatalf("Delete returned error: %v", err)
-	}
-	if deleted != 1 {
-		t.Fatalf("deleted = %d, want 1", deleted)
-	}
-	if fq.deleteParams.EntityID != "01HZZZZZZZ0000000000000100" {
-		t.Fatalf("entity id = %q", fq.deleteParams.EntityID)
-	}
-	if fq.deleteParams.ID != "01HZZZZZZZ0000000000000200" {
-		t.Fatalf("audit log id = %q", fq.deleteParams.ID)
-	}
-}
-
-func TestClearScopesQueryToEntity(t *testing.T) {
-	fq := &fakeQueries{clearResult: 4}
-	svc := &Service{queries: fq}
-
-	deleted, err := svc.Clear(context.Background(), "01HZZZZZZZ0000000000000100")
-	if err != nil {
-		t.Fatalf("Clear returned error: %v", err)
-	}
-	if deleted != 4 {
-		t.Fatalf("deleted = %d, want 4", deleted)
-	}
-	if fq.clearEntityID != "01HZZZZZZZ0000000000000100" {
-		t.Fatalf("entity id = %q", fq.clearEntityID)
 	}
 }

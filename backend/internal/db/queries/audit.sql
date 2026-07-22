@@ -97,12 +97,3 @@ WHERE entity_id = $1
   AND (sqlc.narg('action')::text IS NULL OR action = sqlc.narg('action')::text)
   AND (sqlc.narg('resource_type')::text IS NULL OR resource_type = sqlc.narg('resource_type')::text)
   AND (sqlc.narg('actor_type')::text IS NULL OR actor_type = sqlc.narg('actor_type')::text);
-
--- name: DeleteAuditLog :execrows
-DELETE FROM audit_logs
-WHERE entity_id = sqlc.arg('entity_id')
-  AND id = sqlc.arg('id');
-
--- name: ClearAuditLogs :execrows
-DELETE FROM audit_logs
-WHERE entity_id = sqlc.arg('entity_id');

@@ -99,8 +99,9 @@ type AuditEventResult struct {
 
 // --- Handler ---
 
-// InternalHandler handles internal v1 API endpoints used for service-to-service
-// authorization. All requests require the X-IDB-Entity-ID header.
+// InternalHandler currently exposes only the authenticated user access summary.
+// Service-to-service endpoints remain intentionally unregistered until they are
+// protected by a dedicated service identity boundary rather than admin cookies.
 type InternalHandler struct {
 	service internalService
 }
@@ -113,10 +114,6 @@ func NewInternalHandler(service internalService) InternalHandler {
 // RegisterRoutes registers internal API routes with the router.
 func (h InternalHandler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/me/access", h.getCurrentUserAccess)
-	r.Post("/sapi/internal/introspect", h.introspectToken)
-	r.Post("/sapi/internal/permissions/check", h.checkPermission)
-	r.Get("/sapi/internal/users/{id}/access", h.getUserAccess)
-	r.Post("/sapi/internal/audit-events", h.createAuditEvent)
 }
 
 func (h InternalHandler) getCurrentUserAccess(w http.ResponseWriter, r *http.Request) {
