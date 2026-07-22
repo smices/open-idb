@@ -760,7 +760,13 @@ func mergeRawJSONValue(existing, next any) any {
 	if isEmptyRawJSONValue(next) {
 		return existing
 	}
-	return next
+	if isEmptyRawJSONValue(existing) {
+		return next
+	}
+	// The same provider person can be returned through several department
+	// listings. Keep the first non-empty scalar verbatim so RawProfile remains
+	// lossless; typed fields above decide which normalized value is preferred.
+	return existing
 }
 
 func isEmptyRawJSONValue(value any) bool {

@@ -624,6 +624,7 @@ func TestMergeDirectoryUserPreservesAllRawProfileFieldsAcrossDepartmentListings(
 		ExternalUserID: "ou_1",
 		RawProfile: []byte(`{
 			"user_id":"ou_1",
+			"email":"first-listing@example.test",
 			"department_ids":["dept-root"],
 			"custom_from_root":{"badge":"A"},
 			"status":{"is_activated":true}
@@ -633,6 +634,7 @@ func TestMergeDirectoryUserPreservesAllRawProfileFieldsAcrossDepartmentListings(
 		ExternalUserID: "ou_1",
 		RawProfile: []byte(`{
 			"user_id":"ou_1",
+			"email":"later-listing@example.test",
 			"department_ids":["dept-research"],
 			"en_name":"Zhang San",
 			"custom_from_research":{"job_level":"P7"},
@@ -647,6 +649,9 @@ func TestMergeDirectoryUserPreservesAllRawProfileFieldsAcrossDepartmentListings(
 	}
 	if raw["en_name"] != "Zhang San" {
 		t.Fatalf("en_name = %#v, want Zhang San", raw["en_name"])
+	}
+	if raw["email"] != "first-listing@example.test" {
+		t.Fatalf("email = %#v, want first provider value to remain lossless", raw["email"])
 	}
 	if _, ok := raw["custom_from_root"]; !ok {
 		t.Fatalf("merged raw profile lost root-only field: %s", merged.RawProfile)
