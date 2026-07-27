@@ -14,12 +14,88 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pressly/goose/v3"
 	"github.com/smices/open-idb/internal/db/generated"
+	idbpostgres "github.com/smices/open-idb/internal/platform/postgres"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+func TestPostgresPoolEnforcesConnectionBudgetAndAcquireTimeout(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	container, err := postgres.Run(ctx,
+		"postgres:16-alpine",
+		postgres.WithDatabase("idbridge"),
+		postgres.WithUsername("postgres"),
+		postgres.WithPassword("postgres"),
+		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
+	)
+	if err != nil {
+		t.Fatalf("start postgres container: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if err := container.Terminate(cleanupCtx); err != nil {
+			t.Errorf("terminate postgres container: %v", err)
+		}
+	})
+
+	databaseURL, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("connection string: %v", err)
+	}
+	pool, err := idbpostgres.NewPool(ctx, databaseURL, idbpostgres.PoolConfig{
+		MaxConns: 5,
+		MinConns: 1,
+	})
+	if err != nil {
+		t.Fatalf("open pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	connections := make([]*pgxpool.Conn, 0, 5)
+	for range 5 {
+		conn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatalf("acquire reserved connection: %v", err)
+		}
+		connections = append(connections, conn)
+	}
+	defer func() {
+		for _, conn := range connections {
+			conn.Release()
+		}
+	}()
+
+	boundedDB := idbpostgres.NewQuerier(pool, 50*time.Millisecond)
+	var value int
+	start := time.Now()
+	if err := boundedDB.QueryRow(context.Background(), "select 1").Scan(&value); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("sixth query error = %v, want acquire deadline exceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("bounded query took %s, want fast failure", elapsed)
+	}
+	if got := boundedDB.AcquireTimeoutCount(); got != 1 {
+		t.Fatalf("AcquireTimeoutCount = %d, want 1", got)
+	}
+	if got := pool.Stat().TotalConns(); got > 5 {
+		t.Fatalf("TotalConns = %d, must not exceed 5", got)
+	}
+
+	var applicationName string
+	if err := connections[0].QueryRow(ctx, "select current_setting('application_name')").Scan(&applicationName); err != nil {
+		t.Fatalf("read application_name: %v", err)
+	}
+	if applicationName != "idbridge" {
+		t.Fatalf("application_name = %q, want idbridge", applicationName)
+	}
+}
 
 func TestPostgresIdentitySchemaSupportsGeneratedQueries(t *testing.T) {
 	testcontainers.SkipIfProviderIsNotHealthy(t)

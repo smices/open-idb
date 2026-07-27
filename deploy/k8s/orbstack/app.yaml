@@ -42,6 +42,18 @@ spec:
                 secretKeyRef:
                   name: idbridge-postgres
                   key: DATABASE_URL
+            - name: DB_POOL_MAX_CONNS
+              value: "10"
+            - name: DB_POOL_MIN_CONNS
+              value: "2"
+            - name: DB_POOL_MAX_CONN_LIFETIME
+              value: "1h"
+            - name: DB_POOL_MAX_CONN_IDLE_TIME
+              value: "15m"
+            - name: DB_POOL_ACQUIRE_TIMEOUT
+              value: "2s"
+            - name: DB_BACKGROUND_MAX_CONCURRENCY
+              value: "2"
           readinessProbe:
             httpGet:
               path: /readyz

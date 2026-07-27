@@ -115,7 +115,7 @@ func isAdminRoute(path string) bool {
 
 func isPublicRoute(method string, path string) bool {
 	switch path {
-	case "/healthz", "/readyz":
+	case "/healthz", "/readyz", "/metrics":
 		return method == http.MethodGet
 	case "/api/platform/branding":
 		return method == http.MethodGet

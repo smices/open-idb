@@ -6,6 +6,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/smices/open-idb/internal/audit"
 	"go.uber.org/zap"
 )
 
@@ -38,6 +39,7 @@ type Scheduler struct {
 	mu               sync.Mutex
 	entitySemaphores map[string]chan struct{}
 	maxPerEntity     int
+	limiter          *backgroundLimiter
 }
 
 // NewScheduler creates a Scheduler.  Call Run to start the dispatch
@@ -209,13 +211,31 @@ func (s *Scheduler) executeJob(ctx context.Context, req syncRequest) {
 		zap.String("provider", req.Provider),
 	)
 
-	auditEvents, err := s.runner.Run(ctx, SyncJobRequest{
-		EntityID:           req.EntityID,
-		SourceID:           req.SourceID,
-		Provider:           req.Provider,
-		SyncType:           req.SyncType,
-		RecoveryClaimToken: req.RecoveryClaimToken,
-	})
+	var auditEvents []audit.Event
+	run := func(operationCtx context.Context) error {
+		var err error
+		auditEvents, err = s.runner.Run(operationCtx, SyncJobRequest{
+			EntityID:           req.EntityID,
+			SourceID:           req.SourceID,
+			Provider:           req.Provider,
+			SyncType:           req.SyncType,
+			RecoveryClaimToken: req.RecoveryClaimToken,
+		})
+		return err
+	}
+	var (
+		err     error
+		release func()
+	)
+	if s.limiter != nil {
+		release, err = s.limiter.acquire(ctx)
+		if err == nil {
+			defer release()
+		}
+	}
+	if err == nil {
+		err = run(ctx)
+	}
 
 	// Always emit audit events (start + finish/fail), even on error.
 	for _, ev := range auditEvents {

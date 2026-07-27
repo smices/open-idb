@@ -5,12 +5,52 @@ package app
 import (
 	"context"
 	"net"
+	"net/http"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/smices/open-idb/internal/config"
 	"go.uber.org/zap"
 )
+
+func TestShutdownStopsWorkerBeforeClosingDatabaseResources(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make([]string, 0, 3)
+	worker := &recordingWorker{events: &events}
+	application := &App{
+		cfg:    config.Config{HTTPAddr: "127.0.0.1:0", ShutdownTimeout: time.Second},
+		logger: zap.NewNop(),
+		server: &http.Server{Handler: http.NotFoundHandler()},
+		worker: worker,
+		close:  func() { events = append(events, "close") },
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- application.serve(ctx, newBlockingListener())
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("serve() error = %v", err)
+	}
+	if want := []string{"start", "stop", "close"}; !reflect.DeepEqual(events, want) {
+		t.Fatalf("shutdown events = %#v, want %#v", events, want)
+	}
+}
+
+type recordingWorker struct {
+	events *[]string
+}
+
+func (w *recordingWorker) Start(context.Context) {
+	*w.events = append(*w.events, "start")
+}
+
+func (w *recordingWorker) Stop() {
+	*w.events = append(*w.events, "stop")
+}
 
 func TestRunReturnsAfterContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

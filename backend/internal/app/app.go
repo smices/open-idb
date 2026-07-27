@@ -32,8 +32,13 @@ type App struct {
 	cfg    config.Config
 	logger *zap.Logger
 	server *http.Server
-	worker *worker.Worker
+	worker backgroundWorker
 	close  func()
+}
+
+type backgroundWorker interface {
+	Start(context.Context)
+	Stop()
 }
 
 func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, error) {
@@ -52,7 +57,15 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		}
 	}
 	if cfg.DatabaseURL != "" {
-		pool, err := postgres.NewPool(ctx, cfg.DatabaseURL)
+		pool, err := postgres.NewPool(ctx, cfg.DatabaseURL, postgres.PoolConfig{
+			MaxConns:        cfg.DBPoolMaxConns,
+			MinConns:        cfg.DBPoolMinConns,
+			MinConnsSet:     cfg.DBPoolMinConnsSet,
+			MaxConnLifetime: cfg.DBPoolMaxLifetime,
+			MaxConnIdleTime: cfg.DBPoolMaxIdleTime,
+			AcquireTimeout:  cfg.DBPoolAcquireTimeout,
+			ApplicationName: "idbridge",
+		})
 		if err != nil {
 			_ = ephemeralStore.Close()
 			return nil, err
@@ -64,9 +77,10 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 			previousCloseFn()
 			pool.Close()
 		}
-		queries := generated.New(pool)
+		boundedDB := postgres.NewQuerier(pool, cfg.DBPoolAcquireTimeout)
+		queries := generated.New(boundedDB)
 		auth.SetSessionResolver(auth.NewDatabaseSessionResolver(queries))
-		auth.SetAdminSessionResolver(auth.NewDatabaseAdminSessionResolver(pool))
+		auth.SetAdminSessionResolver(auth.NewDatabaseAdminSessionResolver(boundedDB))
 
 		// Audit service is created early so it can be injected into all
 		// handlers that need to write audit events.
@@ -80,11 +94,16 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		if cfg.OIDCPrivateKeyPEM == "" {
 			logger.Warn("OIDC signing key is ephemeral; configure IDB_OIDC_PRIVATE_KEY_PEM from a deployment secret before restarting production")
 		}
+		readinessTimeout := cfg.DBPoolAcquireTimeout
+		if readinessTimeout <= 0 {
+			readinessTimeout = 2 * time.Second
+		}
 		routerOptions = append(routerOptions, httpserver.WithReadinessCheck(func(parent context.Context) error {
-			checkCtx, cancel := context.WithTimeout(parent, 2*time.Second)
+			checkCtx, cancel := context.WithTimeout(parent, readinessTimeout)
 			defer cancel()
 			return pool.Ping(checkCtx)
 		}))
+		routerOptions = append(routerOptions, httpserver.WithPoolStats(boundedDB))
 		service, err := sso.NewService(sso.ServiceConfig{
 			Issuer:           cfg.OIDCIssuer,
 			KeyID:            cfg.OIDCKeyID,
@@ -113,7 +132,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		authHandler.SetEphemeralStore(ephemeralStore)
 		routerOptions = append(routerOptions, authHandler.RegisterRoutes)
 
-		adminAuthHandler := auth.NewAdminHandler(auth.NewAdminService(pool), auditService)
+		adminAuthHandler := auth.NewAdminHandler(auth.NewAdminService(boundedDB), auditService)
 		adminAuthHandler.SetSessionTTL(cfg.SessionTTL)
 		adminAuthHandler.SetEphemeralStore(ephemeralStore)
 		routerOptions = append(routerOptions, adminAuthHandler.RegisterRoutes)
@@ -151,7 +170,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 			closeFn()
 			return nil, err
 		}
-		adminCRUDService.SetTxStarter(pool)
+		adminCRUDService.SetTxStarter(boundedDB)
 		organizationTreeCache := adminapi.NewOrganizationTreeCache(ephemeralStore)
 		adminCRUDService.SetOrganizationTreeCache(organizationTreeCache)
 		entityHandler := adminapi.NewEntityHandler(adminCRUDService)
@@ -274,7 +293,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 			closeFn()
 			return nil, err
 		}
-		syncService.SetTxStarter(pool)
+		syncService.SetTxStarter(boundedDB)
 		syncHandler := adminapi.NewHandler(syncService, nil)
 		syncHandler.SetLogger(logger)
 		syncHandler.SetOrganizationTreeCacheInvalidator(organizationTreeCache)
@@ -294,7 +313,10 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		syncRunner := worker.NewSyncRunner(syncService, logger)
 		syncRunner.SetOrganizationTreeCacheInvalidator(organizationTreeCache)
 		cleanupRunner := worker.NewCleanupRunner(queries, time.Hour, logger)
-		bgWorker = worker.New(worker.Config{}, logger, syncRunner, auditService, cleanupRunner)
+		bgWorker = worker.New(worker.Config{
+			OperationTimeout:        cfg.DBPoolAcquireTimeout,
+			MaxConcurrentOperations: cfg.DBBackgroundMaxConcurrency,
+		}, logger, syncRunner, auditService, cleanupRunner)
 		bgWorker.SetWebhookRecoveryStore(queries)
 
 		feishuLoginHandler := auth.NewFeishuLoginHandler(feishuLoginService, providerService, cfg.FeishuAppID, cfg.FeishuRedirectURI, auditService)
@@ -304,6 +326,10 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 		routerOptions = append(routerOptions, feishuLoginHandler.RegisterRoutes)
 	}
 
+	var appWorker backgroundWorker
+	if bgWorker != nil {
+		appWorker = bgWorker
+	}
 	return &App{
 		cfg:    cfg,
 		logger: logger,
@@ -312,7 +338,7 @@ func New(ctx context.Context, cfg config.Config, logger *zap.Logger) (*App, erro
 			Handler:           httpserver.NewRouterWithTrustedProxies(cfg.TrustedProxyCIDRs, routerOptions...),
 			ReadHeaderTimeout: 5 * time.Second,
 		},
-		worker: bgWorker,
+		worker: appWorker,
 		close:  closeFn,
 	}, nil
 }

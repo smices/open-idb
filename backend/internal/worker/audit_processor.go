@@ -5,6 +5,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -33,6 +34,7 @@ type AuditProcessor struct {
 	maxRetries int
 	baseDelay  time.Duration
 	wg         sync.WaitGroup
+	limiter    *backgroundLimiter
 }
 
 // NewAuditProcessor creates an AuditProcessor with the given buffer
@@ -113,7 +115,8 @@ func (p *AuditProcessor) writeWithRetry(ctx context.Context, ev audit.Event) {
 	for attempt := 0; attempt <= p.maxRetries; attempt++ {
 		if attempt > 0 {
 			// Exponential backoff: 100ms, 200ms, 400ms
-			delay := p.baseDelay * time.Duration(1<<(attempt-1))
+			base := p.baseDelay * time.Duration(1<<(attempt-1))
+			delay := base + time.Duration(rand.Int63n(max(1, int64(base/2))))
 			select {
 			case <-ctx.Done():
 				p.persistToLog(ev, ctx.Err())
@@ -121,7 +124,16 @@ func (p *AuditProcessor) writeWithRetry(ctx context.Context, ev audit.Event) {
 			case <-time.After(delay):
 			}
 		}
-		if err := p.writer.Write(ctx, ev); err != nil {
+		write := func(operationCtx context.Context) error {
+			return p.writer.Write(operationCtx, ev)
+		}
+		var err error
+		if p.limiter != nil {
+			err = p.limiter.do(ctx, write)
+		} else {
+			err = write(ctx)
+		}
+		if err != nil {
 			lastErr = err
 			continue
 		}

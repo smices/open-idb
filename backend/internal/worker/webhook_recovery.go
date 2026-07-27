@@ -34,6 +34,7 @@ type WebhookRecoveryPoller struct {
 	dispatcher webhookRecoveryDispatcher
 	interval   time.Duration
 	logger     *zap.Logger
+	limiter    *backgroundLimiter
 }
 
 func NewWebhookRecoveryPoller(store webhookRecoveryStore, dispatcher webhookRecoveryDispatcher, interval time.Duration, logger *zap.Logger) *WebhookRecoveryPoller {
@@ -44,31 +45,49 @@ func NewWebhookRecoveryPoller(store webhookRecoveryStore, dispatcher webhookReco
 }
 
 func (p *WebhookRecoveryPoller) Run(ctx context.Context) {
-	p.poll(ctx)
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
+	delay := time.Duration(0)
+	failures := 0
 	for {
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
-			p.poll(ctx)
+		case <-timer.C:
+		}
+		if err := p.poll(ctx); err != nil {
+			failures++
+			delay = webhookPollRetryDelay(p.interval, failures)
+		} else {
+			failures = 0
+			delay = p.interval
 		}
 	}
 }
 
-func (p *WebhookRecoveryPoller) poll(ctx context.Context) {
+func (p *WebhookRecoveryPoller) poll(ctx context.Context) error {
 	claimToken := id.NewULID()
-	sources, err := p.store.ClaimDueWebhookSyncSources(ctx, generated.ClaimDueWebhookSyncSourcesParams{
-		BatchSize:    webhookRecoveryBatchSize,
-		ClaimToken:   claimToken,
-		LeaseSeconds: int32(webhookRecoveryLease / time.Second),
-	})
+	var sources []generated.ClaimDueWebhookSyncSourcesRow
+	claim := func(operationCtx context.Context) error {
+		var err error
+		sources, err = p.store.ClaimDueWebhookSyncSources(operationCtx, generated.ClaimDueWebhookSyncSourcesParams{
+			BatchSize:    webhookRecoveryBatchSize,
+			ClaimToken:   claimToken,
+			LeaseSeconds: int32(webhookRecoveryLease / time.Second),
+		})
+		return err
+	}
+	var err error
+	if p.limiter != nil {
+		err = p.limiter.do(ctx, claim)
+	} else {
+		err = claim(ctx)
+	}
 	if err != nil {
 		if ctx.Err() == nil {
 			p.logger.Error("failed to claim persisted webhook jobs", zap.Error(err))
 		}
-		return
+		return err
 	}
 	for _, source := range sources {
 		if p.dispatcher.TriggerRecoveredWebhookSync(source.EntityID, source.SourceID, source.Provider, source.ClaimToken) {
@@ -80,6 +99,23 @@ func (p *WebhookRecoveryPoller) poll(ctx context.Context) {
 			zap.String("source_id", source.SourceID),
 		)
 	}
+	return nil
+}
+
+func webhookPollRetryDelay(interval time.Duration, failures int) time.Duration {
+	if failures < 1 {
+		return interval
+	}
+	delay := interval * time.Duration(1<<min(failures-1, 5))
+	maxDelay := 15 * time.Minute
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+	if delay == maxDelay {
+		return maxDelay
+	}
+	jitter := time.Duration(time.Now().UnixNano() % max(1, int64(delay/4)))
+	return delay + jitter
 }
 
 func (p *WebhookRecoveryPoller) releaseLease(source generated.ClaimDueWebhookSyncSourcesRow) {

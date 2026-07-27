@@ -45,6 +45,12 @@ https://idbridge.example.com
 | 变量 | 必填 | 示例 | 说明 |
 |---|---:|---|---|
 | `DATABASE_URL` | 是 | `postgres://idbridge:***@postgres:5432/idbridge?sslmode=disable` | PostgreSQL 连接串 |
+| `DB_POOL_MAX_CONNS` | 建议 | `10` | 单个 backend 副本的最大 PostgreSQL 连接数；环境变量优先于 URL 中的 `pool_max_conns` |
+| `DB_POOL_MIN_CONNS` | 建议 | `2` | 单个 backend 副本保持的最小连接数；不得超过最大连接数 |
+| `DB_POOL_MAX_CONN_LIFETIME` | 否 | `1h` | 连接最大生命周期，使用 Go duration 格式 |
+| `DB_POOL_MAX_CONN_IDLE_TIME` | 否 | `15m` | 空闲连接最大保留时间，使用 Go duration 格式 |
+| `DB_POOL_ACQUIRE_TIMEOUT` | 建议 | `2s` | 等待池连接的最大时间；超时后请求快速失败 |
+| `DB_BACKGROUND_MAX_CONCURRENCY` | 建议 | `2` | 同步、审计、cleanup 和 webhook recovery 共享的后台数据库并发预算 |
 | `IDB_HTTP_ADDR` | 是 | `:8080` | 后端监听地址 |
 | `IDB_OIDC_ISSUER` | 是 | `https://idbridge.example.com` | OIDC issuer，必须是用户和外部应用可访问的最终地址 |
 | `IDB_WEB_BASE_URL` | 建议 | `https://idbridge.example.com` | Web 基准地址；未显式设置 Feishu 回调时用于生成回调地址 |
@@ -70,8 +76,35 @@ https://idbridge.example.com
 - 生产环境必须通过 Secret 注入 `IDB_OIDC_PRIVATE_KEY_PEM`，不得提交到仓库或写入普通 ConfigMap。未配置时服务会为兼容旧部署临时生成密钥，但进程重启会改变 JWKS，不能作为生产长期方案。
 - `IDB_CONFIG_ENCRYPTION_KEY` 未配置时仍可读取和保存旧版明文配置，便于无中断升级；配置后，新建或再次保存的身份源配置会使用带版本标识的密文，旧明文配置仍可读取。
 - `IDB_TRUSTED_PROXY_CIDRS` 应填写直接连接 backend 的最后一跳代理网段；使用“IDC Edge Caddy → IdBridge 路由 Caddy → backend”时，应填写路由 Caddy 的网段，而不是 Edge 或终端用户公网网段。未配置时后端会忽略转发头并保留原始直连地址，以保持旧版限流行为；经反向代理的生产部署必须配置该变量，且禁止为了方便填写 `0.0.0.0/0` 或 `::/0`。
+- backend 未配置连接池参数时采用明确的安全默认值 `max=10`、`min=2`、最大生命周期 `1h`、最大空闲时间 `15m`，不再按 CPU 核数扩大连接数。也可以在 `DATABASE_URL` 中使用 pgxpool 的 `pool_max_conns`、`pool_min_conns`、`pool_max_conn_lifetime` 和 `pool_max_conn_idle_time`；同一参数同时出现时环境变量优先。
+- 每个副本都会设置 PostgreSQL `application_name=idbridge`，除非 `DATABASE_URL` 已显式提供其他值。
 
-### 3.1 OIDC 签名密钥上线步骤
+### 3.1 PostgreSQL 连接预算
+
+连接预算必须按 PostgreSQL 实例整体分配，不能只看单个 Pod：
+
+```text
+DB_POOL_MAX_CONNS * backend 最大副本数
+< PostgreSQL max_connections
+  - 管理连接预留
+  - 监控和迁移连接预留
+  - 共享实例中其他业务的连接预算
+```
+
+单副本可先使用：
+
+```bash
+DB_POOL_MAX_CONNS=10
+DB_POOL_MIN_CONNS=2
+DB_POOL_MAX_CONN_LIFETIME=1h
+DB_POOL_MAX_CONN_IDLE_TIME=15m
+DB_POOL_ACQUIRE_TIMEOUT=2s
+DB_BACKGROUND_MAX_CONCURRENCY=2
+```
+
+后台并发必须小于池上限，以给登录、OIDC 换票和管理请求保留连接。增加副本数时，应先重新计算每副本上限，不得让连接总预算随副本数无界增长。
+
+### 3.2 OIDC 签名密钥上线步骤
 
 现有旧版本使用进程内临时密钥，因此无法在升级后恢复旧私钥。为避免第三方应用在切换期间校验到刚刚失效的短期 token：
 
@@ -87,7 +120,7 @@ openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048
 
 后续发布保持同一 Secret 和 `kid`，不会影响现有 `client_id`、`client_secret`、回调地址、用户或应用。密钥轮换应作为单独的兼容发布执行，保留旧公钥直到最长 token 有效期和缓存期结束。
 
-### 3.2 身份源配置加密的兼容上线
+### 3.3 身份源配置加密的兼容上线
 
 生成并保管配置加密密钥：
 
@@ -106,6 +139,8 @@ openssl rand -base64 32
 ## 4. 数据库初始化
 
 数据库变更位于 `backend/migrations/`，必须按编号依次执行。全新数据库从 `000001_schema_baseline.sql` 开始；现有数据库只执行尚未应用的增量迁移，不得重复导入基线或重建已有表。
+
+迁移不在 backend 进程启动时执行。Kubernetes 必须使用独立 migration Job，并等待 Job 成功后才扩容 backend；不要把迁移命令放入每个 Pod 的启动脚本或 init container。Goose 使用版本表保证已完成迁移不会重复应用，但生产发布仍应只调度一个 migration Job。
 
 执行迁移：
 
@@ -208,7 +243,7 @@ pg_restore --clean --if-exists --no-owner --dbname="$DATABASE_URL" idbridge-YYYY
 4. 保持原有 `IDB_OIDC_PRIVATE_KEY_PEM`、`IDB_OIDC_KEY_ID` 和现有域名不变，逐个替换 backend 副本，等待 `/readyz` 成功后再替换下一个。
 5. backend 全部就绪后再发布 frontend 静态资源。
 6. 验证一个既有管理员会话、一个既有用户登录、一个既有 OIDC client 的授权码换票，以及一次身份源读取；无需删除或重建任何现有应用。
-7. 如需回滚程序镜像，保留已经执行的向前兼容增量列，不要回滚数据库迁移。若期间已启用身份源配置加密，则按 3.2 节保留新程序与密钥，或恢复启用前备份。
+7. 如需回滚程序镜像，保留已经执行的向前兼容增量列，不要回滚数据库迁移。若期间已启用身份源配置加密，则按 3.3 节保留新程序与密钥，或恢复启用前备份。
 
 全量同步的清理语义比旧版本更严格。首次升级后执行全量同步前，应先在恢复出的非生产副本核对源端快照和清理结果；生产环境是否触发同步由部署方在维护窗口决定。
 
@@ -218,7 +253,23 @@ pg_restore --clean --if-exists --no-owner --dbname="$DATABASE_URL" idbridge-YYYY
 
 ## 7. 反向代理配置
 
-健康检查约定：`/healthz` 只表示进程存活；`/readyz` 会检查 PostgreSQL，数据库不可用时返回 `503`。Kubernetes、负载均衡和发布脚本应把流量检查指向 `/readyz`。
+健康检查约定：`/healthz` 只表示进程存活；`/readyz` 使用 2 秒超时检查 PostgreSQL，数据库不可用时返回 `503`。Kubernetes、负载均衡和发布脚本应把流量检查指向 `/readyz`。
+
+backend 的 `/metrics` 暴露 Prometheus 文本指标，包括池上限、总连接、占用连接、空闲连接、等待连接次数、累计等待时间和 Acquire timeout 次数。该端点应仅在集群内或受监控网络访问，不要通过公网 Ingress 暴露。
+
+本地池使用率告警示例：
+
+```promql
+# warning: 持续 5 分钟超过 80%
+open_idb_db_pool_acquired_connections
+  / open_idb_db_pool_max_connections >= 0.80
+
+# critical: 持续 2 分钟超过 90%
+open_idb_db_pool_acquired_connections
+  / open_idb_db_pool_max_connections >= 0.90
+```
+
+共享 PostgreSQL 的全局 80%/90% 告警必须由 PostgreSQL exporter 或数据库监控基于 `max_connections` 和当前 session 数配置；应用自身只能观测本进程的连接池，不能准确代表共享实例的总连接占用。
 
 ### 7.1 Nginx 示例
 

@@ -11,11 +11,16 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/smices/open-idb/internal/db/generated"
 )
 
+type adminDatabase interface {
+	generated.DBTX
+	Begin(context.Context) (pgx.Tx, error)
+}
+
 type AdminService struct {
-	pool *pgxpool.Pool
+	pool adminDatabase
 }
 
 type AdminManagementError struct {
@@ -28,7 +33,7 @@ func (e AdminManagementError) Error() string {
 	return e.Message
 }
 
-func NewAdminService(pool *pgxpool.Pool) *AdminService {
+func NewAdminService(pool adminDatabase) *AdminService {
 	return &AdminService{pool: pool}
 }
 
@@ -537,10 +542,10 @@ func adminNotFound(code string, message string) AdminManagementError {
 }
 
 type DatabaseAdminSessionResolver struct {
-	pool *pgxpool.Pool
+	pool generated.DBTX
 }
 
-func NewDatabaseAdminSessionResolver(pool *pgxpool.Pool) *DatabaseAdminSessionResolver {
+func NewDatabaseAdminSessionResolver(pool generated.DBTX) *DatabaseAdminSessionResolver {
 	return &DatabaseAdminSessionResolver{pool: pool}
 }
 

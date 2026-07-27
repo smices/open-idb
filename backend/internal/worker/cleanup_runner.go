@@ -19,6 +19,7 @@ type CleanupRunner struct {
 	queries  CleanupQueries
 	interval time.Duration
 	logger   *zap.Logger
+	limiter  *backgroundLimiter
 }
 
 type CleanupResult struct {
@@ -53,7 +54,18 @@ func (r *CleanupRunner) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			result, err := r.RunOnce(ctx)
+			var result CleanupResult
+			run := func(operationCtx context.Context) error {
+				var err error
+				result, err = r.RunOnce(operationCtx)
+				return err
+			}
+			var err error
+			if r.limiter != nil {
+				err = r.limiter.do(ctx, run)
+			} else {
+				err = run(ctx)
+			}
 			if err != nil {
 				r.logger.Warn("cleanup run failed", zap.Error(err))
 				continue

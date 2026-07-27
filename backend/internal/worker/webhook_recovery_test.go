@@ -106,3 +106,28 @@ func TestWebhookRecoveryPollerPollsImmediatelyAndAtConfiguredInterval(t *testing
 		t.Fatal("poller did not inspect persisted jobs again at PollInterval")
 	}
 }
+
+func TestWebhookPollRetryDelayIsExponentialJitteredAndBounded(t *testing.T) {
+	interval := 30 * time.Second
+	previousBase := time.Duration(0)
+	for failures := 1; failures <= 10; failures++ {
+		base := interval * time.Duration(1<<min(failures-1, 5))
+		if base > 15*time.Minute {
+			base = 15 * time.Minute
+		}
+		delay := webhookPollRetryDelay(interval, failures)
+		if base == 15*time.Minute {
+			if delay != base {
+				t.Fatalf("failure %d delay = %s, want capped %s", failures, delay, base)
+			}
+			continue
+		}
+		if delay < base || delay >= base+base/4 {
+			t.Fatalf("failure %d delay = %s, want [%s, %s)", failures, delay, base, base+base/4)
+		}
+		if base < previousBase {
+			t.Fatalf("failure %d base decreased from %s to %s", failures, previousBase, base)
+		}
+		previousBase = base
+	}
+}

@@ -29,6 +29,14 @@ type Config struct {
 	// AuditBufferSize is the capacity of the async audit event channel.
 	// Defaults to 1024 when zero.
 	AuditBufferSize int
+
+	// OperationTimeout bounds waiting for a background database slot and the
+	// operation itself. Defaults to 2 seconds when zero.
+	OperationTimeout time.Duration
+
+	// MaxConcurrentOperations reserves pool capacity for interactive traffic
+	// by limiting all background database activity. Defaults to 2 when zero.
+	MaxConcurrentOperations int
 }
 
 // applyDefaults fills in zero-valued fields with sensible defaults.
@@ -44,6 +52,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.AuditBufferSize <= 0 {
 		c.AuditBufferSize = 1024
+	}
+	if c.OperationTimeout <= 0 {
+		c.OperationTimeout = 2 * time.Second
+	}
+	if c.MaxConcurrentOperations <= 0 {
+		c.MaxConcurrentOperations = 2
 	}
 }
 
@@ -68,11 +82,15 @@ type Worker struct {
 func New(cfg Config, logger *zap.Logger, runner *SyncRunner, auditSvc AuditWriter, cleanupRunners ...*CleanupRunner) *Worker {
 	cfg.applyDefaults()
 
+	limiter := newBackgroundLimiter(cfg.MaxConcurrentOperations, cfg.OperationTimeout)
 	audit := NewAuditProcessor(auditSvc, cfg.AuditBufferSize, logger)
 	scheduler := NewScheduler(runner, audit, cfg.MaxConcurrentSyncs, cfg.MaxConcurrentPerEntity, logger)
+	audit.limiter = limiter
+	scheduler.limiter = limiter
 	var cleanup *CleanupRunner
 	if len(cleanupRunners) > 0 {
 		cleanup = cleanupRunners[0]
+		cleanup.limiter = limiter
 	}
 
 	return &Worker{
@@ -95,6 +113,7 @@ func (w *Worker) AuditProcessor() *AuditProcessor { return w.audit }
 // before Start so polling begins with the rest of the worker.
 func (w *Worker) SetWebhookRecoveryStore(store webhookRecoveryStore) {
 	w.webhooks = NewWebhookRecoveryPoller(store, w.scheduler, w.cfg.PollInterval, w.logger)
+	w.webhooks.limiter = w.scheduler.limiter
 }
 
 // Start launches all background goroutines.  It is safe to call only
@@ -107,6 +126,8 @@ func (w *Worker) Start(ctx context.Context) {
 		zap.Int("max_concurrent_syncs", w.cfg.MaxConcurrentSyncs),
 		zap.Int("max_per_entity", w.cfg.MaxConcurrentPerEntity),
 		zap.Int("audit_buffer", w.cfg.AuditBufferSize),
+		zap.Duration("operation_timeout", w.cfg.OperationTimeout),
+		zap.Int("max_concurrent_operations", w.cfg.MaxConcurrentOperations),
 	)
 
 	// Audit drain goroutine.

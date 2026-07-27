@@ -45,6 +45,60 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.FeishuBaseURL != "https://open.feishu.cn" {
 		t.Fatalf("FeishuBaseURL = %q, want default", cfg.FeishuBaseURL)
 	}
+	if cfg.DBPoolAcquireTimeout != 2*time.Second {
+		t.Fatalf("DBPoolAcquireTimeout = %s, want %s", cfg.DBPoolAcquireTimeout, 2*time.Second)
+	}
+	if cfg.DBBackgroundMaxConcurrency != 2 {
+		t.Fatalf("DBBackgroundMaxConcurrency = %d, want 2", cfg.DBBackgroundMaxConcurrency)
+	}
+}
+
+func TestLoadAcceptsDatabasePoolSettings(t *testing.T) {
+	setConfigEnv(t, map[string]string{
+		"DB_POOL_MAX_CONNS":             "15",
+		"DB_POOL_MIN_CONNS":             "2",
+		"DB_POOL_MAX_CONN_LIFETIME":     "45m",
+		"DB_POOL_MAX_CONN_IDLE_TIME":    "10m",
+		"DB_POOL_ACQUIRE_TIMEOUT":       "1500ms",
+		"DB_BACKGROUND_MAX_CONCURRENCY": "3",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.DBPoolMaxConns != 15 || cfg.DBPoolMinConns != 2 {
+		t.Fatalf("pool bounds = %d/%d, want 15/2", cfg.DBPoolMaxConns, cfg.DBPoolMinConns)
+	}
+	if cfg.DBPoolMaxLifetime != 45*time.Minute || cfg.DBPoolMaxIdleTime != 10*time.Minute {
+		t.Fatalf("pool lifetimes = %s/%s", cfg.DBPoolMaxLifetime, cfg.DBPoolMaxIdleTime)
+	}
+	if cfg.DBPoolAcquireTimeout != 1500*time.Millisecond {
+		t.Fatalf("DBPoolAcquireTimeout = %s", cfg.DBPoolAcquireTimeout)
+	}
+	if cfg.DBBackgroundMaxConcurrency != 3 {
+		t.Fatalf("DBBackgroundMaxConcurrency = %d", cfg.DBBackgroundMaxConcurrency)
+	}
+}
+
+func TestLoadRejectsInvalidDatabasePoolSettings(t *testing.T) {
+	tests := map[string]map[string]string{
+		"max below one":       {"DB_POOL_MAX_CONNS": "0"},
+		"negative min":        {"DB_POOL_MIN_CONNS": "-1"},
+		"min exceeds max":     {"DB_POOL_MAX_CONNS": "2", "DB_POOL_MIN_CONNS": "3"},
+		"invalid lifetime":    {"DB_POOL_MAX_CONN_LIFETIME": "forever"},
+		"invalid idle time":   {"DB_POOL_MAX_CONN_IDLE_TIME": "0s"},
+		"invalid acquire":     {"DB_POOL_ACQUIRE_TIMEOUT": "-1s"},
+		"invalid concurrency": {"DB_BACKGROUND_MAX_CONCURRENCY": "0"},
+	}
+	for name, values := range tests {
+		t.Run(name, func(t *testing.T) {
+			setConfigEnv(t, values)
+			if _, err := Load(); err == nil {
+				t.Fatal("Load() error = nil, want error")
+			}
+		})
+	}
 }
 
 func TestLoadAcceptsChineseLocale(t *testing.T) {
@@ -337,6 +391,12 @@ func setConfigEnv(t *testing.T, values map[string]string) {
 		"IDB_ID_TOKEN_TTL_SECONDS",
 		"IDB_AUTH_CODE_TTL_SECONDS",
 		"IDB_SESSION_TTL_SECONDS",
+		"DB_POOL_MAX_CONNS",
+		"DB_POOL_MIN_CONNS",
+		"DB_POOL_MAX_CONN_LIFETIME",
+		"DB_POOL_MAX_CONN_IDLE_TIME",
+		"DB_POOL_ACQUIRE_TIMEOUT",
+		"DB_BACKGROUND_MAX_CONCURRENCY",
 	} {
 		t.Setenv(key, "")
 	}
